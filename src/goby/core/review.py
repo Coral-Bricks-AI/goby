@@ -45,6 +45,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -83,6 +85,24 @@ class HeadMovedDuringFetch(RuntimeError):
     posted for it — the run that owns the new head (the synchronize event
     already queued for it) posts the authoritative status (an earlier review round).
     """
+
+
+def repo_from_remote() -> str:
+    """``owner/name`` from the git remote, "" when unavailable.
+
+    Local runs should not have to repeat what the checkout already knows: a
+    ``goby review --pr 123`` inside a clone is unambiguous. CI passes
+    $GITHUB_REPOSITORY, which wins before this is consulted.
+    """
+    try:
+        url = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""  # no git, or no remote: the caller asks for --repo
+    m = re.search(r"github\.com[:/]+([^/]+)/([^/\s]+?)(?:\.git)?/?$", url)
+    return f"{m.group(1)}/{m.group(2)}" if m else ""
 
 
 def read_key_file(path: str) -> str:
@@ -194,8 +214,8 @@ def build_summary(
     and a distinct second bug at a withheld position must stay visible.
     withheld_resolved does the same for re-derivations of resolved
     threads (an earlier round, an earlier round): visible to a human, never a new thread.
-    ``agent`` only changes the header (an earlier review round): an agentic v2 review
-    must not call itself a one-turn v1 test in its own summary."""
+    ``agent`` only changes the header: an agentic review must not describe
+    itself as a one-turn review."""
     dupes = dropped_dupes or []
     reso = withheld_resolved or []
     total = len(inline) + len(overflow)
@@ -305,19 +325,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pr", type=int, help="PR number to review")
     ap.add_argument("--diff-file", help="Local diff file instead of a PR (testing)")
     ap.add_argument("--head-sha", help=(
-        "Pin tools (and the local session id) to this sha — replay mode for "
-        "the v2 A/B: --diff-file + --head-sha reviews a historical head "
-        "without posting. Requires --diff-file; never valid with --pr, whose "
-        "head is fetched live."))
+        "Replay mode: pin the tools and the session id to this sha, so "
+        "--diff-file + --head-sha reviews one historical commit exactly as it "
+        "was (nothing is posted). Requires --diff-file; never valid with "
+        "--pr, whose head is fetched live."))
     ap.add_argument("--pr-hint", type=int, help=(
-        "Replay mode: the PR number the historical head belongs to, for "
-        "the PR-intent section of the prompt (an earlier round). Requires "
-        "--diff-file; never valid with --pr, whose intent is fetched live."))
+        "Replay mode: the PR number the historical head belongs to, for the "
+        "author's-stated-intent section of the prompt. Requires --diff-file; "
+        "never valid with --pr, whose intent is fetched live."))
     ap.add_argument("--agent", action="store_true", help=(
-        "v2 agentic loop (an earlier round): bounded /v1/responses turns with "
-        "runner-side tools, instead of the v1 one-turn chat call. LIVE in "
-        "the workflows since the shadow-mode flip (deepseek-v4.1-flash-fast, "
-        "non-gating); v1 remains available for one-turn comparisons."))
+        "Bounded multi-turn review with runner-side tools, instead of the "
+        "one-turn chat call. Needs a provider with a Responses API; the "
+        "action runs this mode by default."))
     ap.add_argument("--max-tool-turns", type=int,
                     default=int(os.environ.get("GOBY_MAX_TOOL_TURNS", "10")),
                     help="Agent mode: model turns that may produce tool calls "
@@ -357,8 +376,14 @@ def main(argv: list[str] | None = None) -> int:
                  "pass --model or set $GOBY_MODEL")
     args.base_url = args.base_url or args.provider.base_url
 
+    if not args.repo and (args.pr or args.pr_hint):
+        args.repo = repo_from_remote()
+
     if not args.pr and not args.diff_file:
         ap.error("one of --pr or --diff-file is required")
+    if args.pr and not args.repo:
+        ap.error("--pr needs a repository: pass --repo owner/name, or set "
+                 "$GITHUB_REPOSITORY (CI sets it for you)")
     if args.pr and not args.token:
         ap.error("--pr (or $GITHUB_TOKEN) requires a GitHub token")
     if args.diff_file and args.pr:

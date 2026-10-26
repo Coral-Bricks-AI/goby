@@ -8,9 +8,10 @@ planted-bug draft PRs (instant ground truth), not here.
 from __future__ import annotations
 
 import json
-
 import sys
 from pathlib import Path
+
+import pytest
 
 from goby.core import diff as difflines
 from goby.core import contract as F
@@ -1991,3 +1992,35 @@ def test_summaries_to_minimize_never_minimizes_agent_summaries():
     legacy = {"node_id": "s3", "sha": "aaa", "minimized": False}
     out = fetch.summaries_to_minimize([legacy], [], [{"sha": "aaa"}])
     assert [s["node_id"] for s in out] == ["s3"]
+
+# ------------------------------------------------------- repo auto-detection
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://github.com/Coral-Bricks-AI/goby.git", "Coral-Bricks-AI/goby"),
+    ("https://github.com/Coral-Bricks-AI/goby", "Coral-Bricks-AI/goby"),
+    ("git@github.com:Coral-Bricks-AI/goby.git", "Coral-Bricks-AI/goby"),
+    ("https://github.com/owner/name/", "owner/name"),
+    ("https://gitlab.com/owner/name.git", ""),
+    ("", ""),
+])
+def test_repo_from_remote_parses_github_urls(monkeypatch, url, expected):
+    """A local --pr run should not have to repeat what the remote already says."""
+    from goby.core import review as R
+
+    class _Done:
+        stdout = url
+
+    monkeypatch.setattr(R.subprocess, "run", lambda *a, **k: _Done())
+    assert R.repo_from_remote() == expected
+
+
+def test_repo_from_remote_survives_missing_git(monkeypatch):
+    """No git on PATH is not a crash: the caller asks for --repo instead."""
+    from goby.core import review as R
+
+    def boom(*a, **k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(R.subprocess, "run", boom)
+    assert R.repo_from_remote() == ""
