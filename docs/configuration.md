@@ -18,6 +18,14 @@ prints the source, never the key value. Agent mode requires Responses API;
 the one-turn path speaks chat completions. Providers live in
 `src/providers/index.ts`.
 
+For zero-retention accounts, a structured HTTP 400 rejecting
+`previous_response_id` with `unsupported_parameter` switches the agent to
+client-owned conversation history. The rejected turn is retried once with the
+original prompt, prior assistant items, and tool results; subsequent turns
+remain stateless. The same turn cap and remaining wall deadline apply. Other
+errors are not treated as permission to retry, and already-run tools are not
+executed again.
+
 ## Review
 
 | flag | environment | default |

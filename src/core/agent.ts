@@ -1,7 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import { performance } from 'node:perf_hooks';
 import { GitHubClient } from '../platforms/github.ts';
-import { call_responses, extract_function_calls, extract_text } from '../providers/base.ts';
+import { call_responses, extract_function_calls, extract_text, GatewayError, type ResponsesTurn } from '../providers/base.ts';
 import { SYSTEM_PROMPT, build_user_prompt } from './contract.ts';
 import { parse_hunks } from './diff.ts';
 import { TurnBudget } from './rules.ts';
@@ -503,6 +503,14 @@ export interface AgentOptions {
   clock?: () => number;
 }
 
+function rejectsResponseReference(error: unknown): boolean {
+  if (!(error instanceof GatewayError) || error.code !== 400) return false;
+  try {
+    const body = JSON.parse(error.body);
+    return body?.error?.param === 'previous_response_id' && body.error.code === 'unsupported_parameter';
+  } catch { return false; }
+}
+
 export async function run_agent_review(opts: AgentOptions): Promise<AgentReply> {
   const maxTurns = opts.max_tool_turns ?? 10;
   const wall = opts.wall_timeout_s ?? 600;
@@ -519,6 +527,8 @@ export async function run_agent_review(opts: AgentOptions): Promise<AgentReply> 
     opts.already_raised ?? null, opts.already_resolved ?? null, opts.pr_intent ?? null, repoMap || null);
   const started = clock();
   let previous: string | null = null;
+  let history: unknown[] = [{ role: 'user', content: nextInput }];
+  let stateless = false;
   const reply: AgentReply = { content: '', elapsed_s: 0, prompt_tokens: 0, completion_tokens: 0,
     turns: 0, tool_calls: 0, budget_exhausted: false, final_truncated: false, tool_counts: {} };
   const transport = opts.transport ?? call_responses;
@@ -528,13 +538,29 @@ export async function run_agent_review(opts: AgentOptions): Promise<AgentReply> 
     const final = admission === 'final';
     if (final) {
       reply.budget_exhausted = true;
-      nextInput = Array.isArray(nextInput) ? [...nextInput, { role: 'user', content: FORCED_FINAL_INPUT }] : FORCED_FINAL_INPUT;
+      const prompt = { role: 'user', content: FORCED_FINAL_INPUT };
+      nextInput = Array.isArray(nextInput) ? [...nextInput, prompt] : FORCED_FINAL_INPUT;
+      history = [...history, prompt];
     }
     const timeout = final ? Math.min(perTurn, FORCED_FINAL_GRACE_S) : reply.turns === 0 ? perTurn
       : Math.min(perTurn, Math.max(0, wall - (clock() - started)));
-    const turn = await transport({ api_key: opts.api_key, model: opts.model, base_url: opts.base_url,
-      session_id: opts.session_id, input: nextInput, instructions, tools: final ? null : TOOLS,
-      previous_response_id: previous, timeout_s: timeout, deadline_s: started + wall + (final ? FORCED_FINAL_GRACE_S : 0), clock });
+    const deadline = started + wall + (final ? FORCED_FINAL_GRACE_S : 0);
+    const request = { api_key: opts.api_key, model: opts.model, base_url: opts.base_url,
+      session_id: opts.session_id, input: stateless ? history : nextInput, instructions, tools: final ? null : TOOLS,
+      previous_response_id: stateless ? null : previous, timeout_s: timeout, deadline_s: deadline, clock };
+    let turn: ResponsesTurn;
+    try {
+      turn = await transport(request);
+    } catch (error) {
+      if (stateless || !previous || !rejectsResponseReference(error)) throw error;
+      // Zero-retention accounts cannot replay server-side response IDs. The
+      // rejected request did not run the model; retry this admitted turn once,
+      // retaining all assistant items/tool results and the original deadline.
+      const remaining = Math.min(timeout, deadline - clock());
+      if (remaining <= 0) throw new Error('review deadline reached before stateless continuation');
+      stateless = true;
+      turn = await transport({ ...request, input: history, previous_response_id: null, timeout_s: remaining });
+    }
     reply.turns++;
     reply.elapsed_s += turn.elapsed_s;
     reply.prompt_tokens += turn.input_tokens;
@@ -561,6 +587,7 @@ export async function run_agent_review(opts: AgentOptions): Promise<AgentReply> 
       outputs.push({ type: 'function_call_output', call_id: fc.call_id || fc.id || '', output });
     }
     outputs.push({ role: 'user', content: BUDGET_NOTE.replace('{remaining}', String(maxTurns - reply.turns)).replace('{max_tool_turns}', String(maxTurns)) });
+    history = [...history, ...turn.output, ...outputs];
     nextInput = outputs;
   }
 }
