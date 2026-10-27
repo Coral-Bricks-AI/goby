@@ -57,4 +57,11 @@ and lone-surrogate UTF-8 error behavior are not guaranteed identical. Typed
 constructors/coordinate inputs are designed for their declared types; arbitrary
 Python runtime coercions of invalid arguments are not emulated.
 
-The port adds no runtime dependencies beyond native Node APIs.
+The TypeScript agent additionally supports zero-retention Responses accounts:
+an explicit `previous_response_id` / `unsupported_parameter` HTTP 400 falls
+back once to complete client-owned history, without rerunning tools or resetting
+the deadline. This is an intentional improvement over the frozen Python agent,
+covered by HTTP-level and budget regressions rather than this pure-code corpus.
+
+The pure-code contract/diff port uses native Node APIs; the production policy
+foundation uses `gdp-wired`.

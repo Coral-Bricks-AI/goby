@@ -7,7 +7,7 @@ import {
   _timed_scan, run_agent_review, type AgentOptions, type ScanResult,
 } from '../src/core/agent.ts';
 import { GitHubClient, GitHubError } from '../src/platforms/github.ts';
-import type { CallResponsesOptions, ResponsesTurn } from '../src/providers/base.ts';
+import { call_responses, GatewayError, type CallResponsesOptions, type ResponsesTurn } from '../src/providers/base.ts';
 import { TurnBudget } from '../src/core/rules.ts';
 
 const findings = '```json\n[]\n```';
@@ -108,6 +108,104 @@ describe('agent response loop', () => {
     expect(batch(p, 1).at(-1)?.content).toBe(BUDGET_NOTE.replace('{remaining}', '9').replace('{max_tool_turns}', '10'));
     expect(batch(p, 2).at(-1)?.content).toContain('8 of 10');
     expect(tools.dispatched).toHaveLength(3);
+  });
+
+  test('zero-retention HTTP rejection switches once to complete stateless history', async () => {
+    const requests: Record<string, any>[] = [];
+    const reasoning = {type: 'reasoning', id: 'opaque', summary: [], encrypted_content: 'preserved'};
+    const outputs = [[reasoning, fc(), msg('I will inspect the source')], [fc('grep', 'c2')], [msg()]];
+    let accepted = 0;
+    const tools = new FakeTools();
+    const fetch = async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)); requests.push(body);
+      if (body.previous_response_id) return new Response(JSON.stringify({error: {
+        param: 'previous_response_id', code: 'unsupported_parameter', message: 'Zero retention: send full conversation',
+      }}), {status: 400});
+      return new Response(JSON.stringify({id: `r${++accepted}`, output: outputs[accepted - 1],
+        status: 'completed', usage: {input_tokens: 10, output_tokens: 5}}));
+    };
+    const result = await run(new FakeProvider([]), {tools_exec: tools,
+      transport: opts => call_responses({...opts, fetch})});
+    expect(requests.map(r => r.previous_response_id ?? null)).toEqual([null, 'r1', null, null]);
+    const history = requests[2].input;
+    expect(history[0].content).toContain('diff --git');
+    expect(history[1]).toEqual(reasoning);
+    expect(history[2]).toEqual(fc());
+    expect(history[3]).toEqual(msg('I will inspect the source'));
+    expect(history[4]).toEqual({type: 'function_call_output', call_id: 'c1', output: 'answer:read_file'});
+    expect(requests[3].input.slice(0, history.length)).toEqual(history);
+    expect(requests[3].input.filter((v: any) => v.type === 'function_call_output')).toHaveLength(2);
+    expect(requests.every(r => r.instructions.includes(AGENT_ADDENDUM))).toBe(true);
+    expect(result.turns).toBe(3); expect(result.prompt_tokens).toBe(30);
+    expect(result.completion_tokens).toBe(15); expect(tools.dispatched).toHaveLength(2);
+  });
+
+  test('stateless fallback preserves pending outputs and the one forced-final request', async () => {
+    const p = new FakeProvider([[fc()], [msg()]]);
+    const requests: CallResponsesOptions[] = [];
+    const result = await run(p, {max_tool_turns: 1, transport: async opts => {
+      requests.push(opts);
+      if (opts.previous_response_id) throw new GatewayError(400, JSON.stringify({error: {
+        param: 'previous_response_id', code: 'unsupported_parameter',
+      }}));
+      return p.transport(opts);
+    }});
+    expect(requests).toHaveLength(3);
+    expect(requests[1].tools).toBeNull(); expect(requests[2].tools).toBeNull();
+    const history = requests[2].input as Record<string, any>[];
+    expect(history[0].content).toContain('diff --git');
+    expect(history.filter(v => v.type === 'function_call_output')).toHaveLength(1);
+    expect(history.at(-1)!.content).toBe(FORCED_FINAL_INPUT);
+    expect(result.turns).toBe(2); expect(result.budget_exhausted).toBe(true);
+  });
+
+  test('stateless retry keeps the remaining wall deadline', async () => {
+    let now = 1000;
+    const p = new FakeProvider([[fc()], [msg()]]);
+    const requests: CallResponsesOptions[] = [];
+    await run(p, {clock: () => now, wall_timeout_s: 10, per_turn_timeout_s: 20,
+      transport: async opts => {
+        requests.push(opts);
+        if (opts.previous_response_id) {
+          now = 1004;
+          throw new GatewayError(400, JSON.stringify({error: {param: 'previous_response_id', code: 'unsupported_parameter'}}));
+        }
+        return p.transport(opts);
+      }});
+    expect(requests[2].timeout_s).toBe(6);
+    expect(requests[2].deadline_s).toBe(requests[1].deadline_s);
+  });
+
+  test('no stateless retry after the deadline or for unrelated errors', async () => {
+    const denial = JSON.stringify({error: {param: 'previous_response_id', code: 'unsupported_parameter'}});
+    let now = 1000, requests = 0;
+    const p = new FakeProvider([[fc()], [msg()]]);
+    await expect(run(p, {clock: () => now, wall_timeout_s: 2, transport: async opts => {
+      requests++;
+      if (opts.previous_response_id) { now = 1003; throw new GatewayError(400, denial); }
+      now = 1001; return p.transport(opts);
+    }})).rejects.toThrow('deadline reached before stateless continuation');
+    expect(requests).toBe(2);
+    for (const error of [new GatewayError(403, denial), new GatewayError(400, 'bad JSON'),
+      new GatewayError(400, JSON.stringify({error: {param: 'model', code: 'unsupported_parameter'}})),
+      new GatewayError(400, JSON.stringify({error: {param: 'previous_response_id', code: 'other'}}))]) {
+      let calls = 0;
+      const q = new FakeProvider([[fc()]]);
+      await expect(run(q, {transport: opts => {calls++; if (opts.previous_response_id) throw error; return q.transport(opts);}})).rejects.toBe(error);
+      expect(calls).toBe(2);
+    }
+  });
+
+  test('failed stateless retry is not repeated', async () => {
+    let calls = 0;
+    const p = new FakeProvider([[fc()]]);
+    await expect(run(p, {transport: opts => {
+      calls++;
+      if (calls === 2) throw new GatewayError(400, JSON.stringify({error: {param: 'previous_response_id', code: 'unsupported_parameter'}}));
+      if (calls === 3) throw new GatewayError(400, 'history rejected');
+      return p.transport(opts);
+    }})).rejects.toThrow('history rejected');
+    expect(calls).toBe(3);
   });
 
   test('intent, context, history, and layout go only in the first prompt', async () => {
