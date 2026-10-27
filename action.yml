@@ -1,5 +1,5 @@
 name: goby review
-description: AI code review that reads the code before it comments
+description: AI code review with a separate fail-closed merge eligibility gate
 author: CoralBricks
 
 branding:
@@ -8,62 +8,90 @@ branding:
 
 inputs:
   provider:
-    description: Model provider (coral, openai). See providers/__init__.py.
-    required: false
+    description: Model provider (coral, openai).
     default: coral
   model:
-    description: Model name. Defaults to the provider's own default.
-    required: false
+    description: Model name; empty uses the provider default.
     default: ""
   base-url:
-    description: Override the provider's endpoint (self-hosted, proxy, staging).
-    required: false
+    description: Override the provider endpoint.
     default: ""
-  version:
-    description: goby version to install.
-    required: false
-    default: "0.1.0"
   github-token:
-    description: Token used to read the PR and post the review.
-    required: false
+    description: Token used to read the PR and post reviews/statuses.
     default: ${{ github.token }}
+  pr-number:
+    description: PR number; required explicitly for workflow_run or workflow_dispatch.
+    default: ${{ github.event.pull_request.number }}
+  expected-head:
+    description: Exact head SHA; stale workflows refuse to review or gate a newer head.
+    default: ${{ github.event.pull_request.head.sha }}
+  mode:
+    description: review (model + gate) or gate (refresh eligibility without a model).
+    default: review
+  fail-on-blocked:
+    description: In review mode, fail the job unless Goby Gate passes. Gate mode always fails closed.
+    default: "true"
   max-tool-turns:
     description: Model turns that may still call a tool.
-    required: false
     default: "25"
   wall-timeout:
-    description: Whole-review wall-clock budget, seconds.
-    required: false
+    description: Whole-review model budget in seconds.
     default: "1200"
 
 runs:
   using: composite
   steps:
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Set up Bun for the trusted source build
+      uses: oven-sh/setup-bun@v2
       with:
-        python-version: "3.12"
-
-    - name: Install goby
-      shell: bash
-      run: python -m pip install --disable-pip-version-check "goby-review==${{ inputs.version }}"
-
-    # The review never checks out or executes code from the pull request: the
-    # diff and every file the model reads come through the GitHub API, pinned
-    # to the PR's head sha. Keep it that way — see docs/trust-model.md.
-    - name: Review
+        bun-version: "1.4.4"
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+    - name: Build pinned Goby source
       shell: bash
       env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        cd "$ACTION_PATH"
+        bun install --frozen-lockfile --ignore-scripts
+        bun run build
+
+    # Build only this caller-pinned action. No package, checkout, dependency,
+    # or executable from the pull request is used.
+    - name: Review or refresh gate
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
         GOBY_PROVIDER: ${{ inputs.provider }}
         GOBY_MAX_TOOL_TURNS: ${{ inputs.max-tool-turns }}
         GOBY_WALL_TIMEOUT: ${{ inputs.wall-timeout }}
         INPUT_MODEL: ${{ inputs.model }}
         INPUT_BASE_URL: ${{ inputs.base-url }}
+        INPUT_PR: ${{ inputs.pr-number }}
+        INPUT_HEAD: ${{ inputs.expected-head }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_FAIL: ${{ inputs.fail-on-blocked }}
       run: |
-        args=(review --agent
-              --pr "${{ github.event.pull_request.number }}"
-              --provider "$GOBY_PROVIDER")
-        [ -n "$INPUT_MODEL" ] && args+=(--model "$INPUT_MODEL")
-        [ -n "$INPUT_BASE_URL" ] && args+=(--base-url "$INPUT_BASE_URL")
-        goby "${args[@]}"
+        set -euo pipefail
+        [[ "$INPUT_PR" =~ ^[1-9][0-9]*$ ]] || { echo "pr-number must be a positive integer" >&2; exit 2; }
+        args=("$INPUT_MODE" --pr "$INPUT_PR")
+        [ -z "$INPUT_HEAD" ] || args+=(--expected-head "$INPUT_HEAD")
+        case "$INPUT_MODE" in
+          review)
+            args+=(--agent --provider "$GOBY_PROVIDER")
+            [ -z "$INPUT_MODEL" ] || args+=(--model "$INPUT_MODEL")
+            [ -z "$INPUT_BASE_URL" ] || args+=(--base-url "$INPUT_BASE_URL")
+            case "$INPUT_FAIL" in
+              true) args+=(--fail-on-blocked) ;;
+              false) ;;
+              *) echo "fail-on-blocked must be true or false" >&2; exit 2 ;;
+            esac
+            ;;
+          gate) ;;
+          *) echo "mode must be review or gate" >&2; exit 2 ;;
+        esac
+        node "$ACTION_PATH/dist/cli.js" "${args[@]}"

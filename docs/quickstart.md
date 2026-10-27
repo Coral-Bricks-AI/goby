@@ -1,88 +1,76 @@
 # Quickstart
 
-## In CI
-
-```yaml
-# .github/workflows/goby-review.yml
-name: Goby review
-on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review]
-permissions:
-  contents: read
-  pull-requests: write
-  statuses: write
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: Coral-Bricks-AI/goby@v1
-        env:
-          CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
-```
-
-`goby init` writes this file.
-
-Then open a PR. You get:
-
-- inline threads on the changed lines, each tagged `[high]`, `[medium]` or
-  `[low]` with a concrete fix;
-- findings that cannot be attached to a diff hunk listed in the review body
-  instead of silently dropped;
-- a `Goby Review` commit status: `success` = the review ran, `error` = the
-  review itself broke. It is never `failure`, because that would read as "the
-  PR's code failed".
-
-To gate merges on it, require the `Goby Review` status check in branch
-protection. An `error` status is not `success`, so a broken review blocks the
-merge — which is the behaviour you want.
-
-## Locally
+## Build trusted source
 
 ```sh
-pip install goby-review   # the command is `goby`
-
-export CORALBRICKS_API_KEY=...      # or put API_KEY=... in ~/.config/goby/api_key
-goby doctor                       # resolved provider, endpoint, model, key source
-
-goby review --pr 123 --dry-run    # does everything except post
-goby review --pr 123              # posts
+git clone https://github.com/Coral-Bricks-AI/goby.git
+cd goby
+bun install --frozen-lockfile --ignore-scripts
+bun run build
+node dist/cli.js version
+git rev-parse HEAD  # record this reviewed revision's full SHA
 ```
 
-Dry-run prints the report JSON, the summary body, and each inline comment
-exactly as it would have been posted.
-
-## Without GitHub
+The bundle runs on Node 20+. Bun is needed for source builds, not for running
+the finished CLI. `bun link` optionally exposes the local `goby` command.
+From your target repository:
 
 ```sh
-goby review --diff-file change.diff --dry-run
+node /path/to/goby/dist/cli.js init --ref <reviewed-full-goby-commit-sha>
 ```
 
-No token, no GitHub calls. Repo instructions are read from the current
-directory, so run it from the repository root you want conventions from.
+Add the `CORALBRICKS_API_KEY` repository secret and commit the generated
+`.github/workflows/goby-review.yml`. `init openai --ref <sha>` uses the OpenAI
+provider and its secret instead. No PyPI upload, npm publication, or `v1` tag
+is required.
 
-Replay a historical commit precisely (tools read the pinned sha, context is
-that commit's):
+The action installs pinned build dependencies from its lockfile and builds
+its own trusted revision. Never add a checkout of the PR or install PR
+dependencies. The generated workflow handles same-repository PRs only;
+see the [trust model](trust-model.md) for forks.
+
+## Two statuses
+
+- **Goby Review**: execution telemetry. Success does not imply no bugs.
+- **Goby Gate**: fail-closed eligibility for the exact head, requiring a
+  complete agentic review bound to the head/base/diff, successful latest execution, accounted-for
+  finding threads, no open findings, and complete GitHub data.
+
+Require **Goby Gate** and CI in branch protection. The action fails on a
+blocked gate by default. `fail-on-blocked: "false"` makes only the review job
+advisory; it does not turn a blocked gate green. `mode: gate` always fails closed.
+
+## Review and refresh
 
 ```sh
-goby review --diff-file change.diff --head-sha <sha> --pr-hint 123 --dry-run --agent
+export CORALBRICKS_API_KEY=...
+export GITHUB_TOKEN=...
+goby doctor
+goby review --pr 123 --dry-run --agent
+goby review --pr 123 --agent --fail-on-blocked
+goby gate --pr 123 --expected-head <full-pr-head-sha>
 ```
 
-This is how model and harness versions are compared: same diff, same sha, same
-intent, different reviewer.
+The last command needs no model key or call. It rechecks existing evidence
+and thread resolution. Deleted threads are not resolutions. `--force`
+explicitly repeats a full review; budget-exhausted/truncated reviews are
+retried on the next review run without that flag.
 
-## Choosing the one-turn path
+Exit codes: `review` preserves execution-only success unless
+`--fail-on-blocked` is set. With that flag, 2 means blocked and 1 means error.
+`gate` returns 0/2/1 for pass/block/error. Dry-run never writes GitHub state.
 
-`--agent` (the default in the action) is the tool loop: it reads code before
-reporting, costs a few turns, and needs a Responses API endpoint. Without it,
-one call over the diff answers — cheaper, faster, and noticeably more prone to
-findings that a look at the surrounding code would have refuted.
+Use the [workflow_run handoff](merge-gate.md), not a `status` trigger, when
+using the default GitHub token. Neither the action nor the handoff merges code.
+
+## Historical comparison
 
 ```sh
-goby review --pr 123 --dry-run            # one-turn
-goby review --pr 123 --dry-run --agent    # tool loop
+goby review --diff-file change.diff --repo owner/name --head-sha <sha> \
+  --pr-hint 123 --dry-run --agent
 ```
 
-Both share the same findings contract, parser, dedupe and posting, so their
-output is directly comparable.
+With `GITHUB_TOKEN`, tools and context read the pinned revision. PR intent is
+the description as it stands now. Keep those inputs fixed when comparing
+models. Without `--agent`, the local diff-only path uses one chat completion
+and does not satisfy the merge gate's code-reading requirement.

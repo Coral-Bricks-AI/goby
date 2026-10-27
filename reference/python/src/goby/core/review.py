@@ -22,7 +22,8 @@ One run:
 Exit code 0 = the review ran clean (including zero findings and skipped
 caps); 1 = harness error (network, unparseable reply, posting). A harness
 error still posts an error status when it can, so a broken run never reads
-as a clean one.
+as a clean one. With --fail-on-blocked, exit 2 also means that Goby Gate
+did not pass. Goby Review reports execution; only Goby Gate reports eligibility.
 
 API key resolution: $GOBY_API_KEY (what the action sets from a secret)
 wins; otherwise a key file in ``KEY=VALUE`` form, default
@@ -51,6 +52,8 @@ import sys
 import time
 from pathlib import Path
 
+from goby.core import gate as gate_mod
+from goby.core.verdict import ReviewReceipt
 from goby.core import diff as difflines
 from goby.platforms import github as fetch
 from goby.core import contract as findings_mod
@@ -63,6 +66,7 @@ from goby.platforms.publish import (
     comment_body,
     post_review,
     post_status,
+    post_gate_status,
     reply_in_thread,
     resolve_thread,
 )
@@ -346,6 +350,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="Agent mode: whole-review wall-clock budget in seconds (tunable)")
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     ap.add_argument("--dry-run", action="store_true", help="Do everything except posting to GitHub")
+    ap.add_argument("--expected-head", help="Refuse a stale workflow's commit")
+    ap.add_argument("--fail-on-blocked", action="store_true",
+                    help="Exit 2 unless Goby Gate passes (recommended in CI)")
     ap.add_argument("--provider", default=os.environ.get("GOBY_PROVIDER", "coral"),
                     help="Model provider: coral (default) or openai; see "
                          "goby/providers/__init__.py to add one")
@@ -386,6 +393,8 @@ def main(argv: list[str] | None = None) -> int:
                  "$GITHUB_REPOSITORY (CI sets it for you)")
     if args.pr and not args.token:
         ap.error("--pr (or $GITHUB_TOKEN) requires a GitHub token")
+    if args.diff_file and args.expected_head:
+        ap.error("--expected-head requires a live --pr review")
     if args.diff_file and args.pr:
         ap.error("--diff-file and --pr are mutually exclusive")
     if args.diff_file and not args.dry_run:
@@ -466,6 +475,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"head moved during fetch (attempt {attempt + 1}); retrying")
             else:
                 raise HeadMovedDuringFetch("PR head kept moving; review superseded, not posting")
+            if args.expected_head and head_sha != args.expected_head:
+                raise gate_mod.HeadChanged("PR head no longer matches --expected-head")
+            if not args.dry_run:
+                post_gate_status(args.token, args.repo, head_sha, "pending", "Review in progress")
+                post_status(args.token, args.repo, head_sha, "pending", "Review in progress")
             # Context by head sha, not branch name: the sha is immutable, so a
             # same-named branch on the base repo can never supply the context.
             context = fetch.fetch_repo_context(args.repo, head_sha, args.token)
@@ -484,10 +498,11 @@ def main(argv: list[str] | None = None) -> int:
             # carries a head marker (platforms/publish.py), so this check is cheap.
             # --dry-run never posts, so it skips the guard and always
             # exercises the model (an earlier review round).
-            if not args.dry_run and fetch.head_already_reviewed(
-                args.token, args.repo, args.pr, head_sha,
-                require_agent=args.agent,
-            ):
+            previous_receipt = (gate_mod.load_receipt(
+                args.token, args.repo, args.pr, head_sha
+            ) if not args.dry_run else None)
+            if (previous_receipt is not None and previous_receipt.complete
+                    and (not args.agent or previous_receipt.agent)):
                 # Repair only when the head is not already green: repeat
                 # events must not pile up duplicate success rows (an earlier review round).
                 # A failed lookup posts rather than skips — a duplicate row
@@ -532,7 +547,12 @@ def main(argv: list[str] | None = None) -> int:
                                   "resolved_threads": resolved,
                                   **({"minimized_summaries": minimized}
                                      if minimized else {})}))
-                return 0
+                post_status(args.token, args.repo, head_sha, "success",
+                            "Complete review reused on unchanged head")
+                result = gate_mod.refresh_gate(
+                    args.token, args.repo, args.pr, expected_head=head_sha)
+                print(json.dumps({"gate": result.state, "description": result.description}))
+                return 2 if args.fail_on_blocked and not result.allowed else 0
 
             # Own open threads, for dedupe + resolve (an earlier round 2026-10-15).
             # A fetch failure degrades to no dedupe rather than failing the
@@ -594,6 +614,7 @@ def main(argv: list[str] | None = None) -> int:
                     latest_state = None
                 if latest_state != "success" and latest_state != "pending":
                     post_status(args.token, args.repo, head_sha, "success", note)
+                post_gate_status(args.token, args.repo, head_sha, "failure", note)
             # Cleanup runs even on the oversize skip (an earlier review round): resolving
             # stale threads needs no model call, so a big diff must not leave
             # outdated/duplicate threads open. No-op when the plan is empty.
@@ -607,7 +628,7 @@ def main(argv: list[str] | None = None) -> int:
                     big_threads = []
                 resolve_own_threads(args.token, args.repo, args.pr, big_threads)
                 minimize_resolved_rounds(args.token, args.repo, args.pr)
-            return 0
+            return 2 if args.fail_on_blocked else 0
 
         # Key resolution lives INSIDE the try block so a missing key file
         # fails through the handler (error status + clean message) instead
@@ -665,7 +686,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         hunks = difflines.parse_hunks(diff)
-        parsed_all = findings_mod.parse_findings(reply.content)
+        parsed_all = findings_mod.parse_findings(reply.content, strict=True)
         if parsed_all is None:
             # an earlier review round: unparseable model output is NOT "no bugs" — the
             # status must say the review is inconclusive, not clean.
@@ -836,6 +857,17 @@ def main(argv: list[str] | None = None) -> int:
                 "max_tool_turns": args.max_tool_turns,
                 "wall_timeout_s": args.agent_wall_timeout,
             }
+        # This receipt records what code actually reviewed/published. It is
+        # deliberately not inferred from the model's prose or a green status.
+        receipt = ReviewReceipt(
+            head_sha=head_sha,
+            complete=not (args.agent and (reply.budget_exhausted or reply.final_truncated)),
+            agent=args.agent,
+            unthreaded=len(overflow) + over_cap,
+            finding_ids=tuple(f.fid for f in inline),
+        )
+        summary += "\n\n" + receipt.marker()
+        report["review_complete"] = receipt.complete
         print(json.dumps(report, indent=2))
 
         if args.dry_run:
@@ -847,6 +879,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n=== status (not posted): {STATUS_CONTEXT} = success ===")
             return 0
 
+        gate_mod.assert_head(args.token, args.repo, pr_number, head_sha)
         post_review(args.token, args.repo, pr_number, head_sha, summary, inline)
         # The status description must not read "no bugs found" when findings
         # were only withheld as duplicates (an earlier review round) — a reader of the
@@ -883,11 +916,14 @@ def main(argv: list[str] | None = None) -> int:
         if minimized:
             print(json.dumps({"pr": pr_number, "head": head_sha,
                               "minimized_summaries": minimized}))
-        return 0
+        result = gate_mod.refresh_gate(
+            args.token, args.repo, pr_number, expected_head=head_sha)
+        print(json.dumps({"gate": result.state, "description": result.description}))
+        return 2 if args.fail_on_blocked and not result.allowed else 0
 
     except (GatewayError, fetch.GitHubError, RuntimeError, OSError) as e:
         print(f"review failed: {e}", file=sys.stderr)
-        if isinstance(e, HeadMovedDuringFetch):
+        if isinstance(e, (HeadMovedDuringFetch, gate_mod.HeadChanged)):
             # No status: the sha may be superseded and its real run is
             # already queued — a red status here would land on a stale head.
             return 1
@@ -903,6 +939,10 @@ def main(argv: list[str] | None = None) -> int:
                     args.token, args.repo, head_sha, "error",
                     f"harness error, not a code verdict — re-run /goby: "
                     f"{str(e)[:80]}",
+                )
+                post_gate_status(
+                    args.token, args.repo, head_sha, "error",
+                    "Review failed; eligibility could not be established",
                 )
             except Exception as status_err:  # noqa: BLE001 — best-effort status
                 print(f"also failed to post error status: {status_err}", file=sys.stderr)

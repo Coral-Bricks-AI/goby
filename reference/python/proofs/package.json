@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "scripts": { "check": "bun verify.ts" },
+  "devDependencies": { "gdp-wired": "0.30.1" }
+}

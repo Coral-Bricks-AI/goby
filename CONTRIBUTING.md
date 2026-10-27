@@ -1,64 +1,50 @@
 # Contributing
 
-Thanks for looking. This harness reviews pull requests for a living; the bar
-for a change is the same one it applies to yours.
+Goby's production implementation is TypeScript. Node 20+ runs the bundle;
+Bun 1.4.4 and TypeScript build and test it. `gdp-wired` is the sole direct
+runtime dependency; avoid adding dependencies for ordinary transport or parsing.
 
-## Ground rules
-
-- **No dependencies.** The standard library only. That is a feature: no install
-  step, no supply chain, no version conflicts on a stock GitHub runner.
-- **Tests are the specification.** `tests/test_harness.py` pins the findings
-  parser, the dedupe rules, the posting shapes, and the retry policy.
-  `tests/test_agent.py` pins the loop's turn sequencing and budget caps. A
-  behaviour change without a test is an unreviewed change.
-- **Explain the why in a comment.** The code is deliberately comment-heavy
-  where a rule exists because something went wrong once: a false positive, a
-  repeated finding, a truncated review. Keep that habit — a rule whose reason
-  is lost gets deleted by the next person.
-- **Small PRs.** One concern per pull request. The reviewer is a language
-  model; a 40-file PR with three unrelated changes is where it does its worst.
-
-## Run the tests
+## Checks
 
 ```sh
-python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-python -m pytest
+bun install --frozen-lockfile --ignore-scripts
+bun run check
 ```
 
-No network is used by the test suite. If you add a test that talks to a model
-or to GitHub, it belongs behind an environment check and out of the default run.
+This typechecks, kernel-checks the production policies, builds the Node CLI,
+and runs offline tests. Test model/GitHub traffic through injected transports;
+default tests must not call external services. Add a failing regression for
+any behavior change, especially retries, publication, or gate eligibility.
 
-## Try a change for real
+## Policy changes
+
+The gate, turn budget, and review lifecycle execute compiled rules from
+`src/core/rules.ts`. Change that rule, its laws, and tests together. Do not
+reimplement the decision in a caller. Require `proven && checked` and preserve
+an unsafe mutant that the checker or tests reject. Proofs establish these
+rules, not model accuracy or the freshness of an external service.
+
+## Python reference
+
+`reference/python/` is frozen migration evidence, not another runtime to
+maintain. `tests-ts/fixtures/generate_contract_diff.py` regenerates the
+checked-in pure-code corpus from it. Normal tests use JSON and need no Python.
+Document intentional parity differences instead of silently weakening tests.
+
+## Try a change
 
 ```sh
 export CORALBRICKS_API_KEY=...
-goby review --pr <your pr> --dry-run          # one-turn
-goby review --pr <your pr> --dry-run --agent  # tool loop, what CI runs
+export GITHUB_TOKEN=...
+node dist/cli.js review --pr <number> --dry-run --agent
 ```
 
-Dry-run posts nothing and prints the exact comments and summary a real run
-would post. Diff a dry-run before and after your change when you touch the
-prompt or the filters.
+Dry-run never posts. Do not check out or execute code from a PR in a trusted
+review workflow. Keep changes focused and explain the reason for safety rules.
 
 ## Commits
 
-`git commit -s` — sign-off is required (Developer Certificate of Origin,
-https://developercertificate.org). It certifies you wrote it, or have the right
-to submit it. No separate CLA, no paperwork.
-
-Write the message for someone reading it a year from now: what was wrong, what
-changed, why this way. If it fixes a bug, say what the bug looked like from the
-outside — that is the part nobody can reconstruct later.
-
-## Where to start
-
-- `docs/extensions.md` has a ranked list and the plugin interface being built.
-- Issues labelled `good first issue` are scoped to one file and one test.
-- Anything in the "Not yet done" list in the README is fair game; open an issue
-  first so we do not build the same thing twice.
-
-## Code of conduct
-
-Be decent. See `CODE_OF_CONDUCT.md`; report problems to the maintainers listed
-there.
+Use conventional commit subjects and `git commit -s` for the Developer
+Certificate of Origin. A sign-off certifies that you wrote the contribution
+or have the right to submit it. No publication or remote change without the
+owner's approval. See [security](SECURITY.md) and [extensions](docs/extensions.md).

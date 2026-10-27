@@ -1,121 +1,38 @@
-# Extending goby
+# Extending Goby
 
-The harness is small on purpose: the interesting parts are meant to be replaced
-without editing the review loop. This page says which seams exist **today**,
-and specifies the plugin registry that is the next milestone so contributions
-can be written against it.
+The production implementation is TypeScript. Keep extensions behind typed
+ports and do not execute a PR's own plugins in the trusted review job.
+A general plugin loader is **not implemented**.
 
-## Seams that exist today
+## Existing seams
 
-### A provider (works now)
+- **Provider:** add a record to `src/providers/index.ts`. The common transport
+  supports OpenAI-compatible chat completions and Responses API endpoints.
+- **Model/endpoint:** use `--provider`, `--model`, and `--base-url` without a fork.
+- **Review contract:** `SYSTEM_PROMPT`, `build_user_prompt`, and strict parsing
+  are in `src/core/contract.ts`. Change tests with the contract.
+- **Filters:** retraction, ignored paths, deduplication, resolved-history
+  matching, and severity selection are pure functions in that module.
+- **Tools/loop:** `src/core/agent.ts` accepts injected transport/tools for tests.
+  Turn admission is owned by the compiled rule, not the loop.
+- **GitHub:** `GitHubClient` accepts injected fetch. Publication is separate in
+  `src/platforms/publish.ts`.
+- **Eligibility/lifecycle:** change `src/core/rules.ts` with its kernel-checked
+  laws. Never bolt a second permission predicate onto a caller.
 
-Add a `Provider` record in `src/goby/providers/__init__.py`. Endpoint, key
-variable, default model, and whether it speaks the Responses API (`--agent`)
-or only chat completions. File a PR with the record and a line in the README;
-nothing else changes.
+## Future plugin design
 
-### A different model or endpoint (works now, no code)
+Likely hook points are context acquisition, read-only tools, deterministic
+findings, extra publication sinks, and provider registration. Before adding
+loading, specify a versioned TypeScript interface, trust policy, resource
+bounds, and error behavior. In particular:
 
-`--provider`, `--model`, `--base-url`, and the matching environment variables.
-Point `--base-url` at vLLM, Ollama, LiteLLM, a proxy, or a company gateway.
+1. Load only trusted installed/configured code, never `.goby/*.ts` from the PR.
+2. Treat plugin failure as incomplete evidence where it affects the gate;
+   silently skipping a mandatory checker must not authorize a merge.
+3. Do not give model-returned text authority to invoke arbitrary shell code.
+4. Preserve typed plain-data boundaries and deterministic test injection.
 
-### The review prompt and the findings contract
-
-`SYSTEM_PROMPT` and `build_user_prompt` live in `src/goby/core/contract.py`.
-The output contract is a JSON array; `parse_findings` validates it strictly and
-returns `None` (inconclusive) rather than `[]` (no bugs) when it cannot find
-one. If you change the contract, change the parser and the tests together —
-`tests/test_harness.py` is the specification.
-
-### Post-parse filters
-
-`drop_self_retracted`, `keep_path`, `select_findings`,
-`split_already_raised`, `split_resolved_rederivations` — all pure functions
-over `list[Finding]`, all unit-tested. This is the cheapest place to add
-policy (severity caps, path rules, "never report X").
-
-### A publishing target
-
-`src/goby/platforms/publish.py` talks to GitHub through
-`platforms/github.py` primitives (`gh_get`, `gh_post`, `gh_graphql`). A
-different forge means a new module with the same three primitives plus
-`post_review` / `post_status`; the orchestrator's posting section is the only
-caller.
-
-## The registry (v0.2 — designed, not built)
-
-The goal: a contributor adds a capability in one file, without touching core.
-
-```python
-# examples/extensions/sentry_context.py
-from goby import hook, ContextSection, Tool
-
-
-@hook("context")
-def sentry_errors(ctx) -> ContextSection:
-    """Extra first-turn context: recent production errors for the touched files."""
-    return ContextSection("Recent Sentry errors", fetch_sentry(ctx.repo, ctx.sha))
-
-
-@hook("tool")
-def jira_ticket() -> Tool:
-    """A tool the model may call, next to read_file/grep."""
-    return Tool(
-        name="jira_ticket",
-        description="Read one Jira issue by key.",
-        parameters={"type": "object", "properties": {"key": {"type": "string"}},
-                    "required": ["key"]},
-        handler=lambda key, ctx: fetch_jira(key),
-    )
-
-
-@hook("finding_filter")
-def no_secrets_in_titles(finding, ctx):
-    """Deterministic post-parse filter, same pipeline as the built-ins."""
-    return None if looks_like_secret(finding.title) else finding
-
-
-@hook("publish")
-def slack(review, ctx):
-    """Extra sink, called after the platform post succeeds."""
-    post_to_slack(review.summary, review.inline)
-```
-
-Loading: `entry_points(group="goby.extensions")` for installed packages,
-`--extension path/to/file.py` for one file, and `.goby/extensions/*.py` in
-the repository under review. Hooks are collected, then dispatched in
-registration order.
-
-Hook points mirror the run, so the mental model is "the same seven steps, with
-a door at each":
-
-| hook | when | typical use |
-|---|---|---|
-| `context` | before the first model turn | issue tracker, ADRs, ownership, incident history |
-| `tool` | when the tool list is built | `blame`, `run_tests`, `semgrep`, `docs_search` |
-| `finding_filter` | after parsing, before dedupe | semgrep/ruff findings merged in, severity remap |
-| `publish` | after the platform post | Slack, Jira, CSV, a dashboard |
-| `provider` | at startup | a model endpoint registered in code |
-
-Two rules keep this from turning into a framework:
-
-1. **Hooks receive and return plain data.** No mutable session object, no
-   lifecycle to learn. A hook that raises is reported and skipped, never a
-   failed review.
-2. **Versioned surface.** Extensions declare `requires_goby = ">=0.2"`;
-   anything not on this page is internal and may move.
-
-## What to contribute
-
-Ranked by what the project needs, from the issue tracker's perspective:
-
-1. **Deterministic checks alongside the model** — semgrep, ruff, type errors,
-   secret scanners. They are cheap, precise, and complementary: the model
-   catches semantics, a linter catches facts. Findings merge into one review.
-2. **More context hooks** — linked issue bodies, ADRs, ownership maps, recent
-   incidents. Context is the difference between a plausible finding and a real
-   one.
-3. **Non-GitHub publishers** — GitLab, Bitbucket, Gitea, plain git hooks.
-4. **Benchmarks** — a fixed set of PR heads with labelled outcomes, so model
-   and prompt changes can be compared instead of argued about.
-5. **Prompt-injection hardening** — see `docs/trust-model.md`.
+Highest-value future work is deterministic checks alongside the model,
+labelled historical-PR benchmarks, richer trusted context, non-GitHub targets,
+and prompt-injection hardening. These are not existing public APIs.

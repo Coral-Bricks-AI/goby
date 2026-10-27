@@ -403,7 +403,7 @@ def _own_thread_record(node: dict, *, resolved: bool) -> dict | None:
 
 
 def _fetch_own_threads(
-    token: str, repo: str, pr_number: int, *, resolved: bool
+    token: str, repo: str, pr_number: int, *, resolved: bool | None
 ) -> tuple[list[dict], bool]:
     """The PR's goby marker threads filtered by resolution state,
     via GraphQL (thread state lives there). Shared query body for the two
@@ -472,18 +472,44 @@ def _fetch_own_threads(
     for _ in range(4):  # hard stop at 200 threads
         data = gh_graphql(query, token, {
             "owner": owner, "name": name, "n": pr_number, "cursor": cursor})
-        threads = (data.get("data", {}).get("repository", {})
-                   .get("pullRequest", {}).get("reviewThreads", {}))
-        for node in threads.get("nodes", []):
-            if bool(node.get("isResolved")) != resolved:
+        branch = data
+        for key in ("data", "repository", "pullRequest", "reviewThreads"):
+            if not isinstance(branch, dict):
+                return out, False
+            branch = branch.get(key)
+        threads = branch
+        if not isinstance(threads, dict) or not isinstance(threads.get("nodes"), list):
+            return out, False
+        if not isinstance(threads.get("pageInfo"), dict):
+            return out, False
+        if type(threads["pageInfo"].get("hasNextPage")) is not bool:
+            return out, False
+        for node in threads["nodes"]:
+            if not isinstance(node, dict) or type(node.get("isResolved")) is not bool:
+                return out, False
+            comments = node.get("comments")
+            if not isinstance(comments, dict) or not comments.get("nodes"):
+                return out, False
+            first = comments["nodes"][0]
+            if (not isinstance(first, dict) or not isinstance(first.get("body"), str)
+                    or not isinstance(first.get("author"), dict)
+                    or not isinstance(first["author"].get("login"), str)):
+                return out, False
+            node_resolved = node["isResolved"]
+            if resolved is not None and node_resolved != resolved:
                 continue
-            rec = _own_thread_record(node, resolved=resolved)
+            rec = _own_thread_record(node, resolved=node_resolved)
             if rec is not None:
+                if resolved is None:
+                    rec["resolved"] = node_resolved
                 out.append(rec)
-        page = threads.get("pageInfo", {})
-        if not page.get("hasNextPage"):
+        page = threads["pageInfo"]
+        if page["hasNextPage"] is False:
             break
-        cursor = page.get("endCursor")
+        next_cursor = page.get("endCursor")
+        if not next_cursor or next_cursor == cursor:
+            return out, False
+        cursor = next_cursor
     else:
         complete = False  # the hard stop cut the walk short
     return out, complete
@@ -521,11 +547,12 @@ def fetch_thread_state(
     minimization pass (an earlier review round). The dedupe/history paths keep
     the older single-list fetchers — their failure mode is a duplicate
     finding, not a wrongly minimized live round."""
-    open_threads, open_complete = _fetch_own_threads(
-        token, repo, pr_number, resolved=False)
-    resolved_threads, resolved_complete = _fetch_own_threads(
-        token, repo, pr_number, resolved=True)
-    return open_threads, resolved_threads, open_complete and resolved_complete
+    # One traversal: separate open/resolved queries can both miss a thread
+    # reopened between them. GitHub is still live; branch conversation rules
+    # remain the final merge-time guard against later state changes.
+    threads, complete = _fetch_own_threads(token, repo, pr_number, resolved=None)
+    return ([t for t in threads if not t["resolved"]],
+            [t for t in threads if t["resolved"]], complete)
 
 
 def fetch_own_summaries(

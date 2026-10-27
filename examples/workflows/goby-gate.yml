@@ -1,0 +1,64 @@
+# Example only: copy to the target repo and replace REVIEWED_COMMIT_SHA.
+# Must exist on the default branch. No PR checkout or artifact download.
+name: Goby gate recheck
+
+on:
+  workflow_run:
+    workflows: [Goby review]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number
+        required: true
+      head:
+        description: Full current PR head SHA
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  gate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read the event's PR identity (not executable PR content)
+        id: target
+        shell: bash
+        env:
+          INPUT_PR: ${{ inputs.pr }}
+          INPUT_HEAD: ${{ inputs.head }}
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          let pr, head;
+          if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch') {
+            pr = process.env.INPUT_PR;
+            head = process.env.INPUT_HEAD;
+          } else {
+            const prs = event.workflow_run?.pull_requests ?? [];
+            if (prs.length !== 1) {
+              console.log('No unambiguous PR identity; no gate will be changed');
+              process.exit(0);
+            }
+            pr = String(prs[0].number);
+            head = prs[0].head.sha;
+          }
+          if (!/^[1-9][0-9]*$/.test(pr ?? '') || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head ?? '')) {
+            throw new Error('Invalid PR number or head SHA');
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `pr=${pr}\nhead=${head}\n`);
+          JS
+      - uses: Coral-Bricks-AI/goby@REVIEWED_COMMIT_SHA
+        if: steps.target.outputs.pr != ''
+        with:
+          mode: gate
+          pr-number: ${{ steps.target.outputs.pr }}
+          expected-head: ${{ steps.target.outputs.head }}

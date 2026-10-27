@@ -20,6 +20,7 @@ import os
 from goby import __version__
 
 STATUS_CONTEXT = "Goby Review"
+GATE_CONTEXT = "Goby Gate"
 MARKER = "goby"
 # Every summary's first line starts with this; the duplicate-run guard and the
 # summarize/minimize pass anchor on it rather than on finding prose.

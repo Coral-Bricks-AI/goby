@@ -12,15 +12,14 @@ the ones this diff superseded.
 
 Status state semantics: ``success`` means the review ran clean (findings or
 not, including skipped-because-too-large); ``error`` means the harness or the
-provider broke. It is never ``failure`` — that would read in the checks list
-as "the PR's code failed" when only the review died. If you gate merges on
-this status, error still blocks, which is what you want.
+provider broke. Review execution never uses ``failure``. Merge eligibility
+is a separate ``Goby Gate`` status; only that context should gate merges.
 """
 
 from __future__ import annotations
 
 from goby.core.contract import Finding
-from goby.identity import MARKER, REVIEW_VERSION, STATUS_CONTEXT
+from goby.identity import GATE_CONTEXT, MARKER, REVIEW_VERSION, STATUS_CONTEXT
 from goby.platforms.github import GitHubError, gh_graphql, gh_post
 
 # The version every review advertises in its summary comes from the
@@ -135,6 +134,17 @@ def resolve_thread(token: str, thread_id: str) -> dict:
     )
 
 
+def post_gate_status(
+    token: str, repo: str, sha: str, state: str, description: str,
+) -> dict:
+    """Publish merge eligibility, never conflated with review execution."""
+    if state not in {"pending", "success", "failure", "error"}:
+        raise ValueError(f"Invalid gate state: {state}")
+    return gh_post(f"/repos/{repo}/statuses/{sha}", token, {
+        "state": state, "context": GATE_CONTEXT, "description": description[:140],
+    })
+
+
 def post_status(
     token: str,
     repo: str,
@@ -152,8 +162,8 @@ def post_status(
     are threads, and "failure" would read in the checks list like the PR's
     code failed CI when only the harness did (the 2026-10-17 an earlier round 502:
     gateway queue-hop exhaustion, one transient blip, red X on the head).
-    "error" is also correct for the future gate: the automation requires
-    "success", so an error state still blocks a merge.
+    This is execution telemetry. ``post_gate_status`` publishes the separate
+    fail-closed merge eligibility verdict.
     """
     payload = {
         "state": state,
