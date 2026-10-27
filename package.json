@@ -1,0 +1,17 @@
+{
+  "name": "goby-review",
+  "version": "0.2.0-dev.0",
+  "private": true,
+  "type": "module",
+  "description": "Code review with kernel-checked review and gate policies",
+  "bin": { "goby": "./dist/cli.js" },
+  "scripts": {
+    "build": "bun build src/cli.ts --target=node --outfile=dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests-ts",
+    "proof": "bun run tests-ts/prove.ts",
+    "check": "bun run typecheck && bun run proof && bun run build && bun run test"
+  },
+  "dependencies": { "gdp-wired": "0.30.1" },
+  "devDependencies": { "@types/bun": "1.3.1", "typescript": "5.9.3" }
+}

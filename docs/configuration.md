@@ -1,75 +1,70 @@
 # Configuration
 
-Flags win over environment, environment wins over the provider's defaults.
+CLI flags override environment values; environment values override provider
+defaults. `goby` below means the linked CLI or `node /path/to/dist/cli.js`.
 
-## Provider and model
+## Provider
 
-| flag | env | meaning |
+| flag | environment | meaning |
 |---|---|---|
 | `--provider` | `GOBY_PROVIDER` | `coral` (default) or `openai` |
-| `--model` | `GOBY_MODEL` | model name; empty means the provider's default |
-| `--base-url` | `GOBY_BASE_URL` | endpoint override (self-hosted, proxy, staging) |
-| `--api-key-file` | — | `KEY=VALUE` file, default `~/.config/goby/api_key` |
+| `--model` | `GOBY_MODEL` | model name; otherwise provider default |
+| `--base-url` | `GOBY_BASE_URL` | override endpoint |
+| `--api-key-file` | — | `API_KEY=...` file; default `~/.config/goby/api_key` |
 
-Key resolution order: `GOBY_API_KEY`, then the provider's own variable
-(`CORALBRICKS_API_KEY`, `OPENAI_API_KEY`), then the key file.
+Key lookup: `GOBY_API_KEY`, then the provider's variable
+(`CORALBRICKS_API_KEY` or `OPENAI_API_KEY`), then the key file. `doctor`
+prints the source, never the key value. Agent mode requires Responses API;
+the one-turn path speaks chat completions. Providers live in
+`src/providers/index.ts`.
 
-`goby doctor` prints what all of that resolved to. Run it first when a review
-fails for a reason you did not expect.
+## Review
 
-A provider is a record in `src/goby/providers/__init__.py`:
-
-```python
-Provider(
-    name="acme",
-    base_url="https://inference.acme.internal",
-    api_key_env="ACME_KEY",
-    default_model="acme-reviewer-1",
-    supports_responses=True,   # needed for --agent
-)
-```
-
-## Review behaviour
-
-| flag | env | default | meaning |
-|---|---|---|---|
-| `--agent` | — | off (on in the action) | tool loop instead of one turn |
-| `--max-tool-turns` | `GOBY_MAX_TOOL_TURNS` | 10 (25 in the action) | turns that may call a tool; the forced final is one on top |
-| `--agent-wall-timeout` | `GOBY_WALL_TIMEOUT` | 600 (1200 in the action) | whole-review seconds |
-| `--max-diff-lines` | — | 10000 | above this the review is skipped, not failed |
-| `--max-findings` | — | 30 | rest go to the summary body |
-| `--timeout` | — | 300 | per model call, seconds |
-
-Budget exhaustion never fails a review: it forces a final answer with what the
-model already has and the summary and status say `budget exhausted`. The same
-is true for an answer cut off by the model's output limit (`answer truncated`).
-
-## Posting
-
-| flag | env | meaning |
+| flag | environment | default |
 |---|---|---|
-| `--repo` | `GITHUB_REPOSITORY` | `owner/name` |
-| `--token` | `GITHUB_TOKEN` | token for reads and posting |
-| `--dry-run` | — | everything except posting |
+| `--agent` | — | off locally; on in action |
+| `--max-tool-turns` | `GOBY_MAX_TOOL_TURNS` | 10 locally; 25 in action |
+| `--agent-wall-timeout` | `GOBY_WALL_TIMEOUT` | 600 seconds locally; 1200 in action |
+| `--max-diff-lines` | — | 10000 |
+| `--max-findings` | — | 30 |
+| `--timeout` | — | 300 seconds per model call |
+| `--expected-head` | — | unset; refuse stale workflow heads when set |
+| `--fail-on-blocked` | — | off locally; on in action |
+| `--force` | — | off; bypass completed-head reuse |
 
-`GOBY_BOT_LOGINS` (comma separated) is the set of logins whose comments count
-as "ours" for dedupe and thread resolution. Default
-`github-actions,github-actions[bot]`; set it if you run as a GitHub App.
+The runtime executes gdp-wired turn admission: up to the configured regular
+turns, followed by at most one forced final turn. Budget exhaustion and
+parseable output truncation can preserve useful findings but fail the gate.
+Oversized diffs skip the model and fail the gate. Malformed answers are errors.
 
-## Marker, status, version
+## GitHub and replay
 
-Defined once in `src/goby/identity.py`:
+`--repo` defaults to `GITHUB_REPOSITORY`, then the git origin. `--token`
+defaults to `GITHUB_TOKEN`. `--pr` reviews a live PR. `--diff-file` requires
+`--dry-run`; `--head-sha` and `--pr-hint` are replay-only flags. `--dry-run`
+never posts. `--output-file` writes JSON for review or gate commands.
 
-- `STATUS_CONTEXT = "Goby Review"` — the commit status and the first line of
-  every summary. A branch-protection rule targets this exact string.
-- `MARKER = "goby"` — the tag in the hidden comment marker. Changing it
-  orphans every thread posted before the change.
-- `REVIEW_VERSION` — the package version, advertised in every summary so a
-  review can always be attributed to the harness that produced it.
+`GOBY_BOT_LOGINS` is a comma-separated list of trusted authors; defaults are
+`github-actions,github-actions[bot]`. A dedicated GitHub App must configure
+its own login. This is an authorization boundary, not just display metadata.
 
-## Ignored paths
+## Action inputs
 
-Findings on lockfiles, minified assets, vendored trees and bulk data are
-dropped rather than reported, and the count appears in the summary. The lists
-are `_SKIP_EXACT` / `_SKIP_SUFFIX` / `_SKIP_PREFIX` in
-`src/goby/core/contract.py`.
+The source action exposes `provider`, `model`, `base-url`, `github-token`,
+`pr-number`, `expected-head`, `mode` (`review` or `gate`), `fail-on-blocked`,
+`max-tool-turns`, and `wall-timeout`. PR number/head default to the pull request
+event; supply them explicitly for workflow_run/dispatch. There is no package
+`version` input: pin the full action commit SHA.
+
+## Stable contracts
+
+`src/identity.ts` defines `Goby Review` (execution), `Goby Gate` (eligibility),
+the `goby` marker, bot identities, and version. Changing markers can orphan
+old threads. Receipts in `<!-- goby-gate {...} -->` carry schema version,
+full head, base ref, SHA-256 diff digest, completeness, mode, unthreaded count,
+and expected inline IDs. Older receipt schemas cannot grant eligibility.
+See [merge integration](merge-gate.md) for the gate prerequisites.
+
+Path filters are in `src/core/contract.ts`; transport/retry logic is in
+`src/providers/base.ts`. JavaScript regex syntax powers grep, with common
+Python flag/name compatibility; exotic Python constructs are not guaranteed.

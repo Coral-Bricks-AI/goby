@@ -489,7 +489,7 @@ def _candidate_arrays(text: str):
     yield best_dicts
 
 
-def parse_findings(text: str) -> list[Finding] | None:
+def parse_findings(text: str, *, strict: bool = False) -> list[Finding] | None:
     """Parse model output into validated, deduplicated findings.
 
     Return value distinguishes the two failure-like cases (an earlier review round:
@@ -504,6 +504,10 @@ def parse_findings(text: str) -> list[Finding] | None:
       empty content): the caller must treat the review as inconclusive,
       not as "No bugs found".
 
+    With strict=True, a malformed final block or an invalid entry makes the
+    whole answer inconclusive, rather than dropping a possible bug and
+    granting a merge. The default preserves the standalone parser API.
+
     If the model returns multiple fenced blocks (it should not), the last
     one wins: it is the final answer.
     """
@@ -516,14 +520,25 @@ def parse_findings(text: str) -> list[Finding] | None:
         try:
             parsed = json.loads(candidate)
         except json.JSONDecodeError:
+            if strict:
+                return None
             continue
         if not isinstance(parsed, list):
+            if strict:
+                return None
             continue
         findings: list[Finding] = []
         seen: set[tuple[str, int, str]] = set()
         for entry in parsed:
-            f = _coerce_finding(entry)
+            try:
+                f = _coerce_finding(entry)
+            except (ValueError, OverflowError, TypeError):
+                if strict:
+                    return None
+                raise
             if f is None:
+                if strict:
+                    return None
                 continue
             key = (f.path, f.line, f.title.lower())
             if key in seen:

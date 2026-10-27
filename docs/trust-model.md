@@ -7,8 +7,9 @@ you change the workflow.
 
 **The review never executes code from the pull request.**
 
-The action installs a pinned released version of goby and runs it against the
-GitHub API. The diff, every file the reviewer reads, and the repository
+The action runs its own source from the caller-pinned, reviewed Goby commit
+and talks to the GitHub API. It installs its own frozen build dependencies
+and bundles a Node CLI; no Python, PyPI install, or PR checkout is involved. The diff, every file the reviewer reads, and the repository
 instructions (`AGENTS.md`, `CLAUDE.md`) are fetched through the API pinned to
 the PR's **head sha**. Nothing from the PR is checked out, imported, or run.
 
@@ -24,7 +25,7 @@ environment. Do not do that. In particular:
 
 ## Why the token still needs care
 
-The review posts comments and a commit status, so it needs `pull-requests:
+The review posts comments and two commit statuses, so it needs `pull-requests:
 write` and `statuses: write`. Those permissions are exercised on your behalf,
 which means a bug in the *reviewer* could post something wrong. Two mitigations
 are built in:
@@ -48,8 +49,11 @@ Current posture:
   conventions, not instructions.
 - The blast radius is limited to what the reviewer can do: comment and set a
   status. It cannot change code.
-- A review that is talked into reporting nothing still only produces a green
-  status — it does not approve, and it cannot merge.
+- A review that is talked into reporting nothing can still produce a green
+  gate. The gate proves that evidence satisfies a policy, not that the model
+  resisted an injection or found every bug. Goby does not approve or merge.
+  Any downstream merger must enforce CI, required checks, and an exact-head
+  comparison; see [merge-gate integration](merge-gate.md).
 
 Open work: fetching convention files from the **base** branch for pull requests
 that come from forks, and refusing instruction-shaped content in the context
@@ -63,7 +67,13 @@ block. Contributions welcome — see `docs/extensions.md`.
   the default action cannot review a fork PR without a key. Options: review
   forks with a key you own from a trusted workflow, or require a maintainer
   label before the review job runs.
+- The generated workflow skips fork PRs instead of attempting to use missing
+  secrets. The example privileged gate handoff accepts same-repository runs
+  and validated PR/head identifiers only; it never reads artifacts as code.
 - `GOBY_BOT_LOGINS` exists because the dedupe has to recognise its own
   threads. Under GitHub Actions they arrive as `github-actions[bot]` (REST) and
   `github-actions` (GraphQL); a GitHub App must set its own login or
-  re-reviews will not see their earlier threads.
+  re-reviews will not see their earlier threads. The gate uses those same
+  authors to authenticate receipts. With `GITHUB_TOKEN`, other trusted
+  workflows share the bot identity: protect workflow edits, or use a dedicated
+  App with a narrowly configured login and publisher restriction.

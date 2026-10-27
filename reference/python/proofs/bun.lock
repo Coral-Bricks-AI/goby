@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "devDependencies": {
+        "gdp-wired": "0.30.1",
+      },
+    },
+  },
+  "packages": {
+    "gdp-wired": ["gdp-wired@0.30.1", "", { "peerDependencies": { "@gdp-ts/core": ">=0.1.0", "typescript": ">=5.0.0" }, "optionalPeers": ["@gdp-ts/core", "typescript"] }, "sha512-kWCD7JQuLfCbNQyqu+v52kpGjhiFwFqFyOWVZP6VrrS984Rr1vFmUsQlGFxi4a3sRZpYDODnQWGGvPICdydBwA=="],
+  }
+}
