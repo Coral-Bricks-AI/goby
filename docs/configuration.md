@@ -37,6 +37,12 @@ turns, followed by at most one forced final turn. Budget exhaustion and
 parseable output truncation can preserve useful findings but fail the gate.
 Oversized diffs skip the model and fail the gate. Malformed answers are errors.
 
+`grep` reads files in batches of 100 through one GraphQL request each, instead
+of one contents request per file: a directory search that cost 200 requests now
+costs 2. Per-file reads still use the contents API, and the same 1 MiB per-file
+limit and read windows apply on both paths, so a review cannot depend on which
+transport served a file.
+
 ## GitHub and replay
 
 `--repo` defaults to `GITHUB_REPOSITORY`, then the git origin. `--token`

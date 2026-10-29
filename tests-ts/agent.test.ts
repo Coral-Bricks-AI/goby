@@ -57,6 +57,8 @@ class FakeGitHub extends GitHubClient {
   failFile: string | undefined;
   failTree = false;
   failListing = false;
+  textBatches: string[][] = [];
+  failText: string | undefined;
   constructor(files: Record<string, string | null> = {}) {
     super('o/r', 'tok', { fetch: Object.assign(async () => { throw new Error('unexpected network'); }, { preconnect() {} }) });
     this.files = files;
@@ -79,6 +81,13 @@ class FakeGitHub extends GitHubClient {
   }
   override async fetch_path_history(path: string, ref: string, limit = 10) {
     this.histories.push([path, ref, limit]); return this.history;
+  }
+  override async fetch_texts(_ref: string, paths: readonly string[]): Promise<Map<string, string | null>> {
+    this.textBatches.push([...paths]);
+    if (this.failText && paths.includes(this.failText)) throw new GitHubError(502, '/graphql', 'unavailable');
+    const out = new Map<string, string | null>();
+    for (const path of paths) out.set(path, this.files[path] ?? null);
+    return out;
   }
 }
 function box(files: Record<string, string | null> = {}, paths = Object.keys(files)) {
@@ -418,7 +427,8 @@ describe('bounded grep and repository map', () => {
     github.tree[1] = true;
     const out = await tools.grep('needle', 'src');
     expect(out).toContain('GitHub truncated the tree listing'); expect(out).toContain(`truncated at ${GREP_MAX_FILES} files`);
-    expect(github.reads).toHaveLength(GREP_MAX_FILES);
+    // Batches of 100, not one contents request per file.
+    expect(github.textBatches).toHaveLength(Math.ceil(GREP_MAX_FILES / 100)); expect(github.reads).toEqual([]);
     const second = box(files);
     const diffOut = await second.tools.grep('needle');
     expect(diffOut).toContain(`the diff's changed files (truncated at ${GREP_MAX_FILES} files)`);
@@ -449,7 +459,7 @@ describe('bounded grep and repository map', () => {
     for (const pattern of ['(a+)+$', '(a*)*b', '(?:a+)+', '(?P<x>a*)*b', '(?i:a+)+', '((a+))+']) expect(_risky_pattern(pattern)).toBe(true);
     for (const pattern of ['(a+)', '(a+)(b+)', '(?:foo|bar)+', '(?<=ab)c+', '(?P<name>a|b)+', '(?i)CASE', '\\* pointer', '[()+*]']) expect(_risky_pattern(pattern)).toBe(false);
     const { tools, github } = box({ 'a.py': 'foobar\nCASE\n' });
-    expect(await tools.grep('(a+)+')).toContain('pattern rejected'); expect(github.reads).toHaveLength(0);
+    expect(await tools.grep('(a+)+')).toContain('pattern rejected'); expect(github.textBatches).toHaveLength(0);
     expect(await tools.grep('*broken(')).toContain('invalid regular expression');
     expect(await tools.grep('(?:foo|bar)+')).toContain('foobar');
     expect(await tools.grep('(?i)case')).toContain('CASE');
@@ -460,7 +470,7 @@ describe('bounded grep and repository map', () => {
     const { tools, github } = box();
     for (const pattern of ['', null, 2]) expect(await tools.grep(pattern)).toContain('non-empty string pattern');
     for (const context of [true, -1, 4, '2', 1.2, NaN]) expect(await tools.grep('x', '', context)).toContain('between 0 and 3');
-    expect(github.reads).toHaveLength(0);
+    expect(github.textBatches).toHaveLength(0);
   });
 
   test('grep searches past column 400 but visibly clips only the display', async () => {
@@ -486,8 +496,9 @@ describe('bounded grep and repository map', () => {
     expect(out).toContain(`  a.py:${GREP_MAX_MATCHES + 3}:`);
     expect(out).not.toContain(`a.py:${GREP_MAX_MATCHES + 4}:`); expect(out).not.toContain('b.py:');
     expect(out).toContain(`match cap reached at ${GREP_MAX_MATCHES}`);
+    expect(github.textBatches).toHaveLength(1); // both files in one request, not two files, two requests
     expect(await tools.dispatch('grep', args)).not.toContain('already answered');
-    expect(github.reads).toHaveLength(1);
+    expect(github.textBatches).toHaveLength(2); // a retried call refetches once
   });
 
   test('cap reached at EOF stays capped instead of caching a partial result as complete', async () => {
@@ -505,25 +516,31 @@ describe('bounded grep and repository map', () => {
     expect(out).toContain('2 file(s) fetched but skipped');
   });
 
-  test('cache exhaustion keeps earlier matches and does not claim later files are missing', async () => {
+  test('reading many files does not consume the grep path: batches, not the read cache', async () => {
     const files = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`f${i}`, 'x'.repeat(500_000)]));
-    const { tools } = box(files, ['f9']);
+    const { tools, github } = box(files, ['f9']);
     for (let i = 0; i < 8; i++) await tools.read_file(`f${i}`);
-    const out = await tools.grep('needle');
-    expect(out).toContain('file cache full'); expect(out).toContain('no files were searched'); expect(out).not.toContain('unreadable');
+    const out = await tools.grep('x', 'f9');
+    // 500 KB files would exhaust the read cache; the search is unaffected.
+    expect(out).toContain('searched 1 file(s)'); expect(out).not.toContain('file cache full');
+    expect(github.textBatches).toHaveLength(1);
   });
 
-  test('fetch failure before scanning is not no-matches, later failure retains discovered matches, retries run again', async () => {
-    const { tools, github } = box({ 'a.py': 'needle', 'b.py': 'needle' });
-    github.failFile = 'a.py';
+  test('a failed batch is not no-matches; earlier batches keep their matches and a retry runs again', async () => {
+    const files = Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`f${String(i).padStart(3, '0')}.py`, i === 0 ? 'needle' : 'absent']));
+    const { tools, github } = box(files);
+    github.failText = 'f000.py';
     const none = await tools.grep('needle');
     expect(none).toContain('no files were searched'); expect(none).not.toContain('no matches');
-    github.failFile = 'b.py';
+    // The second batch fails: the first batch's match survives, and the failure
+    // is reported as a failure rather than as unreadable or as no matches.
+    github.failText = 'f100.py';
     const partial = await tools.dispatch('grep', '{"pattern":"needle"}');
-    expect(partial).toContain('a.py:1: needle'); expect(partial).toContain('GitHub API failure reading b.py');
-    github.failFile = undefined;
+    expect(partial).toContain('f000.py:1: needle'); expect(partial).toContain('GitHub API failure reading f100.py');
+    expect(partial).not.toContain('unreadable');
+    github.failText = undefined;
     const complete = await tools.dispatch('grep', '{"pattern":"needle"}');
-    expect(complete).toContain('b.py:1: needle');
+    expect(complete).toContain('searched 101 file(s)'); expect(complete).not.toContain('failure');
     expect(await tools.dispatch('grep', '{"pattern":"needle"}')).toContain('already answered');
   });
 
@@ -569,3 +586,4 @@ describe('bounded grep and repository map', () => {
     expect(tools.scans).toBe(2);
   });
 });
+

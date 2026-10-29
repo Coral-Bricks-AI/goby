@@ -7,7 +7,8 @@ foundation**. It reads code around a pull request, posts bugs on the exact
 lines, and keeps review completion separate from merge eligibility.
 
 - **Reads before it reports:** a bounded tool loop with `read_file`,
-  `list_dir`, `grep`, and `file_history`.
+  `list_dir`, `grep`, and `file_history`. Multi-file reads are batched: one
+  GraphQL request per 100 files instead of one request per file.
 - **Bugs only:** a findings contract, strict parser, and retraction filter.
 - **Re-reviews without repeating itself:** deduplication, resolved-thread
   history, and cleanup of outdated threads.
