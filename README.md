@@ -31,19 +31,43 @@ node dist/cli.js --help
 # Optional: bun link makes the local `goby` command available.
 ```
 
+`goby doctor` reports the resolved endpoint, model and credential source.
+`goby doctor --deep` additionally spends two real turns against the provider: it
+makes the model call a tool, then resends the whole transcript for a second
+turn, and fails unless every request carried `store: false` and no
+`previous_response_id`. Run it after configuring a key, and whenever a gateway
+or organization retention setting changes — an organization with zero data
+retention cannot serve a stored-turn continuation, and a review that cannot
+run a second turn posts nothing.
+
+```sh
+node dist/cli.js doctor --deep
+```
+
 `gdp-wired` is the sole direct runtime dependency. No Python, PyPI package,
 or unpublished major tag is needed. Publishing remains owner-controlled.
 
 ## Add it to a repository
 
-From the target repo, run the built CLI and pin a **reviewed full Goby SHA**:
+From the target repo, run the built CLI and pin a **reviewed full Goby SHA**.
+`--ref` also accepts a release tag such as `v0.3.0`, which is resolved to the
+commit it names: the workflow always ends up pinned to a commit, never a tag.
 
 ```sh
+node /path/to/goby/dist/cli.js init --ref v0.3.0
 node /path/to/goby/dist/cli.js init --ref <full-goby-commit-sha>
 ```
 
 Add the `CORALBRICKS_API_KEY` repository secret, commit the generated workflow,
-and require **Goby Gate** plus CI in branch protection. The action builds only
+and require **Goby Gate** plus CI in branch protection. Move the pin later with
+one command instead of hand-editing the YAML:
+
+```sh
+node /path/to/goby/dist/cli.js pin --ref v0.3.1 --dry-run
+node /path/to/goby/dist/cli.js pin --ref v0.3.1
+```
+
+The action builds only
 its own pinned source and never checks out PR code. Fork PRs are skipped by
 the generated workflow; see the [trust model](docs/trust-model.md).
 

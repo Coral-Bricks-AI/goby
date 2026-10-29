@@ -3,7 +3,7 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import {mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
-import {workflowTemplate} from '../src/cli.ts';
+import {workflowTemplate, pin_rewrite, resolve_ref} from '../src/cli.ts';
 
 const root = resolve(import.meta.dir, '..');
 const binary = join(root, 'dist/cli.js');
@@ -11,9 +11,9 @@ const cleanEnv = {...process.env, GOBY_API_KEY: '', CORALBRICKS_API_KEY: '', OPE
 function node(args: string[], cwd = root) { return spawnSync('node', [binary, ...args], {cwd, env: cleanEnv, encoding: 'utf8'}); }
 
 test('bundle runs as a Node CLI without Python', () => {
-  expect(node(['version']).stdout.trim()).toBe('0.2.0-dev.0');
+  expect(node(['version']).stdout.trim()).toBe('0.3.0');
   const h = node(['--help']); expect(h.status).toBe(0); expect(h.stdout).toContain('goby gate');
-  for (const command of ['review', 'gate', 'init', 'doctor']) expect(node([command, '--help']).status).toBe(0);
+  for (const command of ['review', 'gate', 'init', 'pin', 'doctor']) expect(node([command, '--help']).status).toBe(0);
   expect(node(['nonsense']).status).toBe(1);
 });
 test('init requires a full immutable pin and does not overwrite', () => {
@@ -29,6 +29,40 @@ test('init requires a full immutable pin and does not overwrite', () => {
     expect(text).toContain('ready_for_review, edited');
     expect(text).toContain('head.repo.full_name == github.repository');
     expect(node(['init', '--ref', sha], cwd).status).toBe(1);
+  } finally { rmSync(cwd, {recursive: true, force: true}); }
+});
+test('pin moves a full-SHA pin and leaves tags and prose alone', async () => {
+  const old = 'b'.repeat(40), next = 'c'.repeat(40);
+  const workflow = `      - uses: Coral-Bricks-AI/goby@${old}\n# see Coral-Bricks-AI/goby@${old} in the docs\n      - uses: Coral-Bricks-AI/goby@v0.3.0\n`;
+  const single = pin_rewrite(workflow.replace(`@${old}\n# see`, '@v0.3.0\n# see'), next);
+  expect(single.occurrences).toBe(1);
+  expect(single.previous).toEqual([old]);
+  expect(single.updated).toContain(`Coral-Bricks-AI/goby@${next}`);
+  const both = pin_rewrite(workflow, next);
+  expect(both.occurrences).toBe(2);
+  expect(both.updated).not.toContain(old);
+  expect(both.updated).toContain('Coral-Bricks-AI/goby@v0.3.0'); // tag pins are not rewritten
+  expect(pin_rewrite(both.updated, next).occurrences).toBe(2); // idempotent
+  expect(pin_rewrite(both.updated, next).updated).toBe(both.updated);
+  expect(pin_rewrite('uses: Coral-Bricks-AI/goby@main', next).occurrences).toBe(0);
+  // A ref that is neither a full SHA nor a release tag is rejected before any network.
+  for (const bad of ['main', 'v1', 'v0.1', 'HEAD', 'a'.repeat(39)]) await expect(resolve_ref(bad, 'Coral-Bricks-AI/goby', undefined)).rejects.toThrow();
+  expect(await resolve_ref(old, 'Coral-Bricks-AI/goby', undefined)).toBe(old);
+});
+test('pin CLI rewrites only the pinned workflow file', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'goby-pin-'));
+  try {
+    const file = join(cwd, 'goby-review.yml');
+    const old = 'b'.repeat(40), next = 'd'.repeat(40);
+    writeFileSync(file, `jobs:\n  review:\n    steps:\n      - uses: Coral-Bricks-AI/goby@${old}\n`);
+    expect(node(['pin'], cwd).status).toBe(1); // no --ref
+    const dry = node(['pin', '--ref', next, '--file', file, '--dry-run'], cwd);
+    expect(dry.status).toBe(0);
+    expect(JSON.parse(dry.stdout)).toMatchObject({pinned: next, previous: [old], occurrences: 1, changed: true, dry_run: true});
+    expect(readFileSync(file, 'utf8')).toContain(old); // dry run writes nothing
+    expect(node(['pin', '--ref', next, '--file', file], cwd).status).toBe(0);
+    expect(readFileSync(file, 'utf8')).toContain(`Coral-Bricks-AI/goby@${next}`);
+    expect(node(['pin', '--ref', next], cwd).status).toBe(1); // no workflow at the default path
   } finally { rmSync(cwd, {recursive: true, force: true}); }
 });
 test('invalid CLI options fail before any network', () => {

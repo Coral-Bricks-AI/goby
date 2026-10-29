@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import {parseArgs} from 'node:util';
-import {mkdir, writeFile, access} from 'node:fs/promises';
+import {mkdir, writeFile, access, readFile} from 'node:fs/promises';
 import {dirname, resolve} from 'node:path';
 import {homedir} from 'node:os';
 import {pathToFileURL} from 'node:url';
-import {review, repoFromRemote, type ReviewOptions} from './core/review.ts';
+import {review, repoFromRemote, readKeyFile, type ReviewOptions} from './core/review.ts';
 import {refreshGate} from './core/gate.ts';
+import {run_canary} from './core/canary.ts';
 import {validSha} from './core/verdict.ts';
 import {GitHubClient} from './platforms/github.ts';
 import {resolve_provider} from './providers/index.ts';
@@ -16,8 +17,9 @@ const help = `goby — code review backed by kernel-checked policies
   goby review --pr NUMBER --agent --fail-on-blocked
   goby review --diff-file FILE --dry-run [--agent]
   goby gate --pr NUMBER [--expected-head SHA] [--dry-run]
-  goby init [coral|openai] --ref FULL_GOBY_COMMIT_SHA
-  goby doctor [coral|openai]
+  goby init [coral|openai] --ref TAG_OR_SHA
+  goby pin --ref TAG_OR_SHA [--file PATH] [--dry-run]
+  goby doctor [coral|openai] [--deep]
   goby version
 
 Review options: --repo owner/name, --token TOKEN, --model MODEL,
@@ -25,6 +27,9 @@ Review options: --repo owner/name, --token TOKEN, --model MODEL,
 --head-sha SHA, --pr-hint NUMBER, --max-tool-turns N, --agent-wall-timeout S,
 --max-diff-lines N, --max-findings N, --timeout S, --force.
 Gate options: --repo, --token, --expected-head, --dry-run, --output-file FILE.
+Pin options: --ref TAG_OR_SHA (tags resolve to the commit they point at),
+--file PATH (default .github/workflows/goby-review.yml), --repo owner/name
+(default Coral-Bricks-AI/goby), --all, --dry-run.
 `;
 function numberOption(value: string | boolean | undefined, fallback: number, name: string, integer = true, allowZero = false): number {
   if (value === undefined) return fallback;
@@ -65,6 +70,30 @@ jobs:
 `;
 }
 export interface CLIIO {out?: (text: string) => void; error?: (text: string) => void}
+const PIN_PATTERN = /Coral-Bricks-AI\/goby@([0-9a-f]{40}|[0-9a-f]{64})/g;
+const RELEASE_TAG = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+
+/** Rewrite every full-SHA pin of this action; leave tags, branches and prose alone. */
+export function pin_rewrite(text: string, sha: string): {updated: string; previous: string[]; occurrences: number} {
+  const found = [...text.matchAll(PIN_PATTERN)];
+  return {updated: text.replace(PIN_PATTERN, `Coral-Bricks-AI/goby@${sha}`),
+    previous: [...new Set(found.map(m => m[1]!))], occurrences: found.length};
+}
+
+/** A release tag is a human handle; the workflow still pins the commit it names. */
+export async function resolve_ref(ref: string, repo: string, token: string | undefined): Promise<string> {
+  if (validSha(ref)) return ref;
+  if (!RELEASE_TAG.test(ref)) throw new Error('--ref must be a full commit SHA or a release tag such as v0.3.0');
+  const client = new GitHubClient(repo, token ?? '');
+  const pointer = JSON.parse(await client.get(`/repos/${repo}/git/ref/tags/${encodeURIComponent(ref)}`)) as {object?: {type?: string; sha?: string}};
+  let sha = pointer.object?.sha ?? '';
+  if (pointer.object?.type === 'tag') {
+    const tag = JSON.parse(await client.get(`/repos/${repo}/git/tags/${encodeURIComponent(sha)}`)) as {object?: {sha?: string}};
+    sha = tag.object?.sha ?? '';
+  }
+  if (!validSha(sha)) throw new Error(`tag ${ref} in ${repo} does not name a commit`);
+  return sha;
+}
 export async function main(argv: string[] = process.argv.slice(2), io: CLIIO = {}): Promise<number> {
   const out = io.out ?? console.log;
   const error = io.error ?? console.error;
@@ -74,25 +103,53 @@ export async function main(argv: string[] = process.argv.slice(2), io: CLIIO = {
   if (args.includes('--help') || args.includes('-h')) { out(help); return 0; }
   try {
     if (command === 'init') {
-      const parsed = parseArgs({args, allowPositionals: true, options: {ref: {type: 'string'}}});
-      if (!parsed.values.ref) throw new Error('goby init requires --ref FULL_GOBY_COMMIT_SHA');
+      const parsed = parseArgs({args, allowPositionals: true, options: {ref: {type: 'string'}, repo: {type: 'string'}, token: {type: 'string'}}});
+      if (!parsed.values.ref) throw new Error('goby init requires --ref FULL_GOBY_COMMIT_SHA or a release tag');
       if (parsed.positionals.length > 1) throw new Error('Expected at most one provider name');
       const provider = resolve_provider(parsed.positionals[0]);
+      // A tag is only a handle: the workflow still gets the immutable commit.
+      const ref = await resolve_ref(parsed.values.ref, parsed.values.repo ?? 'Coral-Bricks-AI/goby', parsed.values.token ?? process.env.GITHUB_TOKEN);
       const target = resolve('.github/workflows/goby-review.yml');
-      const text = workflowTemplate(parsed.values.ref, provider.name);
+      const text = workflowTemplate(ref, provider.name);
       await mkdir(dirname(target), {recursive: true});
       await writeFile(target, text, {flag: 'wx'});
-      out(`Wrote ${target}\nAdd ${provider.api_key_env} as a repository secret. Require Goby Gate and CI, not Goby Review. See docs/merge-gate.md for a workflow_run handoff.`);
+      out(`Wrote ${target} pinning Coral-Bricks-AI/goby@${ref}.\nAdd ${provider.api_key_env} as a repository secret. Require Goby Gate and CI, not Goby Review. See docs/merge-gate.md for a workflow_run handoff.`);
+      return 0;
+    }
+    if (command === 'pin') {
+      const parsed = parseArgs({args, options: {ref: {type: 'string'}, file: {type: 'string'}, repo: {type: 'string'},
+        token: {type: 'string'}, all: {type: 'boolean'}, 'dry-run': {type: 'boolean'}}});
+      if (!parsed.values.ref) throw new Error('goby pin requires --ref TAG_OR_SHA');
+      const sourceRepo = parsed.values.repo ?? 'Coral-Bricks-AI/goby';
+      const file = resolve(parsed.values.file ?? '.github/workflows/goby-review.yml');
+      const sha = await resolve_ref(parsed.values.ref, sourceRepo, parsed.values.token ?? process.env.GITHUB_TOKEN);
+      const text = await readFile(file, 'utf8');
+      const {updated, previous, occurrences} = pin_rewrite(text, sha);
+      if (!occurrences) throw new Error(`no Coral-Bricks-AI/goby@<full sha> pin in ${file}`);
+      if (occurrences > 1 && !parsed.values.all) throw new Error(`${file} pins Goby ${occurrences} times; pass --all to update every pin`);
+      out(JSON.stringify({file, repo: sourceRepo, ref: parsed.values.ref, pinned: sha, previous,
+        occurrences, changed: updated !== text, dry_run: Boolean(parsed.values['dry-run'])}, null, 2));
+      if (!parsed.values['dry-run'] && updated !== text) await writeFile(file, updated);
       return 0;
     }
     if (command === 'doctor') {
-      if (args.length > 1) throw new Error('Expected at most one provider name');
-      const provider = resolve_provider(args[0]);
+      const parsed = parseArgs({args, allowPositionals: true, options: {deep: {type: 'boolean'},
+        model: {type: 'string'}, 'base-url': {type: 'string'}, 'api-key-file': {type: 'string'}, timeout: {type: 'string'}}});
+      if (parsed.positionals.length > 1) throw new Error('Expected at most one provider name');
+      const provider = resolve_provider(parsed.positionals[0]);
       let keySource = process.env.GOBY_API_KEY ? '$GOBY_API_KEY' : process.env[provider.api_key_env] ? `$${provider.api_key_env}` : 'missing';
       if (keySource === 'missing') { try { await access(resolve(homedir(), '.config/goby/api_key')); keySource = '~/.config/goby/api_key'; } catch {} }
       out(JSON.stringify({version: REVIEW_VERSION, provider: provider.name, endpoint: provider.base_url, model: process.env.GOBY_MODEL || provider.default_model,
         key_source: keySource, github_token: Boolean(process.env.GITHUB_TOKEN), responses_api: provider.supports_responses}, null, 2));
-      return keySource === 'missing' ? 1 : 0;
+      if (!parsed.values.deep) return keySource === 'missing' ? 1 : 0;
+      if (keySource === 'missing') throw new Error('--deep needs a key: set GOBY_API_KEY, the provider key, or --api-key-file');
+      const key = process.env.GOBY_API_KEY || process.env[provider.api_key_env] || await readKeyFile(String(parsed.values['api-key-file'] ?? '~/.config/goby/api_key'));
+      const canary = await run_canary({api_key: key,
+        model: String(parsed.values.model ?? process.env.GOBY_MODEL ?? provider.default_model ?? ''),
+        base_url: String(parsed.values['base-url'] ?? process.env.GOBY_BASE_URL ?? provider.base_url),
+        timeout_s: numberOption(parsed.values.timeout, 120, '--timeout', false)});
+      out(JSON.stringify({deep: canary}, null, 2));
+      return canary.ok ? 0 : 1;
     }
     if (command !== 'review' && command !== 'gate') throw new Error(`Unknown command: ${command}`);
     const {values: v} = parseArgs({args, options: {

@@ -9,6 +9,7 @@ bun install --frozen-lockfile --ignore-scripts
 bun run build
 node dist/cli.js version
 git rev-parse HEAD  # record this reviewed revision's full SHA
+node dist/cli.js doctor --deep  # spend two real turns: tools + a resent transcript
 ```
 
 The bundle runs on Node 20+. Bun is needed for source builds, not for running
@@ -17,7 +18,22 @@ From your target repository:
 
 ```sh
 node /path/to/goby/dist/cli.js init --ref <reviewed-full-goby-commit-sha>
+node /path/to/goby/dist/cli.js init --ref v0.3.0   # tag resolves to its commit
 ```
+
+A tag is only a handle: `init` and `pin` always write the full commit SHA into
+the workflow. Upgrade an existing pin in place instead of hand-editing YAML:
+
+```sh
+node /path/to/goby/dist/cli.js pin --ref v0.3.1 --dry-run
+node /path/to/goby/dist/cli.js pin --ref v0.3.1
+```
+
+`doctor --deep` is the live transport canary: two model turns, an exercised tool
+round trip, and a hard failure unless every request was stateless
+(`store: false`, no `previous_response_id`). Run it after configuring a key and
+after any gateway or retention-policy change; a review that cannot run a second
+turn posts nothing.
 
 Add the `CORALBRICKS_API_KEY` repository secret and commit the generated
 `.github/workflows/goby-review.yml`. `init openai --ref <sha>` uses the OpenAI
