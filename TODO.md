@@ -5,8 +5,7 @@
 Goby is TypeScript with a bundled Node CLI. The action builds its own pinned
 source using the frozen Bun lockfile; no package publication is necessary.
 `gdp-wired` supplies the production gate decision, turn admission, and review
-lifecycle. Nineteen laws are kernel-checked in CI. Python is frozen under
-`reference/python/` solely for migration evidence.
+lifecycle. Nineteen laws are kernel-checked in CI.
 
 ## Before replacing Devin in production
 

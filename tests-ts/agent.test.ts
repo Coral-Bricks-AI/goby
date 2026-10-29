@@ -282,7 +282,7 @@ describe('read-only ToolBox', () => {
     expect(github.reads).toEqual([['deadbeef', path]]);
   });
 
-  test('offset validation, slicing, empty file and Python splitlines semantics', async () => {
+  test('offset validation, slicing, and splitlines semantics', async () => {
     const { tools } = box({ 'a.py': 'a\r\nb\rc\u2028d\n', empty: '' });
     expect(await tools.read_file('a.py', 2)).toBe('b\nc\nd');
     expect(await tools.read_file('empty')).toBe('');
@@ -310,7 +310,7 @@ describe('read-only ToolBox', () => {
     expect(last).toContain('cannot be read with offsets'); expect(last).not.toContain('offset=');
   });
 
-  test('read limits count Unicode characters as Python does, not UTF-16 units', async () => {
+  test('read limits count Unicode code points, not UTF-16 units', async () => {
     const { tools } = box({ 'a.py': '😀'.repeat(READ_MAX_CHARS) });
     const out = await tools.read_file('a.py');
     expect(out).not.toContain('truncated'); expect(Array.from(out)).toHaveLength(READ_MAX_CHARS);

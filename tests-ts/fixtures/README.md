@@ -1,20 +1,27 @@
-# Contract and diff parity corpus
+# Contract and diff corpus
 
-Regenerate offline from the unmodified Python reference:
+`contract-diff.json` is a checked-in fixture corpus: 453 recorded calls plus the
+exact system prompt, covering the pure contract and diff behavior. `bun test`
+loads it as JSON; nothing else is involved at test time.
 
-```sh
-python3 tests-ts/fixtures/generate_contract_diff.py
-bun test tests-ts/contract.test.ts tests-ts/diff.test.ts
-```
+The corpus was captured while porting Goby from its Python prototype, and that
+prototype is gone. It is a **fixture now, not a generated artifact**: there is no
+regenerator, edits are made by hand or by adding tests in
+`tests-ts/contract.test.ts` and `tests-ts/diff.test.ts`.
 
-The generator AST-extracts 77 pure tests from the frozen
-`reference/python/tests/test_harness.py`. It does
-not import the harness's platform/provider modules, require pytest, call a
-model, or use the network. It checks the original assertions, records calls
-and pre-mutation argument snapshots, then adds deterministic strict-parser,
-Unicode, SequenceMatcher/autojunk, thread, prompt, and malformed-diff probes.
-`contract-diff.json` contains 453 reference calls and the exact system prompt.
-Bun runs that checked-in corpus without requiring Python at test time.
+Read it as *behaviors we pin*, including the ones that look arbitrary — they were
+specific bugs or silent-failure modes in an earlier review of the same code:
+
+| pinned behavior | why |
+|---|---|
+| sizes and read windows counted in Unicode code points, not UTF-16 units | a 4-byte emoji is one character in a file or read budget; counting units makes a "120k character" read silently shorter for non-ASCII code |
+| `SequenceMatcher` matching blocks, asymmetric tie-breaking, normalization, 200-character autojunk | hunk ranges decide which lines GitHub lets us comment on; a different diff algorithm moves comments to the wrong lines |
+| the strict parser accepts exactly the documented findings shapes and nothing else | a lenient parser turns model prose into posted findings |
+| retraction boundaries are Unicode-aware and whitespace-explicit | a retracted claim must not resurface because of spacing or a dotted/dotless I |
+| line coordinates are numbers or numeric strings, `end_line` is never `undefined` | a published finding's position is the one thing a reviewer cannot fix after the fact |
+
+If one of these assertions is in your way, read its reason above before changing
+it: most of them cost someone a wrong comment.
 
 ## Public integration surface
 
@@ -26,47 +33,42 @@ Bun runs that checked-in corpus without requiring Python at test time.
   as well as numbers are accepted. Extra fields on existing record types are
   retained, and `plan_thread_resolution<T>` returns those same objects.
 - `parse_findings(text, {strict: true})` (also `parse_findings(text, true)`) returns
-  `Finding[] | null`. It does not itself filter paths or drop retractions, matching
-  Python's separation of those operations.
-- Python snake_case names and tuple return order are retained. `Hunks` is a
-  path-keyed object; `parse_hunks` uses a null prototype so all file names are safe.
-  `Hunk` accepts `{new_start, new_count}`.
-- `build_user_prompt` retains Python's positional argument order, including
-  nullable optional lists, PR intent, and repository map.
+  `Finding[] | null`. It does not itself filter paths or drop retractions; path
+  filtering and retraction are separate, composable steps.
+- The public names keep the original `snake_case` spelling and tuple return
+  order, so the corpus and the call sites read the same. `Hunks` is a path-keyed
+  object; `parse_hunks` uses a null prototype so all file names are safe. `Hunk`
+  accepts `{new_start, new_count}`.
+- `build_user_prompt` keeps a positional argument order, including nullable
+  optional lists, PR intent, and repository map.
 
-## Parity boundaries
+## Boundaries
 
-Normal file coordinates and all original covered regressions match the reference.
-The SequenceMatcher implementation preserves Python's matching-block algorithm,
-asymmetric tie-breaking, normalization, Unicode code-point indexing, and the
-200-character autojunk threshold; it is not a Levenshtein approximation.
+The SequenceMatcher implementation preserves matching-block behavior, asymmetric
+tie-breaking, normalization, Unicode code-point indexing, and the 200-character
+autojunk threshold; it is not a Levenshtein approximation. Normal file
+coordinates and every originally covered regression are pinned here.
 
-JavaScript numbers are not Python arbitrary-precision integers. Beyond 2^53,
-coordinates can lose precision (and extreme integer literals beyond the JS
-finite range become non-finite). Large finite `end_line` values are accepted,
-and `NaN`, `Infinity`, and overflowing float exponents are handled. The corpus's
-large-integer regression verifies acceptance, not arbitrary-precision equality;
-JSON loading the expected corpus also uses JavaScript numbers. Do not infer
-bigint parity from that test. Non-finite line values raise RangeError in lenient
-mode and return null in strict mode, corresponding to Python's conversion error.
+Coordinates are JavaScript numbers, so beyond 2^53 they can lose precision (and
+extreme integer literals beyond the finite range become non-finite). The
+corpus's large-integer regression verifies acceptance, not arbitrary-precision
+equality — loading the expected corpus also uses JavaScript numbers, so do not
+infer more precision from it than that. Non-finite line values raise `RangeError`
+in lenient mode and return `null` in strict mode.
 
-JavaScript and Python can ship different Unicode database/case-folding versions.
-Retraction word boundaries and whitespace are explicitly Unicode-aware, but
-Python's special case-insensitive regex equivalences (notably dotted/dotless I)
-and lone-surrogate UTF-8 error behavior are not guaranteed identical. Typed
-constructors/coordinate inputs are designed for their declared types; arbitrary
-Python runtime coercions of invalid arguments are not emulated.
+Retraction word boundaries and whitespace are explicitly Unicode-aware, but the
+Unicode database and case-folding version follow the JavaScript engine, and
+special case-insensitive regex equivalences (notably dotted/dotless I) are not
+guaranteed. Typed constructors are designed for their declared types; runtime
+coercion of invalid arguments is not emulated.
 
 The port adds no runtime dependencies beyond native Node APIs.
 
-## Intentional divergence: model transport statefulness
+## Model transport is stateless by design
 
-The frozen Python reference continues its agent loop with
-`previous_response_id`, keeping the conversation gateway-side. The TypeScript
-runtime resends the whole transcript and sends `store: false` instead. This is
-deliberate: a gateway under zero data retention has no stored turn to continue
-and rejects the request, so the reference's threading cannot work there, and a
-reviewer must not leave prompt content behind at the provider. Only the
-transport differs — prompts, findings contract, parsing, publication, and gate
-eligibility are unchanged, and the contract/diff corpus does not cover the
-agent loop, so no captured call pins the old behavior.
+The agent loop resends the whole transcript every turn and sends `store: false`;
+it never continues a stored response with `previous_response_id`. A gateway under
+zero data retention has no stored turn to continue and rejects that parameter, and
+a reviewer must not leave prompt content behind at the provider. This corpus does
+not cover the agent loop, so no captured call pins transport behavior in either
+direction — the loop's own tests do.

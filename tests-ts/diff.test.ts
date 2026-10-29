@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import * as D from '../src/core/diff.ts';
 import { corpus, replay } from './fixtures/replay.ts';
 
-describe('Python diff differential corpus', () => {
+describe('Diff corpus', () => {
   for (const [i, receipt] of corpus.calls.entries()) {
     if (receipt.namespace !== 'diff') continue;
     test(`${i}: ${receipt.case} / ${receipt.name}`, () => {

@@ -100,11 +100,10 @@ For a historical comparison, use `--diff-file`, `--head-sha`, `--repo`, and
 bun run check  # typecheck → kernel-checked policies → Node build → offline tests
 ```
 
-The test suite includes 453 captured Python reference calls for the pure
-contract/diff behavior, provider retries, tool bounds, and full review/gate
-scenarios. `reference/python/` is a frozen migration oracle, not a supported
-runtime. Production tests do not require Python. See
-[parity boundaries](tests-ts/fixtures/README.md).
+The test suite pins the pure contract and diff behavior against a checked-in
+corpus of 453 recorded calls, plus provider retries, tool bounds, and full
+review/gate scenarios. Tests are offline and need no Python. See
+[the corpus](tests-ts/fixtures/README.md) for what it pins and why.
 
 | path | responsibility |
 |---|---|

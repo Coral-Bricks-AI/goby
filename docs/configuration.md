@@ -67,4 +67,4 @@ See [merge integration](merge-gate.md) for the gate prerequisites.
 
 Path filters are in `src/core/contract.ts`; transport/retry logic is in
 `src/providers/base.ts`. JavaScript regex syntax powers grep, with common
-Python flag/name compatibility; exotic Python constructs are not guaranteed.
+`(?i)`/`(?m)`/`(?s)` flag and named-group compatibility.

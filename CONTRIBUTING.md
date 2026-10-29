@@ -24,12 +24,15 @@ reimplement the decision in a caller. Require `proven && checked` and preserve
 an unsafe mutant that the checker or tests reject. Proofs establish these
 rules, not model accuracy or the freshness of an external service.
 
-## Python reference
+## The contract/diff corpus
 
-`reference/python/` is frozen migration evidence, not another runtime to
-maintain. `tests-ts/fixtures/generate_contract_diff.py` regenerates the
-checked-in pure-code corpus from it. Normal tests use JSON and need no Python.
-Document intentional parity differences instead of silently weakening tests.
+`tests-ts/fixtures/contract-diff.json` pins pure contract and diff behavior. It
+is a fixture, not a generated artifact: there is no regenerator, and adding a
+case means adding a test. When an assertion looks arbitrary, read its reason in
+[the corpus README](tests-ts/fixtures/README.md) before changing it.
+
+The harness itself has no reference implementation to stay compatible with.
+Change it on purpose, with tests.
 
 ## Try a change
 

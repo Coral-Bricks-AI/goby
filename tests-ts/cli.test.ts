@@ -10,7 +10,7 @@ const binary = join(root, 'dist/cli.js');
 const cleanEnv = {...process.env, GOBY_API_KEY: '', CORALBRICKS_API_KEY: '', OPENAI_API_KEY: '', GITHUB_TOKEN: ''};
 function node(args: string[], cwd = root) { return spawnSync('node', [binary, ...args], {cwd, env: cleanEnv, encoding: 'utf8'}); }
 
-test('bundle runs as a Node CLI without Python', () => {
+test('bundle runs as a Node CLI with no extra runtime', () => {
   expect(node(['version']).stdout.trim()).toBe('0.3.0');
   const h = node(['--help']); expect(h.status).toBe(0); expect(h.stdout).toContain('goby gate');
   for (const command of ['review', 'gate', 'init', 'pin', 'doctor']) expect(node([command, '--help']).status).toBe(0);
