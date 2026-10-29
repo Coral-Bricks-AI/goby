@@ -515,10 +515,16 @@ export async function run_agent_review(opts: AgentOptions): Promise<AgentReply> 
   const toolbox = opts.tools_exec ?? new ToolBox(opts.repo, opts.head_sha, opts.token, opts.diff, opts.github);
   const instructions = SYSTEM_PROMPT + '\n\n' + AGENT_ADDENDUM;
   const repoMap = toolbox instanceof ToolBox && toolbox.enabled ? await toolbox.repo_map() : '';
-  let nextInput: Parameters<typeof call_responses>[0]['input'] = build_user_prompt(opts.diff, opts.context,
-    opts.already_raised ?? null, opts.already_resolved ?? null, opts.pr_intent ?? null, repoMap || null);
+  // The transport keeps no server-side state: every turn resends the whole
+  // conversation. A gateway under zero data retention rejects
+  // previous_response_id (there is no stored turn to continue), and replaying
+  // is what makes the loop work under any organization's retention setting.
+  // Replayed prefixes bill at the cached-read rate, so this is not a cost
+  // regression, and it keeps the loop portable across providers.
+  const conversation: unknown[] = [{ role: 'user',
+    content: build_user_prompt(opts.diff, opts.context, opts.already_raised ?? null,
+      opts.already_resolved ?? null, opts.pr_intent ?? null, repoMap || null) }];
   const started = clock();
-  let previous: string | null = null;
   const reply: AgentReply = { content: '', elapsed_s: 0, prompt_tokens: 0, completion_tokens: 0,
     turns: 0, tool_calls: 0, budget_exhausted: false, final_truncated: false, tool_counts: {} };
   const transport = opts.transport ?? call_responses;
@@ -528,18 +534,23 @@ export async function run_agent_review(opts: AgentOptions): Promise<AgentReply> 
     const final = admission === 'final';
     if (final) {
       reply.budget_exhausted = true;
-      nextInput = Array.isArray(nextInput) ? [...nextInput, { role: 'user', content: FORCED_FINAL_INPUT }] : FORCED_FINAL_INPUT;
+      // Append, never replace: the final turn must still carry the diff.
+      conversation.push({ role: 'user', content: FORCED_FINAL_INPUT });
     }
     const timeout = final ? Math.min(perTurn, FORCED_FINAL_GRACE_S) : reply.turns === 0 ? perTurn
       : Math.min(perTurn, Math.max(0, wall - (clock() - started)));
+    // Snapshot the transcript for this request: the loop keeps appending to it.
     const turn = await transport({ api_key: opts.api_key, model: opts.model, base_url: opts.base_url,
-      session_id: opts.session_id, input: nextInput, instructions, tools: final ? null : TOOLS,
-      previous_response_id: previous, timeout_s: timeout, deadline_s: started + wall + (final ? FORCED_FINAL_GRACE_S : 0), clock });
+      session_id: opts.session_id, input: [...conversation], instructions, tools: final ? null : TOOLS,
+      timeout_s: timeout, deadline_s: started + wall + (final ? FORCED_FINAL_GRACE_S : 0), clock });
     reply.turns++;
     reply.elapsed_s += turn.elapsed_s;
     reply.prompt_tokens += turn.input_tokens;
     reply.completion_tokens += turn.output_tokens;
-    previous = turn.id || previous;
+    // Replay what the model produced verbatim: function_call items carry the
+    // call ids the tool outputs must answer, and reasoning items round-trip
+    // unchanged.
+    conversation.push(...turn.output);
     const calls = final ? [] : extract_function_calls(turn.output);
     if (!calls.length) {
       const text = extract_text(turn.output);
@@ -561,6 +572,6 @@ export async function run_agent_review(opts: AgentOptions): Promise<AgentReply> 
       outputs.push({ type: 'function_call_output', call_id: fc.call_id || fc.id || '', output });
     }
     outputs.push({ role: 'user', content: BUDGET_NOTE.replace('{remaining}', String(maxTurns - reply.turns)).replace('{max_tool_turns}', String(maxTurns)) });
-    nextInput = outputs;
+    conversation.push(...outputs);
   }
 }

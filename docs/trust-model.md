@@ -23,6 +23,19 @@ environment. Do not do that. In particular:
 - No `pull_request_target` job that checks out the PR head — that combination
   is the classic escalation.
 
+## Model transport
+
+The reviewer keeps no server-side conversation state. Every turn resends the
+whole transcript (the diff, the items the model produced, and each tool
+output) instead of continuing a stored response with
+`previous_response_id`, and each request carries `store: false`. Two reasons:
+a gateway under zero data retention has no stored turn to continue and rejects
+the request, and a reviewer must not leave prompt content behind at the
+provider. Replayed prefixes bill at the provider's cached-read rate, so the
+replay is not a cost regression. The consequence for future changes: the
+transcript lives only in the runner's memory for the duration of the job, so
+the loop can never assume the model remembers anything it was not sent.
+
 ## Why the token still needs care
 
 The review posts comments and two commit statuses, so it needs `pull-requests:

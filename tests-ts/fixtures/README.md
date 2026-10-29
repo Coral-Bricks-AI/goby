@@ -58,3 +58,15 @@ constructors/coordinate inputs are designed for their declared types; arbitrary
 Python runtime coercions of invalid arguments are not emulated.
 
 The port adds no runtime dependencies beyond native Node APIs.
+
+## Intentional divergence: model transport statefulness
+
+The frozen Python reference continues its agent loop with
+`previous_response_id`, keeping the conversation gateway-side. The TypeScript
+runtime resends the whole transcript and sends `store: false` instead. This is
+deliberate: a gateway under zero data retention has no stored turn to continue
+and rejects the request, so the reference's threading cannot work there, and a
+reviewer must not leave prompt content behind at the provider. Only the
+transport differs — prompts, findings contract, parsing, publication, and gate
+eligibility are unchanged, and the contract/diff corpus does not cover the
+agent loop, so no captured call pins the old behavior.

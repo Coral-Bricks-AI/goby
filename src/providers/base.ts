@@ -53,7 +53,6 @@ export interface CallResponsesOptions extends TransportOptions {
   input: string | unknown[];
   instructions?: string | null;
   tools?: unknown[] | null;
-  previous_response_id?: string | null;
 }
 
 type ObjectValue = Record<string, unknown>;
@@ -225,13 +224,14 @@ export async function call_model(opts: CallModelOptions): Promise<ModelReply> {
 }
 
 export async function call_responses(opts: CallResponsesOptions): Promise<ResponsesTurn> {
-  const body: ObjectValue = { model: opts.model, input: opts.input, temperature: opts.temperature ?? 0 };
+  // store: false is the honest declaration for a reviewer: nothing it sends may
+  // be persisted gateway-side, and the loop never asks for a stored turn back.
+  const body: ObjectValue = { model: opts.model, input: opts.input, temperature: opts.temperature ?? 0, store: false };
   if (opts.instructions) body.instructions = opts.instructions;
   if (opts.tools?.length) {
     body.tools = opts.tools;
     body.tool_choice = "auto";
   }
-  if (opts.previous_response_id) body.previous_response_id = opts.previous_response_id;
   const result = await post_json(opts, "/v1/responses", body, 300);
   const payload = object(result.payload, "response");
   const output = truthy(payload.output) ? payload.output : [];
