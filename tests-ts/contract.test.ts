@@ -2,10 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import * as F from '../src/core/contract.ts';
 import { corpus, replay } from './fixtures/replay.ts';
 
-describe('Python contract differential corpus', () => {
+describe('Contract corpus', () => {
   test('verbatim system prompt and original test coverage', () => {
     expect(F.SYSTEM_PROMPT).toBe(corpus.system_prompt);
-    expect(corpus.python_tests).toBeGreaterThanOrEqual(75);
+    expect(corpus.original_tests).toBeGreaterThanOrEqual(75);
   });
   for (const [i, receipt] of corpus.calls.entries()) {
     if (receipt.namespace !== 'contract') continue;

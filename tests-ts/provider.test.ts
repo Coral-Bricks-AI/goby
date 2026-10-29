@@ -72,7 +72,7 @@ describe("request and return contract", () => {
       expect(headers.get("Authorization")).toBe("Bearer k");
       expect(headers.get("Content-Type")).toBe("application/json");
       expect(headers.get("x-session-id")).toBe("review");
-      expect(headers.has("idempotency-key")).toBe(false); // No invented Python policy.
+      expect(headers.has("idempotency-key")).toBe(false); // No invented idempotency policy.
       expect(JSON.parse(r.seen[0]!.init.body as string)).toEqual({
         model: "m", temperature: 0.2,
         messages: [{ role: "system", content: "s" }, { role: "user", content: "u" }],
@@ -112,14 +112,14 @@ describe("request and return contract", () => {
     });
   });
 
-  test("token conversion follows Python int for common JSON values", async () => {
+  test("token conversion follows int semantics for common JSON values", async () => {
     for (const [value, expected] of [[null, 0], ["", 0], [false, 0], [true, 1], [" -2 ", -2], [3.9, 3]] as const) {
       const r = rig(turn({ usage: { input_tokens: value, output_tokens: value } }));
       expect((await call_responses({ ...response_opts, ...r.opts })).input_tokens).toBe(expected);
     }
   });
 
-  test("full body is read (no Python size cap), details remain untruncated", async () => {
+  test("full body is read (no size cap), details remain untruncated", async () => {
     const text = "x".repeat(100000);
     const r = rig(new Response(JSON.stringify({ choices: [{ message: { content: text } }] })), new Response(text, { status: 400 }));
     expect((await call_model({ ...model_opts, ...r.opts })).content).toBe(text);
