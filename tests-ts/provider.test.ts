@@ -80,28 +80,32 @@ describe("request and return contract", () => {
     });
   });
 
-  test("responses carries instructions on every chained turn and auto tools", async () => {
+  test("responses replays the transcript statelessly, with instructions and store:false", async () => {
     const output = [{ type: "reasoning", summary: [] }];
     const r = rig(turn({ output, usage: { input_tokens: "7", output_tokens: 0 }, status: "incomplete" }), turn());
     const opts = { ...response_opts, ...r.opts, instructions: "contract", tools: [{ type: "function", name: "read" }], session_id: "s" };
     const reply = await call_responses(opts);
-    await call_responses({ ...opts, input: [{ type: "function_call_output", output: "ok" }], previous_response_id: "r" });
+    // A gateway under zero data retention has no stored turn to continue, so
+    // the caller resends the whole conversation instead of previous_response_id.
+    const transcript = [{ role: "user", content: "hi" }, ...output, { type: "function_call_output", output: "ok" }];
+    await call_responses({ ...opts, input: transcript });
     expect(reply).toEqual({ id: "r", output, elapsed_s: 0, input_tokens: 7, output_tokens: 0, status: "incomplete" });
     for (const request of r.seen) {
       expect(request.url).toBe("https://inference.coralbricks.ai/v1/responses");
       expect(JSON.parse(request.init.body as string)).toMatchObject({
-        model: "m", temperature: 0, instructions: "contract", tool_choice: "auto", tools: opts.tools,
+        model: "m", temperature: 0, instructions: "contract", tool_choice: "auto", tools: opts.tools, store: false,
       });
+      expect(JSON.parse(request.init.body as string)).not.toHaveProperty("previous_response_id");
     }
-    expect(JSON.parse(r.seen[1]!.init.body as string).previous_response_id).toBe("r");
+    expect(JSON.parse(r.seen[1]!.init.body as string).input).toEqual(transcript);
   });
 
   test("empty optional fields omitted, absent and null token usage default to zero", async () => {
     await capture_timeouts(async timeouts => {
       const r = rig(new Response("{}"), chat(null));
-      const reply = await call_responses({ ...response_opts, ...r.opts, instructions: "", tools: [], previous_response_id: "", session_id: "" });
+      const reply = await call_responses({ ...response_opts, ...r.opts, instructions: "", tools: [], session_id: "" });
       expect(reply).toEqual({ id: "", output: [], elapsed_s: 0, input_tokens: 0, output_tokens: 0, status: "" });
-      expect(JSON.parse(r.seen[0]!.init.body as string)).toEqual({ model: "m", input: "hi", temperature: 0 });
+      expect(JSON.parse(r.seen[0]!.init.body as string)).toEqual({ model: "m", input: "hi", temperature: 0, store: false });
       expect(new Headers(r.seen[0]!.init.headers).has("x-session-id")).toBe(false);
       expect((await call_model({ ...model_opts, ...r.opts })).prompt_tokens).toBe(0);
       expect(timeouts).toEqual([300000, 180000]);

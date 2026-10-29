@@ -40,6 +40,10 @@ const run = (provider: FakeProvider, options: Partial<AgentOptions> = {}) => run
   tools_exec: new FakeTools(), transport: provider.transport, clock: () => 1000, ...options,
 });
 const batch = (p: FakeProvider, n: number) => p.calls[n].input as Record<string, unknown>[];
+// What turn n actually added: the model's own items plus this turn's tool
+// outputs. The request input is always the whole replayed conversation.
+const appended = (p: FakeProvider, n: number) => batch(p, n).slice(n === 0 ? 0 : batch(p, n - 1).length);
+const toolOutputs = (p: FakeProvider, n: number) => appended(p, n).filter(item => item.type === 'function_call_output');
 
 class FakeGitHub extends GitHubClient {
   files: Record<string, string | null>;
@@ -88,12 +92,12 @@ describe('agent response loop', () => {
     const result = await run(p);
     expect(result).toEqual({ content: findings, elapsed_s: 0.01, prompt_tokens: 10, completion_tokens: 5,
       turns: 1, tool_calls: 0, budget_exhausted: false, final_truncated: false, tool_counts: {} });
-    expect(p.calls[0].input).toContain('diff --git');
+    expect(JSON.stringify(p.calls[0].input)).toContain('diff --git');
     expect(p.calls[0].tools).toEqual(TOOLS);
-    expect(p.calls[0].previous_response_id).toBeNull();
+    expect('previous_response_id' in p.calls[0]).toBe(false);
   });
 
-  test('threads response ids, repeats instructions, accounts tokens and each tool', async () => {
+  test('replays the conversation, repeats instructions, accounts tokens and each tool', async () => {
     const p = new FakeProvider([[fc(), fc('grep', 'c2', '{"pattern":"x"}')], [fc('grep', 'c3')], [msg()]]);
     const tools = new FakeTools();
     const r = await run(p, { tools_exec: tools });
@@ -101,12 +105,19 @@ describe('agent response loop', () => {
     expect(r.tool_counts).toEqual({ read_file: 1, grep: 2 });
     expect(r.elapsed_s).toBeCloseTo(0.03);
     expect(r.prompt_tokens).toBe(30); expect(r.completion_tokens).toBe(15);
-    expect(p.calls.map(c => c.previous_response_id)).toEqual([null, 'resp_1', 'resp_2']);
+    expect(p.calls.every(c => !('previous_response_id' in c))).toBe(true);
     expect(p.calls.every(c => c.instructions?.includes(AGENT_ADDENDUM))).toBe(true);
-    expect(batch(p, 1)[0]).toEqual({ type: 'function_call_output', call_id: 'c1', output: 'answer:read_file' });
-    expect(batch(p, 1)[1].call_id).toBe('c2');
-    expect(batch(p, 1).at(-1)?.content).toBe(BUDGET_NOTE.replace('{remaining}', '9').replace('{max_tool_turns}', '10'));
-    expect(batch(p, 2).at(-1)?.content).toContain('8 of 10');
+    // The prompt is sent once and resent verbatim; each turn only appends its
+    // own items and its tool outputs.
+    expect(batch(p, 1)).toHaveLength(6); expect(batch(p, 2)).toHaveLength(9);
+    expect(appended(p, 1)[0]).toEqual(fc());
+    expect(batch(p, 2)[0]).toEqual(batch(p, 1)[0]);
+    expect(toolOutputs(p, 1)).toEqual([
+      { type: 'function_call_output', call_id: 'c1', output: 'answer:read_file' },
+      { type: 'function_call_output', call_id: 'c2', output: 'answer:grep' },
+    ]);
+    expect(appended(p, 1).at(-1)?.content).toBe(BUDGET_NOTE.replace('{remaining}', '9').replace('{max_tool_turns}', '10'));
+    expect(appended(p, 2).at(-1)?.content).toContain('8 of 10');
     expect(tools.dispatched).toHaveLength(3);
   });
 
@@ -115,8 +126,12 @@ describe('agent response loop', () => {
     const p = new FakeProvider([[fc()], [msg()]]);
     await run(p, { tools_exec: tools, github, context: 'Project context', already_raised: ['old open finding'],
       already_resolved: ['old resolved finding'], pr_intent: { title: 'Fix amounts', body: 'id-asc order intended' } });
-    for (const text of ['Project context', 'old open finding', 'old resolved finding', 'id-asc order intended', 'README.md', 'src/']) expect(p.calls[0].input).toContain(text);
-    expect(JSON.stringify(p.calls[1].input)).not.toContain('old resolved finding');
+    const first = JSON.stringify(p.calls[0].input);
+    for (const text of ['Project context', 'old open finding', 'old resolved finding', 'id-asc order intended', 'README.md', 'src/']) expect(first).toContain(text);
+    // Later turns replay the first prompt byte-for-byte — it is never rebuilt,
+    // truncated, or duplicated into the transcript.
+    expect((batch(p, 1)[0] as { content: string }).content).toBe((batch(p, 0)[0] as { content: string }).content);
+    expect(JSON.stringify(p.calls[1].input).split('old resolved finding')).toHaveLength(2);
     expect(github.trees).toEqual(['deadbeef']);
   });
 
@@ -125,9 +140,11 @@ describe('agent response loop', () => {
     const r = await run(p, { max_tool_turns: 1 });
     expect(r.budget_exhausted).toBe(true); expect(r.turns).toBe(2); expect(r.tool_calls).toBe(2);
     expect(p.calls[1].tools).toBeNull();
-    expect(batch(p, 1).filter(x => x.type === 'function_call_output').map(x => x.call_id)).toEqual(['c1', 'c2']);
-    expect(batch(p, 1).at(-2)?.content).toContain('0 of 1');
-    expect(batch(p, 1).at(-1)).toEqual({ role: 'user', content: FORCED_FINAL_INPUT });
+    expect(toolOutputs(p, 1).map(x => x.call_id)).toEqual(['c1', 'c2']);
+    expect(appended(p, 1).at(-2)?.content).toContain('0 of 1');
+    expect(appended(p, 1).at(-1)).toEqual({ role: 'user', content: FORCED_FINAL_INPUT });
+    // Appending on the final turn is what keeps the diff in the request.
+    expect(JSON.stringify(batch(p, 1))).toContain('diff --git');
     expect(p.calls[1].deadline_s).toBe((p.calls[0].deadline_s as number) + FORCED_FINAL_GRACE_S);
     expect(p.calls[1].timeout_s).toBe(FORCED_FINAL_GRACE_S);
   });
@@ -145,7 +162,7 @@ describe('agent response loop', () => {
     p.onCall = () => { now += 1; };
     const r = await run(p, { wall_timeout_s: 1e-9, clock: () => now });
     expect(p.calls[0].tools).toEqual(TOOLS); expect(p.calls[0].timeout_s).toBe(300);
-    expect(p.calls[0].input).toContain('diff --git');
+    expect(JSON.stringify(p.calls[0].input)).toContain('diff --git');
     expect(r.budget_exhausted).toBe(true);
   });
 
@@ -200,19 +217,23 @@ describe('agent response loop', () => {
     }
   });
 
-  test('missing response id retains prior id, item id is a call-id fallback, and calls beat incidental text', async () => {
+  test('missing call id falls back to the item id, and calls beat incidental text', async () => {
     const noCallId = { ...fc(), call_id: '' };
     const p = new FakeProvider([[noCallId, msg('not final')], { id: '', output: [fc()], status: 'completed' }, [msg()]]);
-    await run(p);
-    expect(batch(p, 1)[0].call_id).toBe('item_c1');
-    expect(p.calls[2].previous_response_id).toBe('resp_1');
+    const r = await run(p);
+    expect(toolOutputs(p, 1)[0]?.call_id).toBe('item_c1');
+    // An empty response id cannot truncate the transcript: later turns still
+    // carry the diff and the earlier items.
+    expect(JSON.stringify(p.calls[1].input)).toContain('diff --git');
+    expect(JSON.stringify(p.calls[2].input)).toContain('item_c1');
+    expect(r.turns).toBe(3);
   });
 
   test('unknown tools answer the turn without arbitrary execution; hostile names stay counters', async () => {
     const { tools } = box();
     const p = new FakeProvider([[fc('shell', 'a', '{"cmd":"rm -rf /"}'), fc('__proto__', 'b'), fc('__proto__', 'c')], [msg()]]);
     const r = await run(p, { tools_exec: tools });
-    expect(batch(p, 1)[0].output).toContain('unknown tool');
+    expect(toolOutputs(p, 1)[0].output).toContain('unknown tool');
     expect(r.tool_counts.shell).toBe(1);
     expect(Object.getOwnPropertyDescriptor(r.tool_counts, '__proto__')?.value).toBe(2);
   });
@@ -222,7 +243,7 @@ describe('agent response loop', () => {
     const p = new FakeProvider([[fc()], [msg()]]);
     await run(p, { tools_exec: undefined, github });
     expect(github.reads).toEqual([['deadbeef', 'a.py']]);
-    expect(batch(p, 1)[0].output).toBe('pinned source');
+    expect(toolOutputs(p, 1)[0].output).toBe('pinned source');
   });
 });
 
