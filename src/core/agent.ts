@@ -1,19 +1,22 @@
 import { Worker } from 'node:worker_threads';
 import { performance } from 'node:perf_hooks';
-import { GitHubClient } from '../platforms/github.ts';
+import { GitHubClient, TEXT_BATCH_SIZE } from '../platforms/github.ts';
 import { call_responses, extract_function_calls, extract_text } from '../providers/base.ts';
 import { SYSTEM_PROMPT, build_user_prompt } from './contract.ts';
 import { parse_hunks } from './diff.ts';
 import { TurnBudget } from './rules.ts';
 
-// These are the Python fetch-and-match bounds. Its byte-named budgets count
-// Unicode characters, not encoded bytes; keep that behavior across the port.
+// These are the fetch-and-match bounds inherited from the original prototype.
+// Its byte-named budgets count Unicode characters, not encoded bytes; keep that
+// behavior.
 export const READ_MAX_CHARS = 120_000;
 export const LIST_MAX_ENTRIES = 500;
-export const GREP_MAX_FILES = 200;
+// Batched transport (100 files per request) made the request count stop being
+// the limit; what remains is scan time, which the worker caps separately.
+export const GREP_MAX_FILES = 400;
 export const LISTING_CAP = 1000;
 export const FILE_HISTORY_MAX = 10;
-export const GREP_MAX_BYTES = 2_000_000;
+export const GREP_MAX_BYTES = 8_000_000;
 export const GREP_MAX_MATCHES = 50;
 export const GREP_MAX_LINE_CHARS = 400;
 export const GREP_SCAN_TIME_S = 30;
@@ -399,30 +402,36 @@ export class ToolBox {
     const matches: string[] = [], notes: string[] = [];
     let realMatches = 0, scanned = 0, missing = 0, incomplete = 0, byteSkipped = 0, bytes = 0;
     const started = monotonic();
-    for (const file of files) {
-      if (scanned >= GREP_MAX_FILES) {
-        const remaining = files.length - scanned - missing - byteSkipped;
-        if (remaining > 0) notes.push(`${remaining} file(s) not scanned`);
-        break;
-      }
-      let text: string | null;
-      try { text = await this.file_text(file); }
+    // One request per batch of files instead of one per file. The scan, byte
+    // and match budgets are unchanged; a failed batch stops the scan with the
+    // matches already collected rather than reporting a clean result.
+    scan: for (let start = 0; start < files.length; start += TEXT_BATCH_SIZE) {
+      const group = files.slice(start, start + TEXT_BATCH_SIZE);
+      let texts: Map<string, string | null>;
+      try { texts = await this.github.fetch_texts(this.head_sha, group); }
       catch (e) {
-        notes.push(e instanceof CacheFull ? 'file cache full — remaining files not scanned'
-          : `${apiFailure(e) ? 'GitHub API failure reading' : 'could not read'} ${file}: ${message(e)}`);
+        notes.push(`${apiFailure(e) ? 'GitHub API failure reading' : 'could not read'} ${group[0]}: ${message(e)}`);
         break;
       }
-      if (text == null) { missing++; continue; }
-      const n = length(text);
-      if (bytes + n > GREP_MAX_BYTES) { byteSkipped++; continue; }
-      const remaining = GREP_SCAN_TIME_S - (monotonic() - started);
-      if (remaining <= 0) { notes.push('scan-time cap reached — remaining files not scanned'); break; }
-      const found = await this.scan_file(rx, text, file, realMatches, Math.min(remaining, PER_FILE_SCAN_S), context as number);
-      if (found.lines_searched) { scanned++; bytes += n; }
-      matches.push(...found.matches); realMatches += found.match_count;
-      if (found.capped) notes.push(`match cap reached at ${GREP_MAX_MATCHES}`);
-      if (found.timed_out) { notes.push(`${file} scan incomplete — per-file time cap`); incomplete++; }
-      if (found.capped || realMatches >= GREP_MAX_MATCHES) break;
+      for (const file of group) {
+        if (scanned >= GREP_MAX_FILES) {
+          const remaining = files.length - scanned - missing - byteSkipped;
+          if (remaining > 0) notes.push(`${remaining} file(s) not scanned`);
+          break scan;
+        }
+        const text = texts.get(file) ?? null;
+        if (text == null) { missing++; continue; }
+        const n = length(text);
+        if (bytes + n > GREP_MAX_BYTES) { byteSkipped++; continue; }
+        const remaining = GREP_SCAN_TIME_S - (monotonic() - started);
+        if (remaining <= 0) { notes.push('scan-time cap reached — remaining files not scanned'); break scan; }
+        const found = await this.scan_file(rx, text, file, realMatches, Math.min(remaining, PER_FILE_SCAN_S), context as number);
+        if (found.lines_searched) { scanned++; bytes += n; }
+        matches.push(...found.matches); realMatches += found.match_count;
+        if (found.capped) notes.push(`match cap reached at ${GREP_MAX_MATCHES}`);
+        if (found.timed_out) { notes.push(`${file} scan incomplete — per-file time cap`); incomplete++; }
+        if (found.capped || realMatches >= GREP_MAX_MATCHES) break scan;
+      }
     }
     if (byteSkipped) notes.unshift(`${byteSkipped} file(s) fetched but skipped — byte cap`);
     let head = `searched ${scanned} file(s) in ${scope}`;

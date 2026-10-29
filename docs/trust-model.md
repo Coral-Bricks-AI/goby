@@ -13,6 +13,12 @@ and bundles a Node CLI; no Python, PyPI install, or PR checkout is involved. The
 instructions (`AGENTS.md`, `CLAUDE.md`) are fetched through the API pinned to
 the PR's **head sha**. Nothing from the PR is checked out, imported, or run.
 
+Multi-file reads are batched into GraphQL requests (100 blobs each) rather than
+one contents request per file. That changes transport, not trust: the same
+pinned commit is read, the same 1 MiB per-file limit applies, blobs GitHub
+reports as binary or truncated are refused rather than half-read, and nothing
+is written to disk anywhere in the review path.
+
 That invariant is what makes it safe to run on pull requests from forks, where
 the code is by definition untrusted. If a future change checks out the PR head,
 the review job becomes arbitrary code execution with your API key in the

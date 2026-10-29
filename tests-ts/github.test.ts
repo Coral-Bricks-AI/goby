@@ -311,3 +311,50 @@ describe('summaries, head dedupe and minimization', () => {
     expect(calls.at(-1)!.url).toEndWith('reviews?per_page=100&page=20');
   });
 });
+
+describe('batched pinned reads', () => {
+  const blob = (text: unknown, extra: Record<string, unknown> = {}) => ({ text, byteSize: 10, isBinary: false, isTruncated: false, ...extra });
+
+  test('one request per batch, with the pinned commit in every expression', async () => {
+    const paths = Array.from({ length: 150 }, (_, i) => `src/f${i}.ts`);
+    const { client, calls } = fake((call) => {
+      const query = JSON.parse(String(call.init.body)).query as string;
+      const aliases = [...query.matchAll(/f(\d+): object\(expression: "([^"]+)"\)/g)];
+      const repository = Object.fromEntries(aliases.map(([, index, expression]) => [`f${index}`, blob(expression)]));
+      return { data: { repository } };
+    });
+    const texts = await client.fetch_texts('deadbeef', paths);
+    expect(calls).toHaveLength(2); // 100 + 50
+    expect(texts.size).toBe(150);
+    for (const [index, path] of paths.entries()) expect(texts.get(path)).toBe(`deadbeef:${path}`);
+    expect(calls[0]!.url).toBe('https://api.github.com/graphql');
+    expect(JSON.stringify(JSON.parse(String(calls[0]!.init.body)).variables)).toBe(JSON.stringify({ owner: 'owner', name: 'repo' }));
+  });
+
+  test('binary, truncated, oversized, null and missing blobs are all null — never a half file', async () => {
+    const { client } = fake(() => ({ data: { repository: {
+      f0: blob('ok'),
+      f1: blob('binary?', { isBinary: true }),
+      f2: blob('cut', { isTruncated: true }),
+      f3: blob('huge', { byteSize: 2 * 1024 * 1024 }),
+      f4: null,
+      f5: { text: 42 },
+    } } }));
+    const paths = ['a', 'b', 'c', 'd', 'e', 'f'];
+    const texts = await client.fetch_texts('ref', paths);
+    expect([...texts.entries()]).toEqual([['a', 'ok'], ['b', null], ['c', null], ['d', null], ['e', null], ['f', null]]);
+  });
+
+  test('a GraphQL error stops the batch instead of being reported as empty files', async () => {
+    const { client } = fake(() => ({ errors: [{ message: 'Something went wrong' }] }));
+    await expect(client.fetch_texts('ref', ['a.ts'])).rejects.toBeInstanceOf(GitHubError);
+    const noRepo = fake(() => ({ data: {} }));
+    await expect(noRepo.client.fetch_texts('ref', ['a.ts'])).rejects.toThrow(/Missing repository/);
+  });
+
+  test('an empty path list makes no request', async () => {
+    const { client, calls } = fake(() => ({ data: { repository: {} } }));
+    expect((await client.fetch_texts('ref', [])).size).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+});

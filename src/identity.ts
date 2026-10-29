@@ -1,4 +1,4 @@
-export const REVIEW_VERSION = '0.3.0';
+export const REVIEW_VERSION = '0.4.0';
 export const STATUS_CONTEXT = 'Goby Review';
 export const GATE_CONTEXT = 'Goby Gate';
 export const MARKER = 'goby';
