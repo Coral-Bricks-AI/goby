@@ -52,18 +52,18 @@ jobs:
         run: |
           set -euo pipefail
           SHA="$(git rev-parse --short=12 HEAD)"
-          for pair in "base:local:goby-base" "review:local:goby-review"; do
-            LOCAL="${pair%%:*}"; REST="${pair#*:}"; NAME="${REST#*:}"
-            IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${NAME}"
-            docker tag "$LOCAL" "$IMAGE:$SHA"
-            docker tag "$LOCAL" "$IMAGE:latest"
-            docker push --quiet "$IMAGE:$SHA"
-            docker push --quiet "$IMAGE:latest"
-            DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$SHA")"
+          publish() {
+            local local_image="$1" name="$2"
+            local image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${name}"
+            docker tag "$local_image" "$image:$SHA"
+            docker tag "$local_image" "$image:latest"
+            docker push --quiet "$image:$SHA"
+            docker push --quiet "$image:latest"
+            local digest
+            digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$SHA")"
             # The digest, not the tag: it is the only thing a consumer can pin that cannot move.
-            echo "### $NAME — pin this" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            echo "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            echo "$NAME -> $DIGEST"
-          done
+            { echo "### $name — pin this"; echo '```'; echo "$digest"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "$name -> $digest"
+          }
+          publish base:local goby-base
+          publish review:local goby-review
