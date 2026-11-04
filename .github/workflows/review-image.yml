@@ -56,9 +56,13 @@ jobs:
             local local_image="$1" name="$2"
             local image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${name}"
             docker tag "$local_image" "$image:$SHA"
-            docker tag "$local_image" "$image:latest"
             docker push --quiet "$image:$SHA"
-            docker push --quiet "$image:latest"
+            # `:latest` is the runtime now, so only the default branch may move it. A release tag or
+            # a dispatch against an older commit pushes its own sha and leaves `latest` alone.
+            if [[ "$GITHUB_REF" == "refs/heads/${GITHUB_DEFAULT_BRANCH:-main}" ]]; then
+              docker tag "$local_image" "$image:latest"
+              docker push --quiet "$image:latest"
+            fi
             local digest
             digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$SHA")"
             # The digest, not the tag: it is the only thing a consumer can pin that cannot move.

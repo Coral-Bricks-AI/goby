@@ -37,7 +37,11 @@ export async function resolve_digest(reference: string, token?: string | null): 
   const parsed = parse_image(reference);
   if (!parsed) return null;
   if (/^sha256:[0-9a-f]{64}$/.test(parsed.tag)) return parsed.tag;
-  const authorization = token ? `Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}` : undefined;
+  // Only GitHub's registry gets the job token. A custom image can name any host, and a token with
+  // pull-requests: write must not be sent to one because somebody configured a different registry.
+  const authorization = token && parsed.registry === 'ghcr.io'
+    ? `Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`
+    : undefined;
   try {
     const tokenUrl = `https://${parsed.registry}/token?scope=repository:${parsed.repository}:pull&service=${parsed.registry}`;
     const tokenResponse = await fetch(tokenUrl, {

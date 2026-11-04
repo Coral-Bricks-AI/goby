@@ -22,9 +22,10 @@ test('every workflow runs the moving tag, and passes it through for attribution'
     expect(text).not.toMatch(/goby-review@sha256/);
   }
   // Only the reviewer writes a body, so only it needs the reference handed to the publisher for
-  // digest resolution; the gate makes no model call and writes nothing but a status.
+  // digest resolution; the gate makes no model call and writes nothing but a status. The reviewer
+  // aliases it so a pin cannot move one without the other.
   for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
-    expect(read(file)).toContain('GOBY_IMAGE: ghcr.io/coral-bricks-ai/goby-review:latest');
+    expect(read(file)).toContain('GOBY_IMAGE: *goby_image');
   }
 });
 
@@ -90,4 +91,25 @@ test('every workflow parses under actionlint rules we rely on', () => {
       expect(allowed.has(match[1])).toBe(true);
     }
   }
+});
+
+
+test('the image is named once, so a pin cannot change the label without the runtime', () => {
+  // Reporting a digest for an image the job did not run is worse than reporting nothing.
+  for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
+    const text = read(file);
+    expect(text).toContain('image: &goby_image ghcr.io/coral-bricks-ai/goby-review:latest');
+    expect(text).toContain('GOBY_IMAGE: *goby_image');
+    expect(text).not.toMatch(/GOBY_IMAGE: ghcr\.io/);
+  }
+});
+
+test('only the default branch may move the moving tag', () => {
+  // `:latest` is the runtime now, so a release tag or a dispatch on an older commit must not
+  // re-publish that older image as the one everything runs.
+  const publish = read('.github/workflows/review-image.yml');
+  expect(publish).toContain('refs/heads/${GITHUB_DEFAULT_BRANCH:-main}');
+  const latestPush = publish.slice(publish.indexOf('if [[ "$GITHUB_REF"'));
+  expect(latestPush.indexOf('docker push --quiet "$image:latest"'))
+    .toBeLessThan(latestPush.indexOf('fi'));
 });
