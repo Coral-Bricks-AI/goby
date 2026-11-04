@@ -102,3 +102,29 @@ test('the proxy refuses to start without a key file', async () => {
   const code = await new Promise<number | null>(done => child.on('exit', done));
   expect(code).not.toBe(0);
 });
+
+test('an https upstream is spoken to with the https module', async () => {
+  // `node:http`'s request() throws ERR_INVALID_PROTOCOL on a TLS upstream, which is what the first
+  // dogfooded review hit: every model call became a connection error with a stack trace in the log.
+  const dir = mkdtempSync(join(tmpdir(), 'goby-proxy-tls-'));
+  const keyFile = join(dir, 'key');
+  writeFileSync(keyFile, 'k');
+  const port = 19500 + Math.floor(Math.random() * 400);
+  const child = spawn('node', [proxyScript], {
+    env: { ...process.env, GOBY_PROXY_PORT: String(port), GOBY_KEY_FILE: keyFile,
+      GOBY_UPSTREAM: 'https://127.0.0.1:1' }, // nothing listens over TLS there
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const stderr: string[] = [];
+  child.stderr.on('data', chunk => stderr.push(String(chunk)));
+  try {
+    await new Promise(r => setTimeout(r, 300));
+    const res = await fetch(`http://127.0.0.1:${port}/v1/models`, { method: 'POST', body: '{}' });
+    // A refused connection is a 502 the caller can read, and never ERR_INVALID_PROTOCOL.
+    expect(res.status).toBe(502);
+    expect(stderr.join('')).not.toContain('ERR_INVALID_PROTOCOL');
+  } finally {
+    child.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

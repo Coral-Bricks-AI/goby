@@ -14,7 +14,8 @@
  * only listens on 127.0.0.1, and it exits non-zero if the key file or upstream is missing —
  * a proxy that half-works turns every review into a silent model error.
  */
-import { createServer, request } from 'node:http';
+import { createServer, request as http_request } from 'node:http';
+import { request as https_request } from 'node:https';
 import { readFileSync } from 'node:fs';
 
 const PORT = Number(process.env.GOBY_PROXY_PORT ?? 8787);
@@ -27,6 +28,10 @@ if (!UPSTREAM) throw new Error('GOBY_UPSTREAM is required');
 if (!KEY_FILE) throw new Error('GOBY_KEY_FILE is required');
 
 const upstream = new URL(UPSTREAM);
+// The module has to match the scheme: `node:http`'s request() throws ERR_INVALID_PROTOCOL on an
+// https upstream, and the first dogfooded run died exactly there — every model call a connection
+// error, with the proxy's stack trace in the log.
+const request = upstream.protocol === 'https:' ? https_request : http_request;
 const key = readFileSync(KEY_FILE, 'utf8').trim();
 if (!key) throw new Error(`${KEY_FILE} is empty`);
 
