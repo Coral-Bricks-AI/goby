@@ -14,6 +14,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolve_gate_target, type GateTarget } from './core/gateEvent.ts';
+import { caveat_for } from './core/caveat.ts';
 import { gate_enabled } from './core/flags.ts';
 import { resolve_digest } from './core/image.ts';
 import { check_target } from './core/target.ts';
@@ -166,7 +167,8 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   const incomplete: string[] = [...job.incomplete];
   const caveats: string[] = [];
   for (const record of records) {
-    if (record.kind === 'blocked') caveats.push('the reviewer reached its tool-call budget, so the scan was bounded — findings it would have made later in the change are missing.');
+    const caveat = caveat_for(record);
+    if (caveat) caveats.push(caveat);
     if (record.kind !== 'findings' || !Array.isArray(record.findings)) continue;
     emitted.push(...(record.findings as unknown[]));
   }

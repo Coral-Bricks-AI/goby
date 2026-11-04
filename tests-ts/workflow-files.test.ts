@@ -129,4 +129,6 @@ test('the reviewer is bounded by turns, a command timeout and a job timeout', ()
   // The bash tool takes cwd first: passing options in that slot silently drops both the env filter
   // and the timeout.
   expect(extension).toContain('createBashTool(process.cwd(), {');
+  // pi's exec takes seconds and converts them itself; multiplying here made "120 s" ~33 hours.
+  expect(extension).not.toContain('COMMAND_TIMEOUT_S * 1000');
 });

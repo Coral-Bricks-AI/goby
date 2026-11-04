@@ -48,6 +48,8 @@ const keepEnv = (name: string): boolean =>
 const OUT = process.env.GOBY_AGENT_OUT ?? '/workspace/out/agent';
 // A shell with no wall clock is how a review runs for half an hour: the model asks for something
 // that waits, and nothing interrupts it until the job's own timeout. Every command gets one.
+// The unit is seconds, because that is what pi's bash operations take and convert themselves —
+// multiplying here produced a "120 second" limit of roughly 33 hours.
 const COMMAND_TIMEOUT_S = Number(process.env.GOBY_BASH_TIMEOUT_S ?? 120);
 const FINDINGS = join(OUT, 'findings.jsonl');
 // Caps are a property of the harness, not a suggestion in the prompt. pi has no turn cap of its own
@@ -99,7 +101,7 @@ export default function (pi: ExtensionAPI) {
 		operations: {
 			exec: (command, cwd, options) => local.exec(command, cwd, {
 				...options,
-				timeout: options.timeout ?? COMMAND_TIMEOUT_S * 1000,
+				timeout: options.timeout ?? COMMAND_TIMEOUT_S,
 			}),
 		},
 		spawnHook: ({ command, cwd, env }) => ({
