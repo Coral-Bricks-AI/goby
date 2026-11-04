@@ -50,6 +50,10 @@ jobs:
       GOBY_MAX_TOOL_CALLS: "200"
       GOBY_MAX_DIFF_LINES: "10000"
       GOBY_MAX_FINDINGS: "30"
+      # The gate is the second status ("Goby Gate"), an eligibility verdict recomputed from GitHub
+      # state with no model involved. Turn it on when branch protection requires it; off, the review
+      # posts its findings and claims nothing about merging.
+      GOBY_GATE: "off"
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
     steps:

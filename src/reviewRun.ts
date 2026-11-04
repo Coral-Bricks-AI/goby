@@ -14,6 +14,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolve_gate_target, type GateTarget } from './core/gateEvent.ts';
+import { gate_enabled } from './core/flags.ts';
 import { check_target } from './core/target.ts';
 import * as contract from './core/contract.ts';
 import { select } from './core/selection.ts';
@@ -93,7 +94,7 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   // The receipt names the base *ref*, so that is what a reuse decision compares.
   const reuse = Boolean(previous?.complete && previous.base_ref === baseRef && previous.diff_sha256 === digest);
   if (!reuse) {
-    await post_gate_status(client, head, 'pending', 'Review in progress');
+    if (gate_enabled()) await post_gate_status(client, head, 'pending', 'Review in progress');
     await post_status(client, head, 'pending', 'Review in progress');
   }
 
@@ -136,6 +137,10 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
 
   if (job.reuse) {
     await post_status(client, job.head, 'success', 'Complete review reused on unchanged head');
+    if (!gate_enabled()) {
+      console.log(JSON.stringify({ phase: 'reused', gate: 'off' }));
+      return 0;
+    }
     const gate = await refreshGate(client, job.pr, { expected_head: job.head });
     console.log(JSON.stringify({ phase: 'reused', gate: gate.state }));
     return gate.state === 'success' ? 0 : 2;
@@ -186,6 +191,16 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   const description = found ? `${found} new bug(s) found` : 'no bugs found';
   await post_status(client, job.head, 'success', description);
   await cleanup(client, job.pr, job.open_threads, warn);
+  if (!gate_enabled()) {
+    // No gate: the review posts its findings and says nothing about merge eligibility, so a policy
+    // about evidence cannot fail a pull request that nobody asked to gate.
+    console.log(JSON.stringify({
+      phase: 'finished', inline: picked.inline.length, overflow: picked.overflow.length, caveats,
+      withheld: { already_open: picked.dropped.dupe, resolved: picked.dropped.resolved },
+      dropped: picked.dropped, complete, gate: 'off',
+    }));
+    return 0;
+  }
   const gate = await refreshGate(client, job.pr, { expected_head: job.head });
   console.log(JSON.stringify({
     phase: 'finished', inline: picked.inline.length, overflow: picked.overflow.length, caveats,
@@ -215,7 +230,8 @@ async function skip(client: GitHubClient): Promise<number> {
   const head = env('GOBY_HEAD');
   const reason = env('GOBY_SKIP_REASON');
   await post_status(client, head, 'success', `Skipped: ${reason}`);
-  await post_gate_status(client, head, 'failure', `Skipped: ${reason}`);
+  // With the gate off there is no eligibility claim to contradict; the review status says skipped.
+  if (gate_enabled()) await post_gate_status(client, head, 'failure', `Skipped: ${reason}`);
   console.log(JSON.stringify({ phase: 'skipped', reason }));
   return 0;
 }
