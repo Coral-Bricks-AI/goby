@@ -43,31 +43,18 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      # Plain `docker build`, so the reviewer can build FROM the base image the previous step put
+      # on the daemon. A container-driver builder would go looking for `goby-base` in a registry.
       - name: Build goby-base
-        uses: docker/build-push-action@v6
-        with:
-          context: base
-          load: true
-          tags: goby-base:test
-          cache-from: type=gha,scope=base
-          cache-to: type=gha,mode=max,scope=base
-      - name: Build the reviewer and prove it starts
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: review/Dockerfile
-          load: true
-          tags: goby-review:test
-          cache-from: type=gha,scope=review
-          cache-to: type=gha,mode=max,scope=review
-      - name: The reviewer exits cleanly with no configuration
+        run: docker build -t goby-base:test base
+      - name: Build the reviewer
+        run: docker build -t goby-review:test --build-arg BASE_IMAGE=goby-base:test -f review/Dockerfile .
+      - name: The reviewer names its missing inputs instead of starting work
         run: |
           set +e
           out=$(docker run --rm goby-review:test 2>&1)
           status=$?
           set -e
-          # 2 is the entrypoint's "missing input" exit; anything else means it started work.
           if [ "$status" -ne 2 ]; then
             echo "expected exit 2, got $status: $out" >&2; exit 1
           fi

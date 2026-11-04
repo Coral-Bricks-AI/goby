@@ -3,7 +3,10 @@
 # Build context is the repository root, because the publisher is TypeScript that imports the same
 # contract, receipt and gate code the rest of goby uses — one implementation of what may be
 # posted, not a second one in the image.
-FROM goby-base
+# `goby-base` resolves to the image built from base/ on the docker daemon. Overridable so a
+# registry-published base can be pinned instead.
+ARG BASE_IMAGE=goby-base
+FROM ${BASE_IMAGE}
 
 # Toolchain for the repo under review. node and git and python3 come from the base; bun is added
 # because the repos we review most often run their tests with it. A repo that needs Go, Rust or
