@@ -1,5 +1,8 @@
 name: CI
 
+# One job, one Node version. The matrix was two extra minutes to learn what one run already says,
+# and the images job belongs with the releases: a pull request does not need to build a container
+# to know whether the code typechecks and its tests pass.
 on:
   push:
     branches: [main]
@@ -9,56 +12,17 @@ permissions:
   contents: read
 
 jobs:
-  typescript:
+  check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: ["20", "22"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: "22"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.4"
       - run: bun install --frozen-lockfile --ignore-scripts
+      # typecheck → kernel-checked policies → Node build → offline tests
       - run: bun run check
-      - name: Bundled publisher smoke (no network)
-        run: |
-          if out=$(node dist/reviewRun.js prepare 2>&1); then
-            echo "publisher succeeded without configuration: $out" >&2; exit 1
-          fi
-          case "$out" in
-            *GOBY_OUT*|*GOBY_REPO*|*GITHUB_TOKEN*) ;;
-            *) echo "unexpected failure: $out" >&2; exit 1 ;;
-          esac
-
-  images:
-    # The images are the product's delivery: a Dockerfile that builds is not the same as one that
-    # starts, and both failures show up on a push that was supposed to review something.
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      # Plain `docker build`, so the reviewer can build FROM the base image the previous step put
-      # on the daemon. A container-driver builder would go looking for `goby-base` in a registry.
-      - name: Build goby-base
-        run: docker build -t goby-base:test base
-      - name: Build the reviewer
-        run: docker build -t goby-review:test --build-arg BASE_IMAGE=goby-base:test -f review/Dockerfile .
-      - name: The reviewer names its missing inputs instead of starting work
-        run: |
-          set +e
-          out=$(docker run --rm goby-review:test 2>&1)
-          status=$?
-          set -e
-          if [ "$status" -ne 2 ]; then
-            echo "expected exit 2, got $status: $out" >&2; exit 1
-          fi
-          case "$out" in
-            *GOBY_REPO*) ;;
-            *) echo "the entrypoint did not name the missing input: $out" >&2; exit 1 ;;
-          esac

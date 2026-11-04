@@ -39,3 +39,21 @@ test('the review workflow passes the commits under review and skips forks', () =
   expect(review).not.toContain('actions/checkout');
   expect(review).toContain('run: /opt/goby/entrypoint.sh');
 });
+
+test('drafts and the no-review label skip the reviewer', () => {
+  // A pull request under construction should not pay a model call per push, and a change to the
+  // reviewer itself cannot be reviewed by the reviewer it is changing.
+  for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
+    const text = read(file);
+    expect(text).toContain('github.event.pull_request.draft == false');
+    expect(text).toContain("contains(github.event.pull_request.labels.*.name, 'no-review')");
+    expect(text).toContain('head.repo.full_name == github.repository');
+  }
+});
+
+test('CI stays one job on one Node version', () => {
+  const text = read('.github/workflows/ci.yml');
+  expect(text).not.toMatch(/^\s+matrix:/m);
+  expect(text).not.toContain('docker/build-push-action');
+  expect(text).toContain('bun run check');
+});

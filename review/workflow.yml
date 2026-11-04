@@ -35,7 +35,13 @@ concurrency:
 
 jobs:
   review:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Drafts are not reviewed: a pull request under construction should not pay three minutes and a
+    # model call per push. The same applies to `no-review`, which is the label to reach for when a
+    # change cannot be reviewed by the thing it is changing.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false &&
+      !contains(github.event.pull_request.labels.*.name, 'no-review')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
