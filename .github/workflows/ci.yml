@@ -26,7 +26,14 @@ jobs:
           bun-version: "1.4.4"
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run check
+      # `-e` would abort on the first line of a naive version of this: the expected failure is
+      # the point, so the check is written as a case rather than a pipeline and an exit code.
       - name: Bundled entrypoint smoke (no network)
         run: |
-          node dist/main.js; [ $? -eq 1 ]
-          node dist/main.js 2>&1 | grep -q 'INPUT_PR is required'
+          if out=$(node dist/main.js 2>&1); then
+            echo "entrypoint succeeded without inputs: $out" >&2; exit 1
+          fi
+          case "$out" in
+            *"INPUT_PR is required"*) ;;
+            *) echo "unexpected failure: $out" >&2; exit 1 ;;
+          esac
