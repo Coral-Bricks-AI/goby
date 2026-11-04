@@ -532,3 +532,15 @@ def test_the_marker_parses_back_whatever_label_is_in_use(monkeypatch):
         parsed = pf.parse_marker(body)
         assert parsed is not None, (label, body)
         assert parsed.group("fp") == fp
+
+
+def test_the_close_instruction_names_the_brief_that_component_really_has(monkeypatch):
+    """A legacy component has HUNT.md. Telling a maintainer to edit CLEANER.md invites them to
+    create it, and since the scan prefers CLEANER.md, the original brief — with its invariants and
+    known non-findings — would then be silently ignored."""
+    f = finding()
+    item = {"fingerprint": pf.fingerprint("services/api", f), "finding": f, "severity": "low"}
+    monkeypatch.setattr(pf, "BRIEFS", {"services/api": "HUNT.md"}, raising=False)
+    _, body = pf.render_issue("services/api", item, "a" * 40)
+    assert "`services/api/HUNT.md`" in body
+    assert "`services/api/CLEANER.md`" not in body

@@ -129,6 +129,8 @@ PLAN_ARGS=(--changed "$CHANGED_FILE" --max "$MAX_COMPONENTS" --sha "$SHA")
 [[ $BEFORE_OK -eq 1 ]] || PLAN_ARGS+=(--before-unknown)
 PICKED=()
 PICKED_OUT="$OUT/picked.txt"
+BRIEFS_FILE="$OUT/briefs.tsv"
+: > "$BRIEFS_FILE"
 set +e
 git -C "$REPO_DIR" ls-files -- '*CLEANER.md' '*HUNT.md' \
   | python3 /opt/cleaners/plan.py picked "${PLAN_ARGS[@]}" > "$PICKED_OUT"
@@ -282,6 +284,9 @@ for dir in "${PICKED[@]}"; do
   # The brief may still carry its old name; the scan gets whichever file exists.
   charter="$REPO_DIR/$dir/CLEANER.md"
   [[ -f "$charter" ]] || charter="$REPO_DIR/$dir/HUNT.md"
+  # Recorded per component, because a repository can be half-renamed and each issue has to name
+  # the brief its own component actually has.
+  printf '%s\t%s\n' "$dir" "$(basename "$charter")" >> "$BRIEFS_FILE"
   status=0
   run_scan "$dir" "$MODEL" "$OUT/agent/$SLUG" "$charter" || status=$?
   log "scan exit=$status events=$(count_lines "$OUT/agent/$SLUG/events.jsonl") findings=$(count_lines "$OUT/agent/$SLUG/findings.jsonl")"
@@ -377,6 +382,13 @@ if [[ $FAILED_SCANS -gt 0 ]]; then
   log "warn: filing despite $FAILED_SCANS failed scan(s)"
 fi
 
+python3 - "$BRIEFS_FILE" "$OUT/briefs.json" <<'PY'
+import json, pathlib, sys
+source, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+pairs = [line.split('\t') for line in source.read_text().splitlines() if '\t' in line]
+target.write_text(json.dumps({component: brief for component, brief in pairs}, indent=2) + '\n')
+PY
+
 GITHUB_TOKEN="$(cat "$TOKEN_FILE")"
 rm -f "$TOKEN_FILE"
 export GITHUB_TOKEN
@@ -384,7 +396,7 @@ log "file repo=$REPO sha=$HEAD_SHA issues_per_day=$ISSUES_PER_DAY"
 set +e
 python3 /opt/cleaners/post_findings.py \
   --findings "$OUT/findings.jsonl" --repo "$REPO" --sha "$HEAD_SHA" \
-  --issues-per-day "$ISSUES_PER_DAY" | tee "$OUT/filed.json"
+  --issues-per-day "$ISSUES_PER_DAY" --brief-map "$OUT/briefs.json" | tee "$OUT/filed.json"
 FILE_STATUS=${PIPESTATUS[0]}
 set -e
 if [[ $FILE_STATUS -ne 0 ]]; then

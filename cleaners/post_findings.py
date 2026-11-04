@@ -154,6 +154,13 @@ def decide(findings: list[dict], existing: list[dict], *,
     return filed, skipped
 
 
+DEFAULT_BRIEF = "CLEANER.md"
+# component -> the brief this scan actually read. A repository can be mid-rename, so each issue
+# names the file its own component has; naming CLEANER.md for a legacy component would invite
+# somebody to create it, and the new file then shadows the HUNT.md that was being read.
+BRIEFS: dict[str, str] = {}
+
+
 def render_issue(component: str, item: dict, sha: str) -> tuple[str, str]:
     f = item["finding"]
     fp, severity = item["fingerprint"], item["severity"]
@@ -200,7 +207,8 @@ def render_issue(component: str, item: dict, sha: str) -> tuple[str, str]:
         "```",
         "",
         f"_A cleaner found and reproduced this. If it is **not** a defect, close it and add a "
-        f"line to `{component}/CLEANER.md` under `Known non-findings` — that file is the "
+        f"line to `{component}/{BRIEFS.get(component, DEFAULT_BRIEF)}` under "
+        f"`Known non-findings` — that file is the "
         f"cleaner's brief, and a known non-finding stops being reported._",
         "",
     ])
@@ -314,9 +322,13 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--repo", required=True)
     ap.add_argument("--sha", required=True)
     ap.add_argument("--issues-per-day", type=int, default=3)
+    ap.add_argument("--brief-map", default=None, type=Path,
+                    help='JSON {component: brief file} written by the scan')
     ap.add_argument("--out", type=Path, default=None, help="write the plan instead of posting")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
+    if args.brief_map and args.brief_map.is_file():
+        BRIEFS.update(json.loads(args.brief_map.read_text()))
 
     findings = []
     if args.findings.is_file():
