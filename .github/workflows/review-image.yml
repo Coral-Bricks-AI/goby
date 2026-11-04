@@ -24,7 +24,8 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write        # to push the pin branch
+  pull-requests: write   # to open and merge the pin pull request
   packages: write
 
 jobs:
@@ -67,3 +68,36 @@ jobs:
           }
           publish base:local goby-base
           publish review:local goby-review
+
+      # The reviewer pins its own image by digest, so every publish is a one-line commit. Doing it
+      # by hand is the step everyone forgets, and a stale pin means goby's own reviews run code that
+      # is no longer what main says. A pull request rather than a push keeps the branch rule, and
+      # the `no-review` label keeps the reviewer from reviewing its own digest bump.
+      - name: Bump the pinned digest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Read the digest back from the image we just pushed rather than threading it through an
+          # output: the tag is what the push created, and the digest is what the tag now means.
+          DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/goby-review:$(git rev-parse --short=12 HEAD)")"
+          FILE=.github/workflows/goby-review.yml
+          if grep -q "$DIGEST" "$FILE"; then
+            echo "already pinned to $DIGEST"
+            exit 0
+          fi
+          gh auth setup-git
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH="chore/pin-review-image-${GITHUB_SHA::12}"
+          git checkout -B "$BRANCH"
+          sed -i "s|goby-review@sha256:[a-f0-9]*|goby-review@${DIGEST##*@}|" "$FILE"
+          git diff --quiet "$FILE" && { echo "nothing to pin"; exit 0; }
+          git commit -m "ci: pin the reviewer image to ${GITHUB_SHA::12}" "$FILE"
+          git push -u origin "$BRANCH"
+          # `no-review`: the label exists for changes the reviewer cannot usefully judge, and its own
+          # digest is the clearest case.
+          gh pr create --title "ci: pin the reviewer image to ${GITHUB_SHA::12}" \
+            --body "Published from ${GITHUB_SHA}. One line: the digest the reviewer runs by." \
+            --label no-review --base main
+          gh pr merge --squash --auto --delete-branch
