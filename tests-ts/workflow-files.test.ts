@@ -113,3 +113,20 @@ test('only the default branch may move the moving tag', () => {
   expect(latestPush.indexOf('docker push --quiet "$image:latest"'))
     .toBeLessThan(latestPush.indexOf('fi'));
 });
+
+test('the reviewer is bounded by turns, a command timeout and a job timeout', () => {
+  // pi has no turn cap of its own, and a shell command with no wall clock can hang until the job
+  // timeout — which is how a four-minute review turned into fifteen minutes.
+  for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
+    const text = read(file);
+    expect(text).toContain('GOBY_MAX_TURNS: "20"');
+    expect(text).toContain('GOBY_BASH_TIMEOUT_S: "120"');
+    expect(text).toContain('timeout-minutes: 15');
+  }
+  const extension = read('review/report_findings.ts');
+  expect(extension).toContain("pi.on('turn_start'");
+  expect(extension).toContain('turns > MAX_TURNS');
+  // The bash tool takes cwd first: passing options in that slot silently drops both the env filter
+  // and the timeout.
+  expect(extension).toContain('createBashTool(process.cwd(), {');
+});
