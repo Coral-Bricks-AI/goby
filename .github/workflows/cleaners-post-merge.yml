@@ -163,13 +163,19 @@ jobs:
       CLEANERS_EXTENSIONS: ${{ inputs.extensions }}
       CLEANERS_TOOL_KEY_ENV: ${{ inputs.tool-key-env }}
       CLEANERS_LABEL: ${{ inputs.label || 'goby-cleaners' }}
-      CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       # The image clones, hunts and files; the step is one line because there is nothing for
       # the runner to set up. Nothing from the pushed tree is executed by the runner itself.
+      #
+      # Secrets are step-scoped, never job-scoped: a job-level env becomes part of the
+      # container's own environment, and these belong to the one process that needs them. The
+      # entrypoint then moves the token to a root-only file and gives the hunt an empty
+      # environment, so neither reaches the agent's shell.
       - name: Hunt
         working-directory: /workspace
+        env:
+          CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash /opt/cleaners/entrypoint.sh
