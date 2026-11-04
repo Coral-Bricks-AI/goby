@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "Rates for the model this repo's hunt runs on, so each hunt's price line is a number",
+    "rather than 'unknown'. Shape is the subset of a model catalog that usage.py reads",
+    "(bill.* in cents per million tokens). It is a copy of what we are billed, not a second",
+    "source of truth: update it when the rate changes, or delete it and the hunt reports",
+    "price unknown instead of a wrong number."
+  ],
+  "models": {
+    "deepseek-v4.1-flash-fast-fp4": {
+      "public_slug": "deepseek-v4.1-flash-fast",
+      "aliases": ["deepseek-v4.1-flash-fast"],
+      "bill": {
+        "input_cents_per_m": 1,
+        "output_cents_per_m": 120,
+        "cache_write_cents_per_m": 8
+      }
+    }
+  }
+}

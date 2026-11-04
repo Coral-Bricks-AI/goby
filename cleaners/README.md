@@ -140,9 +140,11 @@ bills from rather than a guess. In Actions the line lands in the job summary, on
 - `gateway/dispatch` · coral/deepseek-v4.1-flash-fast · 7 turns · 42 tool calls · 95 s · 0 findings · $0.0213
 ```
 
-The catalog is the first of `--models-json`, `$CLEANERS_MODELS_JSON`, then
-`ml/platform/models.json` beside the checkout. Without one the price reads `unknown`, never
-`0.0000` — a printed zero reads as a measurement somebody made.
+The catalog is the first of `--models-json`, `$CLEANERS_MODELS_JSON`, a `.coral/models.json`
+committed in the hunted repo, then `ml/platform/models.json` beside the checkout. Commit your
+own rates if you want a number; without one the price reads `unknown`, never `0.0000` — a
+printed zero reads as a measurement somebody made. The image deliberately carries no rates,
+because a stale rate is a false measurement rather than a missing one.
 
 ## Run one locally
 

@@ -72,6 +72,14 @@ fi
 HEAD_SHA="$(git -C "$REPO_DIR" rev-parse HEAD)"
 log "at $HEAD_SHA"
 
+# A repo may commit its own billed rates; the image carries none, because a stale rate is a
+# false measurement rather than a missing one. `.coral/models.json` is the convention, and an
+# explicit CLEANERS_MODELS_JSON in the environment still wins over it.
+if [[ -z "${CLEANERS_MODELS_JSON:-}" && -f "$REPO_DIR/.coral/models.json" ]]; then
+  export CLEANERS_MODELS_JSON="$REPO_DIR/.coral/models.json"
+  log "pricing from .coral/models.json"
+fi
+
 # The predecessor: the diff, `git log` and `git blame` are the cheapest context a hunt has,
 # and none of them work on a one-commit clone. A zero or absent sha means a new branch or a
 # forced update, in which case there is no predecessor to name.
