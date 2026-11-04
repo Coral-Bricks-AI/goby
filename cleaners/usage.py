@@ -9,8 +9,8 @@ Reports tool calls, wall time, tokens, and the billed cost at the rates in a mod
 charged from rather than from a guess.
 
 The catalog is whichever of these exists first: `--models-json`, `$CLEANERS_MODELS_JSON`,
-then `ml/platform/models.json` beside the checkout (our own repo's layout). Without one the
-run still reports its tokens; it reports the price as unknown rather than inventing rates.
+then `.goby/models.json` beside the checkout. Without one the run still reports its tokens;
+it reports the price as unknown rather than inventing rates.
 
 A run without an `events.jsonl` (a `pi --print` hunt) has no token counts at all. That
 is reported as unavailable, never as zero spend: a printed 0.0 reads as a measurement.
@@ -27,13 +27,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL = "deepseek-v4.1-flash-fast"
-DEFAULT_CATALOG = REPO / "ml/platform/models.json"
+DEFAULT_CATALOG = REPO / ".goby" / "models.json"
 
 
 def catalog(explicit=None) -> Path | None:
     """The model catalog to price from, or None when this checkout has none.
 
-    A consuming repo has no `ml/platform/models.json`, and a price is only worth printing
+    A consuming repo has no `.goby/models.json`, and a price is only worth printing
     when it comes from a table somebody actually bills from — so a missing catalog is a
     reported unknown, never a default rate.
     """

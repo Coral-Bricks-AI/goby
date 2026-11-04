@@ -15,9 +15,9 @@ spec.loader.exec_module(plan)
 
 
 def test_a_component_is_the_directory_holding_the_file():
-    found, notes = plan.components(["ml/platform/gateway/dispatch/HUNT.md",
-                                    "goby_cleaners/HUNT.md"])
-    assert found == ["goby_cleaners", "ml/platform/gateway/dispatch"]
+    found, notes = plan.components(["services/api/HUNT.md",
+                                    "cleaners/HUNT.md"])
+    assert found == ["cleaners", "services/api"]
     assert notes == []
 
 
@@ -44,9 +44,9 @@ def test_a_file_that_is_not_hunt_md_is_reported_not_guessed():
 
 
 def test_only_components_containing_a_changed_file_are_picked():
-    comps = ["ml/platform/gateway/dispatch", "ml/platform/gateway/pricing"]
-    chosen, note = plan.picked(comps, ["ml/platform/gateway/dispatch/registry.py"], 3, True)
-    assert chosen == ["ml/platform/gateway/dispatch"]
+    comps = ["services/api", "services/billing"]
+    chosen, note = plan.picked(comps, ["services/api/registry.py"], 3, True)
+    assert chosen == ["services/api"]
     assert "1/2" in note
 
 
@@ -185,13 +185,13 @@ def test_a_missing_newline_between_hunts_does_not_merge_two_findings(tmp_path):
 
 def test_the_cli_prints_the_picked_components_one_per_line(tmp_path):
     changed = tmp_path / "changed.txt"
-    changed.write_text("ml/platform/gateway/dispatch/registry.py\n")
+    changed.write_text("services/api/registry.py\n")
     out = subprocess.run(
         [sys.executable, str(HERE / "plan.py"), "picked", "--changed", str(changed), "--max", "3"],
-        input="ml/platform/gateway/dispatch/HUNT.md\nml/platform/gateway/pricing/HUNT.md\n",
+        input="services/api/HUNT.md\nservices/billing/HUNT.md\n",
         capture_output=True, text=True)
     assert out.returncode == 0
-    assert out.stdout.split() == ["ml/platform/gateway/dispatch"]
+    assert out.stdout.split() == ["services/api"]
     assert "1/2" in out.stderr
 
 

@@ -8,9 +8,9 @@ failure modes are uid, container or cloud interactions, and a claim about one of
 be reproduced from inside the hunt.
 -->
 
-# goby_cleaners
+# cleaners
 
-Paths: `goby_cleaners/**`
+Paths: `cleaners/**`
 
 This is the hunter. Its defects do not make a hunt fail — they make it **file nothing**, or
 file something false, which is the failure the whole design exists to prevent. A defect in

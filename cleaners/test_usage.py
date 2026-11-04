@@ -10,9 +10,9 @@ spec = importlib.util.spec_from_file_location("goby_cleaners_usage", HERE / "usa
 usage = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(usage)
 
-# These four check our own price table against our own catalog, which only exists in the
-# repo that has `ml/platform/models.json`. A consuming repo has no such file and must not
-# fail on its absence; the logic below is covered without a catalog by the fixture test.
+# These check the rates file this repo commits against the model its hunt actually runs. A
+# consuming repo that commits no rates file is covered by the fixture tests below, and must not
+# fail on its absence.
 catalog_only = pytest.mark.skipif(usage.catalog() is None,
                                   reason="no model catalog in this checkout")
 
@@ -37,12 +37,13 @@ def test_an_unknown_model_has_no_rates_rather_than_guessed_ones():
 
 
 @catalog_only
-def test_a_provider_qualified_alias_keeps_its_rates():
-    """Some catalog aliases are themselves provider-qualified (`moonshotai/Kimi-K3`), so the
-    full name has to be tried before the prefix is stripped."""
-    row = usage.rate_for("moonshotai/Kimi-K3")
-    assert row is not None
-    assert "moonshotai/Kimi-K3" in (row.get("aliases") or [])
+def test_every_rate_class_is_stated_so_the_total_is_real():
+    """A rate left out would make the price unknown the moment a hunt uses that token class —
+    which is the bug this file's rates table had on its first day."""
+    bill = usage.rate_for("coral/deepseek-v4.1-flash-fast")["bill"]
+    for field in ("input_cents_per_m", "output_cents_per_m",
+                  "cache_read_cents_per_m", "cache_write_cents_per_m"):
+        assert field in bill, f"{field} not stated, so a hunt that uses it is unpriced"
 
 
 def write_catalog(tmp_path: Path) -> Path:

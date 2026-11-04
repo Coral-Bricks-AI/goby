@@ -2,7 +2,7 @@
 """File a hunt's findings as GitHub issues — the last step of every hunter task.
 
     python3 post_findings.py --findings /workspace/out/findings.jsonl \
-        --repo Coral-Bricks-AI/www --sha <sha> \
+        --repo <owner>/<repo> --sha <sha> \
         --issues-per-day 3 [--out FILE | --dry-run]
 
 One issue per confirmed finding. Three gates, in order:
@@ -33,8 +33,14 @@ from pathlib import Path
 
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 LABEL = "goby-cleaners"
+# The marker identifies a filing by its fields, not by the name that wrote it: a repo can be
+# hunted by two producers at once, and a rename must not lose the dedupe history. Parsing only
+# our own prefix made every legacy issue invisible to `decide` — it saw no fingerprints and no
+# daily budget, and filed the same defect again.
 MARKER = re.compile(
-    r"<!-- goby-cleaners fp=([0-9a-f]{12}) component=(\S+) severity=(\w+) -->")
+    r"<!--\s+[A-Za-z0-9._-]+\s+fp=(?P<fp>[0-9a-f]{12})\s+component=(?P<component>\S+)"
+    r"\s+severity=(?P<severity>\w+)\s*-->")
+DEFAULT_PRODUCER = "goby-cleaners"
 
 
 def issue_label() -> str:
@@ -64,7 +70,9 @@ def fingerprint(component: str, finding: dict) -> str:
 
 
 def marker(component: str, finding: dict, fp: str, severity: str) -> str:
-    return (f"<!-- goby-cleaners fp={fp} component={component} "
+    # The producer name here is decoration now; the fields are what `decide` reads. It follows
+    # the active label so an issue's marker and its label agree while a repo runs two producers.
+    return (f"<!-- {issue_label()} fp={fp} component={component} "
             f"severity={severity} -->")
 
 
@@ -98,13 +106,13 @@ def decide(findings: list[dict], existing: list[dict], *,
             continue
         created = _parse_ts(issue.get("created_at") or "")
         for m in markers:
-            fp = m.group(1)
+            fp = m.group("fp")
             if fp in seen_existing:
                 continue
             seen_existing.add(fp)
             # The daily cap is about what a human was handed today. A high finding is
             # exempt: the cap bounds noise, it must not bury the one that matters.
-            if created and created >= day_floor and m.group(3) != "high":
+            if created and created >= day_floor and m.group("severity") != "high":
                 day_count += 1
 
     filed, skipped = [], []

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The goby-cleaners task: one push, every component it touched, one issue per defect.
 #
-# Started by the webhook lambda with these overrides (see goby_cleaners/receiver):
+# Started by the post-merge workflow as a container job, or by `docker run`, with these in the
+# environment:
 #   REPO SHA BEFORE MODEL FALLBACK_MODEL MAX_TOOLS ISSUES_PER_DAY MAX_COMPONENTS
 #   HUNTER_INDEX GITHUB_TOKEN CORALBRICKS_API_KEY
 #

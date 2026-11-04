@@ -1,42 +1,54 @@
 # Next steps
 
-## Current implementation
+Goby is two halves of one crew:
 
-Goby is TypeScript with a bundled Node CLI. The action builds its own pinned
-source using the frozen Bun lockfile; no package publication is necessary.
-`gdp-wired` supplies the production gate decision, turn admission, and review
-lifecycle. Nineteen laws are kernel-checked in CI.
+- **Review / Gate** — pre-merge. Reads a pull request before it merges, posts bugs on the exact
+  lines, and keeps review completion separate from merge eligibility (`action.yml`,
+  `docs/merge-gate.md`, `docs/trust-model.md`).
+- **Cleaners** — post-merge. A push to `main` hunts every component the push touched, reproduces
+  what it suspects, and files one issue per defect it can prove (`cleaners/`, docs under
+  `docs/post-merge-*.md`).
 
-## Before replacing Devin in production
+Both are Apache-2.0. What follows is what is not finished.
 
-- Land/review this revision and pin the full SHA in a sandbox repository.
-- Verify the real GitHub workflow_run handoff, bot identity, thread-resolution
-  recheck, status permissions, and failed/stale review cases.
-- Require Goby Gate and CI in branch protection; preserve exact-head merge
-  checks and any deployment dispatch needed after GITHUB_TOKEN merges.
-- Compare 10–20 labelled historical API/web PR heads for missed bugs, false
-  positives, latency, cost, and incomplete runs. Keep Devin until the bar is met.
+## Blocking adoption
 
-## Follow-up work
+- **GHCR package visibility.** `ghcr.io/coral-bricks-ai/goby-cleaners` is private. Our own runs
+  pull it because the job authenticates with `packages: read`, but a repo outside the org cannot
+  pull anonymously. Change it under the package's settings → Danger Zone → visibility. The REST
+  API refuses this for org packages even with `write: packages`, so it is a one-click UI action.
+- **One install path is untested from outside.** Cleaners has only ever been installed on this
+  repository. Install it on a repo that is not ours, from the docs alone, before calling the
+  docs done — that is the only check that catches a missing input or a secret name.
 
-- Owner decision on license (intended Apache-2.0, not granted yet).
-- Owner-approved package/release publication. `package.json` is deliberately
-  private until that approval; do not publish or retag automatically.
-- A benchmark command and maintained labelled corpus; current differential
-  fixtures prove implementation compatibility, not model quality.
-- Fork-PR hardening: head-provided convention files remain prompt-injection
-  inputs; choose a trusted-base context policy and test it.
-- Trusted, bounded plugin interfaces for deterministic checks and extra context.
-- Additional forge publishers and reviewer identities.
+## Product
 
-## Verify a change
+- **A run the hunter cannot start must say so.** Container-job pull failures surface in the
+  runner's container initialisation step, not in our log, so the run looks like a broken workflow
+  file. A preflight step that prints the resolved image and digest would make the common
+  first-run failure legible.
+- **The price line needs a catalog.** A repo that commits no `.goby/models.json` reads `price
+  unknown`. Fine by design; the docs should say what a rates file buys you *before* the first
+  run, not after.
+- **N hunters per push.** `HUNTER_INDEX` exists and is always 0. Parallel hunters buy recall at
+  N× cost; measure before wiring.
+- **A referee.** A second model that re-derives a claim, only if filed findings turn out noisy.
+- **Fixers.** Read a cleaner issue, open a PR. Existing review and merge gate untouched, so no
+  agent ever merges unreviewed code.
+- **Lifeguard.** Prod telemetry → issue, same filing gates.
 
-```sh
-bun install --frozen-lockfile --ignore-scripts
-bun run check
-node dist/cli.js review --pr <number> --dry-run --agent
-```
+## Harness
 
-Never execute code from the PR in the trusted reviewer. Change policy laws
-with policy behavior; retain unsafe mutants as regressions. See
-`docs/merge-gate.md`, `docs/trust-model.md`, and `CONTRIBUTING.md`.
+- `entrypoint.sh` and `hunt.sh` still hold decisions that belong in tested Python; every
+  control-flow bug found so far has been in one of them. See `cleaners/HUNT.md`.
+- An ephemeral Postgres in the image would make queue and ledger invariants provable at all.
+- Automate the `Known non-findings` list from closed issues: right now it is a hand-edited line
+  per false positive.
+
+## Review
+
+- Owner decision on the merge gate as a required check, and on publishing the `dist/` bundle;
+  `package.json` is deliberately `private` until that call.
+- Fork-PR context policy: head-provided convention files are still prompt-injection inputs.
+- A labelled corpus and a benchmark command; the current differential fixtures prove
+  implementation compatibility, not model quality.

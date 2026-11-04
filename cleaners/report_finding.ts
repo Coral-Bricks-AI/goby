@@ -26,8 +26,8 @@ import {
 // replaces the built-in and the model still sees only one shell.
 //
 // An allowlist, not a denylist: a denylist has to guess every credential name, and it
-// missed GITHUB_TOKEN and CORAL_INTERNAL_API_SECRET on the first pass. Anything not named
-// here is dropped, so a new secret in the caller's environment cannot leak by default.
+// missed the token and the model key on the first pass. Anything not named here is dropped,
+// so a secret added to the caller's environment later cannot leak by default.
 const ENV_ALLOW = new Set([
 	"PATH", "HOME", "SHELL", "PWD", "TERM", "TZ", "LANG", "LC_ALL", "LC_CTYPE",
 	"TMPDIR", "USER", "LOGNAME", "VIRTUAL_ENV", "PYTHONPATH", "NODE_PATH",

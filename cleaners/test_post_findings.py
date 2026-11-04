@@ -17,10 +17,10 @@ pf = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pf)
 
 NOW = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
-COMPONENT = "ml/platform/gateway/dispatch"
+COMPONENT = "services/api"
 
 
-def finding(title="slot over-admitted", file="ml/platform/gateway/dispatch/registry.py",
+def finding(title="slot over-admitted", file="services/api/registry.py",
             severity="medium", component=COMPONENT, **kw):
     base = {
         "component": component,
@@ -39,12 +39,13 @@ def finding(title="slot over-admitted", file="ml/platform/gateway/dispatch/regis
     return base
 
 
-def issue(fp, component=COMPONENT, severity="medium", days_ago=0, state="open", number=1):
+def issue(fp, component=COMPONENT, severity="medium", days_ago=0, state="open", number=1,
+          body=None):
     created = (NOW - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {"number": number, "state": state, "created_at": created,
             "html_url": f"https://github.com/x/y/issues/{number}",
-            "body": f"<!-- goby-cleaners fp={fp} component={component} "
-                    f"severity={severity} -->\n\nbody"}
+            "body": body or (f"<!-- goby-cleaners fp={fp} component={component} "
+                             f"severity={severity} -->\n\nbody")}
 
 
 # --- fingerprints --------------------------------------------------------------------
@@ -53,21 +54,43 @@ def issue(fp, component=COMPONENT, severity="medium", days_ago=0, state="open", 
 def test_fingerprint_is_stable_across_a_directory_move_and_noisy_titles():
     a = pf.fingerprint(COMPONENT, finding())
     b = pf.fingerprint(COMPONENT, finding(
-        file="ml/platform/other/dispatch/registry.py", title="Slot over-admitted!"))
+        file="services/other/registry.py", title="Slot over-admitted!"))
     assert a == b
 
 
 def test_fingerprint_separates_components_and_files():
     fp = pf.fingerprint(COMPONENT, finding())
-    assert fp != pf.fingerprint("ml/platform/gateway/pricing", finding())
+    assert fp != pf.fingerprint("services/billing", finding())
     assert fp != pf.fingerprint(COMPONENT, finding(file="pricing.py"))
 
 
 def test_marker_round_trips():
     fp = pf.fingerprint(COMPONENT, finding())
     m = pf.parse_marker(pf.marker(COMPONENT, finding(), fp, "high"))
-    assert m and m.group(1) == fp
-    assert m.group(2) == COMPONENT and m.group(3) == "high"
+    assert m and m.group("fp") == fp
+    assert m.group("component") == COMPONENT and m.group("severity") == "high"
+
+
+def test_a_legacy_marker_still_counts_as_filed():
+    """The two producers ran side by side while the private path was still live, and their
+    markers were written by different code. Parsing only our own prefix made every legacy
+    issue invisible: no fingerprint, no daily budget, and the same defect filed again."""
+    fp = pf.fingerprint(COMPONENT, finding())
+    legacy = [issue(fp, body=f"<!-- coral-cleaners fp={fp} component={COMPONENT} "
+                             f"severity=medium -->")
+              for _ in range(1)]
+    filed, skipped = pf.decide([finding()], legacy, issues_per_day=5, now=NOW)
+    assert not filed and skipped[0]["reason"] == "already filed"
+
+
+def test_a_legacy_issue_spends_the_daily_budget():
+    """Budget is counted from the label, whatever wrote the marker, or a legacy-heavy day
+    lets a fresh producer file its full allowance on top."""
+    fp = pf.fingerprint(COMPONENT, finding(title="other defect"))
+    legacy = [issue(fp, body=f"<!-- coral-cleaners fp={fp} component={COMPONENT} "
+                             f"severity=medium -->")]
+    _, skipped = pf.decide([finding(title="new defect")], legacy, issues_per_day=1, now=NOW)
+    assert skipped[0]["reason"] == "daily budget spent"
 
 
 def test_a_body_without_a_marker_is_not_counted():
@@ -172,7 +195,7 @@ def test_a_capped_medium_does_not_swallow_its_high_severity_match():
 
 
 def test_the_daily_cap_counts_other_components():
-    other = [issue("eeeeeeeeeeee", component="ml/platform/gateway/pricing", days_ago=0)]
+    other = [issue("eeeeeeeeeeee", component="services/billing", days_ago=0)]
     filed, skipped = pf.decide([finding(title="brand new")], other, issues_per_day=1, now=NOW)
     assert filed == [] and skipped[0]["reason"] == "daily budget spent"
 
@@ -210,10 +233,10 @@ def test_issue_carries_both_runs_and_the_marker():
     f = finding()
     item = {"fingerprint": pf.fingerprint(COMPONENT, f), "finding": f, "severity": "high"}
     title, body = pf.render_issue(COMPONENT, item, "a" * 40)
-    assert title == "[goby-cleaners] dispatch: slot over-admitted"
+    assert title == "[goby-cleaners] api: slot over-admitted"
     assert "python3 /tmp/sandbox/repro1.py" in body
     assert "(2, None, 2)" in body, "the flip run is the evidence the line is the cause"
-    assert pf.parse_marker(body).group(3) == "high"
+    assert pf.parse_marker(body).group("severity") == "high"
     assert f"{COMPONENT}/HUNT.md" in body, "the close instruction must name the brief"
 
 
@@ -321,8 +344,8 @@ def test_a_bare_repo_name_is_normalized_before_lookup(monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     findings = tmp_path / "findings.jsonl"
     findings.write_text(json.dumps(finding()) + "\n")
-    assert pf.main(["--findings", str(findings), "--repo", "www", "--sha", "a" * 40]) == 0
-    assert all(p.startswith("/repos/Coral-Bricks-AI/www") for p in seen), seen
+    assert pf.main(["--findings", str(findings), "--repo", "acme/widgets", "--sha", "a" * 40]) == 0
+    assert all(p.startswith("/repos/acme/widgets") for p in seen), seen
 
 
 # --- the run summary and the model-error signal -------------------------------------
