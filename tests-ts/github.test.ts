@@ -66,8 +66,8 @@ describe('GitHubClient transport and pinned reads', () => {
   });
 
   test('PR metadata, nullable intent and raw diff', async () => {
-    const { client, calls } = fake((_c, i) => i === 2 ? new Response('diff --git a/x b/x\n') : { head: { sha: 'immutable', ref: 'branch' }, base: { ref: 'main' }, title: null, body: null });
-    expect(await client.fetch_pr_meta(7)).toEqual({ head_sha: 'immutable', head_ref: 'branch', base_ref: 'main' });
+    const { client, calls } = fake((_c, i) => i === 2 ? new Response('diff --git a/x b/x\n') : { head: { sha: 'immutable', ref: 'branch' }, base: { ref: 'main', sha: 'base-commit' }, title: null, body: null });
+    expect(await client.fetch_pr_meta(7)).toEqual({ head_sha: 'immutable', head_ref: 'branch', base_ref: 'main', base_sha: 'base-commit' });
     expect(await client.fetch_pr_intent(7)).toEqual({ title: '', body: '' });
     expect(await client.fetch_diff(7)).toBe('diff --git a/x b/x\n');
     expect(calls.every(c => c.url.endsWith('/repos/owner/repo/pulls/7'))).toBe(true);

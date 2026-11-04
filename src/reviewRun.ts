@@ -14,6 +14,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolve_gate_target, type GateTarget } from './core/gateEvent.ts';
+import { check_target } from './core/target.ts';
 import * as contract from './core/contract.ts';
 import { select } from './core/selection.ts';
 import { build_summary } from './core/summary.ts';
@@ -77,17 +78,20 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   // Same guard the old pipeline had: read the head, fetch, read it again. A review of a moving
   // head posts findings onto lines that no longer exist.
   let stable = false;
+  let baseRef = '';
   for (let attempt = 0; attempt < 3; attempt++) {
     const before = await client.fetch_pr_meta(pr);
-    if (before.head_sha !== head) throw new Error(`PR head is ${before.head_sha.slice(0, 10)}, not ${head.slice(0, 10)}; superseded`);
-    if (before.base_ref !== base) throw new Error(`PR base is ${before.base_ref}, not ${base}; superseded`);
+    const wrong = check_target(before, { head, base });
+    if (wrong) throw new Error(wrong);
+    baseRef = before.base_ref;
     const after = await client.fetch_pr_meta(pr);
-    if (after.head_sha === head && after.base_ref === base) { stable = true; break; }
+    if (after.head_sha === head && after.base_sha === base) { stable = true; break; }
   }
   if (!stable) throw new Error('PR head/base moved while preparing; nothing reviewed');
 
   const previous = await loadReceipt(client, pr, head);
-  const reuse = Boolean(previous?.complete && previous.base_ref === base && previous.diff_sha256 === digest);
+  // The receipt names the base *ref*, so that is what a reuse decision compares.
+  const reuse = Boolean(previous?.complete && previous.base_ref === baseRef && previous.diff_sha256 === digest);
   if (!reuse) {
     await post_gate_status(client, head, 'pending', 'Review in progress');
     await post_status(client, head, 'pending', 'Review in progress');
@@ -115,7 +119,7 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   if (history.length > 40) resolved.push(`- (${history.length - 40} older resolved thread(s) omitted — this is the most recent history, not all of it.)`);
 
   const job: Job = {
-    pr, repo: client.repo, head, base, model: env('GOBY_MODEL'), session: `review-pr${pr}-${head.slice(0, 10)}`,
+    pr, repo: client.repo, head, base: baseRef, model: env('GOBY_MODEL'), session: `review-pr${pr}-${head.slice(0, 10)}`,
     diff_digest: digest, diff_lines: lineCount(diff), intent,
     already_raised: raised, already_resolved: resolved,
     open_threads: opened, resolved_history: history, reuse, incomplete,

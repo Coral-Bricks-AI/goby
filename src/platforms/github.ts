@@ -135,12 +135,13 @@ export class GitHubClient {
     return result;
   }
 
-  async fetch_pr_meta(pr: number): Promise<{ head_sha: string; head_ref: string; base_ref: string }> {
+  async fetch_pr_meta(pr: number): Promise<{ head_sha: string; head_ref: string; base_ref: string; base_sha: string }> {
     const data = JSON.parse(await this.get(`/repos/${this.repo}/pulls/${pr}`));
-    if (typeof data?.head?.sha !== 'string' || typeof data?.head?.ref !== 'string' || typeof data?.base?.ref !== 'string') {
+    if (typeof data?.head?.sha !== 'string' || typeof data?.head?.ref !== 'string' ||
+        typeof data?.base?.ref !== 'string' || typeof data?.base?.sha !== 'string') {
       throw new GitHubError(200, `/repos/${this.repo}/pulls/${pr}`, 'Missing PR head metadata');
     }
-    return { head_sha: data.head.sha, head_ref: data.head.ref, base_ref: data.base.ref };
+    return { head_sha: data.head.sha, head_ref: data.head.ref, base_ref: data.base.ref, base_sha: data.base.sha };
   }
 
   /**
