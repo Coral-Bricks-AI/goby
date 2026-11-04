@@ -26,6 +26,7 @@ concurrency:
 permissions:
   contents: write        # to push the pin branch
   pull-requests: write   # to open and merge the pin pull request
+  workflows: write       # the pin lives in a workflow file, which a token may not touch otherwise
   packages: write
 
 jobs:

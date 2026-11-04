@@ -70,3 +70,9 @@ test('publishing an image bumps the pin by pull request, and skips its own revie
   expect(publish).toContain('contents: write');
   expect(publish).toContain('pull-requests: write');
 });
+
+test('the pin bump is allowed to edit a workflow file', () => {
+  // A token without this scope is refused on push: "refusing to allow a GitHub App to create or
+  // update workflow ... without `workflows` permission".
+  expect(read('.github/workflows/review-image.yml')).toContain('workflows: write');
+});
