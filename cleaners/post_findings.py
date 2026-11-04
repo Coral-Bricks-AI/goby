@@ -102,7 +102,10 @@ def decide(findings: list[dict], existing: list[dict], *,
     # Inside one run they are two claims by the same agent, so the distinction that survives
     # is the reproducer — the same one twice is a duplicate, a different one is a second
     # defect that would otherwise be dropped silently.
-    batch: dict[str, str] = {}
+    # Every repro filed for a fingerprint, not the first one: a run that emits r1, r2, r2 under
+    # one fingerprint remembered only r1, so the third compared itself against r1, was not a
+    # duplicate, and filed r2 a second time. Same defect, two issues, in one run.
+    batch: dict[str, set[str]] = {}
     for finding in findings:
         component = str(finding.get("component") or "")
         severity = str(finding.get("severity") or "medium")
@@ -112,7 +115,7 @@ def decide(findings: list[dict], existing: list[dict], *,
             skipped.append({"fingerprint": fp, "reason": "already filed",
                             "title": finding.get("title")})
             continue
-        if fp in batch and batch[fp] == repro:
+        if fp in batch and repro in batch[fp]:
             skipped.append({"fingerprint": fp, "reason": "duplicate in this run",
                             "title": finding.get("title")})
             continue
@@ -124,7 +127,7 @@ def decide(findings: list[dict], existing: list[dict], *,
             skipped.append({"fingerprint": fp, "reason": "daily budget spent",
                             "title": finding.get("title")})
             continue
-        batch.setdefault(fp, repro)
+        batch.setdefault(fp, set()).add(repro)
         if severity != "high":
             day_count += 1
         filed.append({"fingerprint": fp, "finding": finding, "severity": severity})

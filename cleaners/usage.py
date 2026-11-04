@@ -123,15 +123,30 @@ def main(argv: list[str]) -> int:
             "are unknown. Spend for it has to come from inference_requests."
         )
     elif bill:
-        # Bill rates are cents per million tokens, so this is cents; /100 gives USD.
-        # pi reports the prompt as cacheRead/cacheWrite, so cache_read is where most of
-        # the prompt lands; pricing it at 0 would understate every hunt.
-        cents = (usage["input"] * bill.get("input_cents_per_m", 0)
-                 + usage["output"] * bill.get("output_cents_per_m", 0)
-                 + usage["cacheRead"] * bill.get("cache_read_cents_per_m", 0)
-                 + usage["cacheWrite"] * bill.get("cache_write_cents_per_m", 0)) / 1e6
-        summary["billed_cents"] = round(cents, 2)
-        summary["billed_usd"] = round(cents / 100, 4)
+        # A rate the catalog does not state is not a rate of zero. Billing a full campaign of
+        # cache-read tokens at an invented zero is how a printed total becomes a wrong
+        # measurement, so a token class with usage and no stated rate makes the price unknown
+        # and says which field is missing. A stated `0` is a decision and is used as one.
+        rate_field = {"input": "input_cents_per_m", "output": "output_cents_per_m",
+                      "cacheRead": "cache_read_cents_per_m",
+                      "cacheWrite": "cache_write_cents_per_m"}
+        unstated = sorted(rate_field[name] for name, tokens in usage.items()
+                          if tokens and rate_field[name] not in bill)
+        if unstated:
+            summary["billed_cents"] = None
+            summary["billed_usd"] = None
+            summary["note"] = (f"{', '.join(unstated)} not stated for {model!r}: those tokens "
+                               f"would be priced at an invented zero")
+        else:
+            # Bill rates are cents per million tokens, so this is cents; /100 gives USD.
+            # pi reports the prompt as cacheRead/cacheWrite, so cache_read is where most of
+            # the prompt lands; pricing it at 0 would understate every hunt.
+            cents = (usage["input"] * bill["input_cents_per_m"]
+                     + usage["output"] * bill["output_cents_per_m"]
+                     + usage["cacheRead"] * bill["cache_read_cents_per_m"]
+                     + usage["cacheWrite"] * bill["cache_write_cents_per_m"]) / 1e6
+            summary["billed_cents"] = round(cents, 2)
+            summary["billed_usd"] = round(cents / 100, 4)
     else:
         summary["billed_cents"] = None
         summary["billed_usd"] = None

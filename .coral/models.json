@@ -4,7 +4,11 @@
     "rather than 'unknown'. Shape is the subset of a model catalog that usage.py reads",
     "(bill.* in cents per million tokens). It is a copy of what we are billed, not a second",
     "source of truth: update it when the rate changes, or delete it and the hunt reports",
-    "price unknown instead of a wrong number."
+    "price unknown instead of a wrong number.",
+    "",
+    "cache_read_cents_per_m is stated as 0 rather than left out, because usage.py refuses to",
+    "price a token class whose rate is missing. The platform's rate table for this model lists",
+    "fresh input, cache write and output only, so a cache read is not billed."
   ],
   "models": {
     "deepseek-v4.1-flash-fast-fp4": {
@@ -13,6 +17,7 @@
       "bill": {
         "input_cents_per_m": 1,
         "output_cents_per_m": 120,
+        "cache_read_cents_per_m": 0,
         "cache_write_cents_per_m": 8
       }
     }

@@ -108,6 +108,17 @@ def test_two_identical_findings_in_one_batch_file_once():
     assert len(filed) == 1 and skipped[0]["reason"] == "duplicate in this run"
 
 
+def test_a_repeated_repro_later_in_the_batch_is_still_a_duplicate():
+    """Only the first repro per fingerprint was remembered, so r1, r2, r2 filed r2 twice: the
+    third compared itself against r1, looked new, and became a second issue for one defect."""
+    first = finding(repro_command="repro-1")
+    second = finding(repro_command="repro-2")
+    third = finding(repro_command="repro-2")
+    filed, skipped = pf.decide([first, second, third], [], issues_per_day=5, now=NOW)
+    assert [i["finding"]["repro_command"] for i in filed] == ["repro-1", "repro-2"]
+    assert [s["reason"] for s in skipped] == ["duplicate in this run"]
+
+
 def test_two_defects_sharing_a_title_both_file():
     """The key is component + file + title, so two defects in one file can collide. Inside a
     run they are two claims by the same agent, and the reproducer is what tells them apart:

@@ -91,3 +91,49 @@ def test_the_summary_line_says_unknown_rather_than_printing_a_zero():
     line = usage.markdown({"component": "c", "model": "m", "tool_calls": 0,
                            "findings": 0, "billed_usd": None})
     assert "price unknown" in line
+
+
+def hunt_dir(tmp_path, usage_tokens, model="coral/test-model-1"):
+    (tmp_path / "run.json").write_text(json.dumps({"component": "c", "model": model}))
+    (tmp_path / "events.jsonl").write_text(json.dumps(
+        {"type": "message_end", "message": {"usage": usage_tokens}}) + "\n")
+    return tmp_path
+
+
+def test_an_unstated_rate_makes_the_price_unknown_not_zero(tmp_path, capsys):
+    """A rate the catalog omits is not a rate of zero. Pricing cache-read tokens at an invented
+    zero produced a confident total for a hunt whose prompt is mostly cache reads."""
+    catalog_path = tmp_path / "models.json"
+    catalog_path.write_text(json.dumps({"models": {"test-model-1": {"bill": {
+        "input_cents_per_m": 1, "output_cents_per_m": 120, "cache_write_cents_per_m": 8}}}}))
+    out = hunt_dir(tmp_path, {"input": 10, "output": 1000, "cacheRead": 500000, "cacheWrite": 0})
+    assert usage.main([str(out), "--models-json", str(catalog_path)]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["billed_usd"] is None
+    assert "cache_read_cents_per_m not stated" in summary["note"]
+    assert "invented zero" in summary["note"]
+
+
+def test_a_stated_zero_rate_is_used_as_a_decision(tmp_path, capsys):
+    """The same totals price cleanly once the catalog says the rate is zero."""
+    catalog_path = tmp_path / "models.json"
+    catalog_path.write_text(json.dumps({"models": {"test-model-1": {"bill": {
+        "input_cents_per_m": 1, "output_cents_per_m": 120,
+        "cache_read_cents_per_m": 0, "cache_write_cents_per_m": 8}}}}))
+    out = hunt_dir(tmp_path, {"input": 10, "output": 1000, "cacheRead": 500000, "cacheWrite": 0})
+    assert usage.main([str(out), "--models-json", str(catalog_path)]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["billed_usd"] == 0.0012  # (10*1 + 1000*120) / 1e6 cents
+
+
+def test_our_own_rates_file_prices_the_default_model(tmp_path, capsys):
+    """`.coral/models.json` is what the entrypoint adopts; if it stops matching the default
+    model name, every hunt silently goes back to "price unknown"."""
+    path = Path(__file__).resolve().parents[1] / ".coral" / "models.json"
+    if not path.is_file():
+        pytest.skip("this checkout has no committed rates file")
+    out = hunt_dir(tmp_path, {"input": 1, "output": 1, "cacheRead": 1, "cacheWrite": 1},
+                   model="coral/deepseek-v4.1-flash-fast")
+    assert usage.main([str(out), "--models-json", str(path)]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["billed_usd"] is not None, summary.get("note")
