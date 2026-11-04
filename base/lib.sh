@@ -4,10 +4,10 @@
 #
 # Sourced, never executed. Nothing here decides anything a test should cover — the decisions
 # (which component, which findings, what may be filed) stay in Python or TypeScript with tests,
-# as cleaners' own HUNT.md requires.
+# as cleaners' own CLEANER.md requires.
 set -euo pipefail
 
-GOBY_AGENT_USER="${GOBY_AGENT_USER:-hunter}"
+GOBY_AGENT_USER="${GOBY_AGENT_USER:-agent}"
 GOBY_AGENT_UID="${GOBY_AGENT_UID:-10001}"
 GOBY_TOKEN_FILE="${GOBY_TOKEN_FILE:-/run/goby/token}"
 GOBY_KEY_FILE="${GOBY_KEY_FILE:-/run/goby/model-key}"

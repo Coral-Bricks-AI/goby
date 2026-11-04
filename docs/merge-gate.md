@@ -2,7 +2,8 @@
 
 ## Contract
 
-`Goby Review` answers **did the review run?** `Goby Gate` answers **has this
+`Goby Gate` is opt-in (`GOBY_GATE: "on"`); with it off, only the review status is posted. What
+follows describes the verdict when it is on. `Goby Review` answers **did the review run?** `Goby Gate` answers **has this
 head satisfied the review policy?** Neither merges code or replaces CI.
 
 The gate requires all ten facts:

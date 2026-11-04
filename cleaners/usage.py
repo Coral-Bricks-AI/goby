@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Sum one hunt's output directory into the numbers phase 0 is supposed to produce.
+"""Sum one scan's output directory into the numbers phase 0 is supposed to produce.
 
-    python3 usage.py /tmp/hunt7 [--model deepseek-v4.1-flash-fast]
+    python3 usage.py /tmp/scan7 [--model deepseek-v4.1-flash-fast]
 
 Reports tool calls, wall time, tokens, and the billed cost at the rates in a model catalog
 (`bill.input_cents_per_m`, `output_cents_per_m`, `cache_read_cents_per_m`,
-`cache_write_cents_per_m`), so a hunt's price is quoted from the same table the customer is
+`cache_write_cents_per_m`), so a scan's price is quoted from the same table the customer is
 charged from rather than from a guess.
 
 The catalog is whichever of these exists first: `--models-json`, `$CLEANERS_MODELS_JSON`,
 then `.goby/models.json` beside the checkout. Without one the run still reports its tokens;
 it reports the price as unknown rather than inventing rates.
 
-A run without an `events.jsonl` (a `pi --print` hunt) has no token counts at all. That
+A run without an `events.jsonl` (a `pi --print` scan) has no token counts at all. That
 is reported as unavailable, never as zero spend: a printed 0.0 reads as a measurement.
 
 The model comes from the run's own `run.json` when present, because pricing the
@@ -119,7 +119,7 @@ def main(argv: list[str]) -> int:
         summary["billed_cents"] = None
         summary["billed_usd"] = None
         summary["note"] = (
-            "no events.jsonl: this hunt ran without CLEANERS_JSON=1, so tokens and cost "
+            "no events.jsonl: this scan ran without CLEANERS_JSON=1, so tokens and cost "
             "are unknown. Spend for it has to come from inference_requests."
         )
     elif bill:
@@ -140,7 +140,7 @@ def main(argv: list[str]) -> int:
         else:
             # Bill rates are cents per million tokens, so this is cents; /100 gives USD.
             # pi reports the prompt as cacheRead/cacheWrite, so cache_read is where most of
-            # the prompt lands; pricing it at 0 would understate every hunt.
+            # the prompt lands; pricing it at 0 would understate every scan.
             cents = (usage["input"] * bill["input_cents_per_m"]
                      + usage["output"] * bill["output_cents_per_m"]
                      + usage["cacheRead"] * bill["cache_read_cents_per_m"]
@@ -162,7 +162,7 @@ def main(argv: list[str]) -> int:
 
 
 def markdown(summary: dict) -> str:
-    """One line for the Actions job summary: what this hunt cost is the product's whole
+    """One line for the Actions job summary: what this scan cost is the product's whole
     argument, so it belongs where a user is already looking."""
     def money(value):
         return "price unknown" if value is None else f"${value:.4f}"

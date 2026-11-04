@@ -13,6 +13,7 @@ scripts take flags that override the same values.
 | `GOBY_HEAD` | full commit SHA under review |
 | `GOBY_BASE` | full base commit SHA; the diff is `merge-base(base, head)..head` when one exists |
 | `GITHUB_TOKEN` | the workflow token; `pull-requests: write`, `statuses: write`, `contents: read` |
+| `GOBY_GATE` | `on` posts the eligibility status; anything else (the default) leaves it off |
 
 ## Provider
 

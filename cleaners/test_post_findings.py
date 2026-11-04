@@ -116,7 +116,7 @@ def test_a_closed_issue_still_suppresses_the_finding():
 
 
 def test_a_duplicate_in_the_batch_does_not_starve_the_new_finding():
-    """Re-hunting re-reports yesterday's finding first; that duplicate must not spend the
+    """Re-scanning re-reports yesterday's finding first; that duplicate must not spend the
     day's second slot, or a genuinely new defect waits another day."""
     old = finding(title="old defect")
     new = finding(title="new defect")
@@ -237,7 +237,7 @@ def test_issue_carries_both_runs_and_the_marker():
     assert "python3 /tmp/sandbox/repro1.py" in body
     assert "(2, None, 2)" in body, "the flip run is the evidence the line is the cause"
     assert pf.parse_marker(body).group("severity") == "high"
-    assert f"{COMPONENT}/HUNT.md" in body, "the close instruction must name the brief"
+    assert f"{COMPONENT}/CLEANER.md" in body, "the close instruction must name the brief"
 
 
 # --- filing against a stubbed API ---------------------------------------------------
@@ -297,7 +297,7 @@ def test_a_failed_listing_files_nothing(monkeypatch, tmp_path):
     assert pf.main(["--findings", str(findings), "--repo", "o/r", "--sha", "a" * 40]) == 1
 
 
-def test_a_hunt_with_no_findings_touches_nothing(tmp_path, monkeypatch, capsys):
+def test_a_scan_with_no_findings_touches_nothing(tmp_path, monkeypatch, capsys):
     called = []
     monkeypatch.setattr(pf, "_http", lambda *a, **k: called.append(a))
     findings = tmp_path / "findings.jsonl"
@@ -331,7 +331,7 @@ def test_a_finding_without_a_component_is_a_wiring_error(tmp_path, capsys):
 
 
 def test_a_bare_repo_name_is_normalized_before_lookup(monkeypatch, tmp_path):
-    """Dedupe reads and filing writes must address the same repository, or every hunt looks
+    """Dedupe reads and filing writes must address the same repository, or every scan looks
     like the first one."""
     seen = []
     gh = FakeGitHub()
@@ -352,7 +352,7 @@ def test_a_bare_repo_name_is_normalized_before_lookup(monkeypatch, tmp_path):
 
 
 def test_the_run_summary_is_one_line_and_never_the_raw_events(tmp_path):
-    """A clean hunt is silent, so this line is the only evidence it ran — and the last raw
+    """A clean scan is silent, so this line is the only evidence it ran — and the last raw
     event carries the whole conversation, system prompt included."""
     events = {
         "type": "message_end",
@@ -519,3 +519,28 @@ def test_the_label_can_be_overridden_for_a_transition(monkeypatch):
     assert pf.issue_label() == "coral-cleaners"
     monkeypatch.delenv("CLEANERS_LABEL")
     assert pf.issue_label() == pf.LABEL == "goby-cleaners"
+
+
+def test_the_marker_parses_back_whatever_label_is_in_use(monkeypatch):
+    """A scoped label such as `cleaners/goby` is a normal GitHub label, and writing it into the
+    marker produced a body the marker grammar rejects — so the issue a run had just filed was
+    invisible to the next run's dedupe, which filed it again."""
+    for label in ("goby-cleaners", "cleaners/goby", "cleaners:goby", "team cleaners"):
+        monkeypatch.setenv("CLEANERS_LABEL", label)
+        fp = pf.fingerprint(COMPONENT, finding())
+        body = pf.marker(COMPONENT, finding(), fp, "medium")
+        parsed = pf.parse_marker(body)
+        assert parsed is not None, (label, body)
+        assert parsed.group("fp") == fp
+
+
+def test_the_close_instruction_names_the_brief_that_component_really_has(monkeypatch):
+    """A legacy component has HUNT.md. Telling a maintainer to edit CLEANER.md invites them to
+    create it, and since the scan prefers CLEANER.md, the original brief — with its invariants and
+    known non-findings — would then be silently ignored."""
+    f = finding()
+    item = {"fingerprint": pf.fingerprint("services/api", f), "finding": f, "severity": "low"}
+    monkeypatch.setattr(pf, "BRIEFS", {"services/api": "HUNT.md"}, raising=False)
+    _, body = pf.render_issue("services/api", item, "a" * 40)
+    assert "`services/api/HUNT.md`" in body
+    assert "`services/api/CLEANER.md`" not in body

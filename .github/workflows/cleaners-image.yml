@@ -1,9 +1,9 @@
 name: cleaners image
 
-# Builds the hunter image every other workflow runs, and prints the digest to pin.
+# Builds the cleaner image every other workflow runs, and prints the digest to pin.
 #
 # The digest, not the tag: `ghcr.io/coral-bricks-ai/goby-cleaners:latest` is a moving handle,
-# and a hunt's findings are only comparable across weeks if the container that produced them
+# and a scan's findings are only comparable across weeks if the container that produced them
 # is the same one. Copy the `@sha256:...` from this job's summary into your workflow.
 
 on:
@@ -65,7 +65,7 @@ jobs:
             type=match,pattern=cleaners-v(.*),group=1
 
       # amd64 only: it is what `ubuntu-latest` is, and it is what a container job pulls. A
-      # multi-arch build would double the build time for the one platform nobody runs a hunt
+      # multi-arch build would double the build time for the one platform nobody runs a scan
       # on. An arm64 runner can rebuild this context in one step.
       - id: build
         uses: docker/build-push-action@v6

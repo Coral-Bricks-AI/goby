@@ -1,10 +1,10 @@
-# Post-merge hunting on a GitHub-hosted runner
+# Post-merge scanning on a GitHub-hosted runner
 
 The zero-infra tier: a push to `main`, one issue per defect that could be reproduced and shown
 to disappear after changing the blamed line. Nothing to deploy, no GitHub App, no cloud
 account.
 
-**What it cannot do:** reach a private network. A hunt sees the repository and nothing behind
+**What it cannot do:** reach a private network. A scan sees the repository and nothing behind
 your firewall — no private database, no internal service. For that, see
 [self-hosted](post-merge-self-hosted.md); the workflow is otherwise identical.
 
@@ -25,14 +25,14 @@ Settings → Secrets and variables → Actions → `CORALBRICKS_API_KEY`. Any pr
 
 ## 3. The briefs
 
-A hunt only looks where a `HUNT.md` file exists. Ask your agent to write them:
-`/create-hunt-md` (see [`skills/create-hunt-md`](../skills/create-hunt-md/SKILL.md)), review
+A scan only looks where a `CLEANER.md` file exists. Ask your agent to write them:
+`/create-cleaner-md` (see [`skills/create-cleaner-md`](../skills/create-cleaner-md/SKILL.md)), review
 the PR it opens, merge it. Start with three directories that carry real behaviour.
 
 ## Check it worked
 
-Push a commit touching a directory with a `HUNT.md`. The run's job summary shows one line per
-hunt — model, turns, tool calls, wall time, findings, price. A run that ends `done (clean)`
+Push a commit touching a directory with a `CLEANER.md`. The run's job summary shows one line per
+scan — model, turns, tool calls, wall time, findings, price. A run that ends `done (clean)`
 found nothing, which is the usual result.
 
 ## Knobs
@@ -43,5 +43,5 @@ in [`cleaners/README.md`](../cleaners/README.md).
 
 ## Cost
 
-A hunt is a few hundred thousand tokens and a couple of minutes; the price line in the summary
+A scan is a few hundred thousand tokens and a couple of minutes; the price line in the summary
 is the number to watch. GitHub-hosted minutes are billed by your plan.

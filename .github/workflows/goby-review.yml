@@ -35,7 +35,13 @@ concurrency:
 
 jobs:
   review:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Drafts are not reviewed: a pull request under construction should not pay three minutes and a
+    # model call per push. The same applies to `no-review`, which is the label to reach for when a
+    # change cannot be reviewed by the thing it is changing.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false &&
+      !contains(github.event.pull_request.labels.*.name, 'no-review')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -47,9 +53,13 @@ jobs:
       GOBY_BASE: ${{ github.event.pull_request.base.sha }}
       GOBY_PROVIDER: coral
       GOBY_MODEL: deepseek-v4.1-flash-fast
-      GOBY_MAX_TOOL_CALLS: "80"
+      GOBY_MAX_TOOL_CALLS: "200"
       GOBY_MAX_DIFF_LINES: "10000"
       GOBY_MAX_FINDINGS: "30"
+      # The gate is the second status ("Goby Gate"), an eligibility verdict recomputed from GitHub
+      # state with no model involved. Turn it on when branch protection requires it; off, the review
+      # posts its findings and claims nothing about merging.
+      GOBY_GATE: "off"
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
     steps:

@@ -1,6 +1,6 @@
 # Goby cleaners
 
-The post-merge half of goby. A push to `main` starts one hunter task; it reads the diff, hunts
+The post-merge half of goby. A push to `main` starts one cleaner task; it reads the diff, scans
 every component that push touched, and files one GitHub issue per defect it could reproduce —
 and prove goes away when the blamed line is changed.
 
@@ -20,13 +20,13 @@ runs. `cleaners-post-merge.yml` ships with a `push` trigger, so copying it is en
 3. Push to `main`.
 
 No AWS account, no GitHub App, no service to deploy. What you cannot do here is reach a private
-network: a hunt sees your code and nothing behind your firewall.
+network: a scan sees your code and nothing behind your firewall.
 
 ### Self-hosted runner
 
 Same three steps, plus one:
 
-1. Install a runner on a machine inside the network the hunts need to read.
+1. Install a runner on a machine inside the network the scans need to read.
 2. Copy the workflow, and set `runs-on: [self-hosted, linux]` in it.
 3. Add the model key secret, push.
 
@@ -38,7 +38,7 @@ code path — it is where the job runs.
 
 ```yaml
 jobs:
-  hunt:
+  scan:
     uses: Coral-Bricks-AI/goby/.github/workflows/cleaners-post-merge.yml@<full sha>
     with:
       image: ghcr.io/coral-bricks-ai/goby-cleaners@sha256:...
@@ -51,9 +51,9 @@ Pin the image by digest. A tag is a moving handle, and findings are only compara
 weeks if the container that produced them is the same one. `cleaners-image.yml` prints the
 digest for every build.
 
-## Components: a `HUNT.md` in the directory
+## Components: a `CLEANER.md` in the directory
 
-A component is the directory that contains a `HUNT.md`. The file is the opt-in, so there is no
+A component is the directory that contains a `CLEANER.md`. The file is the opt-in, so there is no
 registry to keep in sync: no YAML, no generated JSON, no linter.
 
 ```markdown
@@ -65,10 +65,10 @@ registry to keep in sync: no YAML, no generated JSON, no linter.
 2. <Another one. Three to six is the useful range.>
 
 ## Known-fragile areas
-<Where the invariants are most likely to break. Optional; tells the hunter where to dig.>
+<Where the invariants are most likely to break. Optional; tells the cleaner where to dig.>
 
 ## Known non-findings
-- <date> · "<claim a hunter filed>" — <why it is not a defect> (#<issue>)
+- <date> · "<claim a cleaner filed>" — <why it is not a defect> (#<issue>)
 ```
 
 That file is the whole lever: phase 0 measured that "find bugs" produces style complaints and
@@ -82,12 +82,12 @@ confident false claims, while one stated invariant found a real 4× admission ov
 2. The container clones that sha shallow, fetches `before`, and makes a writable **sandbox**
    copy. The clone stays root-owned and read-only — the finding quotes it, the sandbox is where
    reproducers run.
-3. `git diff --name-only before..after` → every `HUNT.md` directory it touches. When more than
+3. `git diff --name-only before..after` → every `CLEANER.md` directory it touches. When more than
    `MAX_COMPONENTS` (4) changed, the components with the most changed files go first and the
    log names the ones the cap dropped. No predecessor (new branch, forced push) → every
    component.
 4. One pi process per component, with its own context and its own `MAX_TOOLS` budget.
-5. Everything the hunter reports goes through `report_finding`, then through the filing gates.
+5. Everything the cleaner reports goes through `report_finding`, then through the filing gates.
    One issue per finding.
 
 ## The gates
@@ -107,15 +107,15 @@ Then `post_findings.py`, in order: fingerprint already on an open **or closed** 
 
 `MODEL=provider/name` picks `models/<provider>.json`: `coral/…` (our gateway, the default),
 `anthropic/…`, `openai/…`. `FALLBACK_MODEL` is used when the chosen provider has no key, and
-again inside the hunt when its call fails — a rate limit or an exhausted key must not look like
+again inside the scan when its call fails — a rate limit or an exhausted key must not look like
 a clean run.
 
 A provider is usable when every **credential** its models file interpolates is set.
 `CLEANERS_*` and `PI_*` are config this harness supplies, not credentials — `models/coral.json`
 interpolates `CLEANERS_SESSION_ID` for spend attribution, and counting that as a credential
-refused every default hunt. The agent's own shell sees only the one key its model needs.
+refused every default scan. The agent's own shell sees only the one key its model needs.
 
-## Giving the hunter better tools
+## Giving the cleaner better tools
 
 The image is the extension point. Add a binary or a pi extension in your own image, then name
 it from the workflow — no fork of this harness:
@@ -128,13 +128,13 @@ it from the workflow — no fork of this harness:
 | `label:` | Issue label to file under and dedupe against. Default `goby-cleaners`. |
 
 The last one is a deliberate widening and is logged: `tool credentials: …` names every
-credential handed to the hunt. Prefer a credential-free shim — a local socket held by root,
+credential handed to the scan. Prefer a credential-free shim — a local socket held by root,
 exposing only read-only statements — over an agent whose shell can open your database. Whatever
 a tool can reach is reachable by whatever the model decides to run.
 
-## What a hunt costs
+## What a scan costs
 
-`usage.py` prices each hunt from a model catalog, so the number is the table somebody actually
+`usage.py` prices each scan from a model catalog, so the number is the table somebody actually
 bills from rather than a guess. In Actions the line lands in the job summary, one per component:
 
 ```
@@ -142,7 +142,7 @@ bills from rather than a guess. In Actions the line lands in the job summary, on
 ```
 
 The catalog is the first of `--models-json`, `$CLEANERS_MODELS_JSON`, then a
-`.goby/models.json` in the hunted repo (the entrypoint hands that path over itself). Commit
+`.goby/models.json` in the scanned repo (the entrypoint hands that path over itself). Commit
 your own rates if you want a number; without one the price reads `unknown`, never `0.0000` —
 a printed zero reads as a measurement somebody made. The image deliberately carries no rates,
 because a stale rate is a false measurement rather than a missing one.
@@ -167,11 +167,11 @@ cp cleaners/models/coral.json "$PI_CODING_AGENT_DIR/models.json"
 export PI_EXTENSION=$PWD/cleaners/report_finding.ts
 export CLEANERS_JSON=1 CLEANERS_MAX_TOOLS=60 CLEANERS_SANDBOX=/tmp/sandbox
 cp -a . /tmp/sandbox && rm -rf /tmp/sandbox/.git
-bash cleaners/hunt.sh --repo-dir $PWD --component <component dir> \
+bash cleaners/cleaner.sh --repo-dir $PWD --component <component dir> \
   --sha $(git rev-parse --short HEAD) --before $(git rev-parse --short HEAD~1) \
-  --charter <component dir>/HUNT.md \
-  --model coral/deepseek-v4.1-flash-fast --out /tmp/hunt
-python3 cleaners/usage.py /tmp/hunt
+  --charter <component dir>/CLEANER.md \
+  --model coral/deepseek-v4.1-flash-fast --out /tmp/scan
+python3 cleaners/usage.py /tmp/scan
 ```
 
 A run that reported nothing is a valid result: most components on most pushes are clean, and
@@ -181,21 +181,21 @@ A run that reported nothing is a valid result: most components on most pushes ar
 
 | file | role |
 |---|---|
-| `entrypoint.sh` | clone, sandbox, pick components, one hunt each, file |
-| `hunt.sh` | one component: render the prompt, run pi read-only, collect findings |
-| `prompt.md` | hunter prompt; `{{INVARIANTS}}` is the component's `HUNT.md` |
+| `entrypoint.sh` | clone, sandbox, pick components, one scan each, file |
+| `cleaner.sh` | one component: render the prompt, run pi read-only, collect findings |
+| `prompt.md` | cleaner prompt; `{{INVARIANTS}}` is the component's `CLEANER.md` |
 | `report_finding.ts` | emit tool (`outputSchema`, repro **and** flip required) + tool-call cap |
 | `post_findings.py` | fingerprint, dedupe, `issues_per_day`, one issue per finding |
 | `model_check.py` | which model this container can run, and its fallback |
-| `plan.py` | which components a push touches, and collecting what the hunts found |
-| `summarize_run.py`, `usage.py` | one log line per hunt; tokens and price, and the job summary |
+| `plan.py` | which components a push touches, and collecting what the scans found |
+| `summarize_run.py`, `usage.py` | one log line per scan; tokens and price, and the job summary |
 | `models/*.json` | one provider file each: `coral` (our gateway), `anthropic`, `openai` |
 | `../.github/workflows/cleaners-*.yml` | the image build and the reusable post-merge workflow |
 
 ## Traps worth remembering
 
 **`--tools a,b,c` is a full replacement, extension tools included.** An allowlist that does not
-name `report_finding` produces a hunter that cannot report: it finds the defect, writes it in
+name `report_finding` produces a cleaner that cannot report: it finds the defect, writes it in
 prose, and the prose is discarded. Four spike runs measured nothing because of this. The same
 holds for `CLEANERS_EXTENSIONS`: a tool named in the list with no extension behind it is
 declared to the model and cannot be called.
@@ -213,9 +213,9 @@ That split is not tidiness: the entrypoint's decisions were wrong in review twic
 cannot be tested here.
 
 **git refuses a repository owned by another user.** The reference tree is root-owned (that is
-what makes its missing write bit mean anything), and the hunt runs as `hunter`, so git 2.35+
+what makes its missing write bit mean anything), and the scan runs as `cleaner`, so git 2.35+
 answers `fatal: detected dubious ownership` to everything — including the `git diff` the prompt
-tells the hunter to start from. The entrypoint declares that one path safe system-wide, which
+tells the cleaner to start from. The entrypoint declares that one path safe system-wide, which
 only lifts the ownership check; it grants no write.
 
 **A required field in the tool schema is a real gate; a required field in the prompt is not.**
@@ -224,27 +224,27 @@ Phase 0: the repro fields turned a plausible false positive into a rejected clai
 **Silence must be distinguishable from success in both directions.** A missing credential is
 checked before the clone (`model_check.py`), and a failed model call is caught after the run
 (`summarize_run.py --status`): pi exits 0 either way, and both failure modes otherwise look like
-a hunt that found nothing.
+a scan that found nothing.
 
 **`models/<provider>.json` fails hard on an unset `$VAR`.** That is why the entrypoint picks the
 file by `MODEL`'s provider prefix and checks the variable is set before starting: a missing key
 must fail in one log line, not after a clone. The same check is what lets a missing or dead
 provider fall back to `FALLBACK_MODEL` instead of going silent.
 
-**A hunt that could not think is not a hunt that found nothing.** `pi --mode json` exits 0 when
+**A scan that could not think is not a scan that found nothing.** `pi --mode json` exits 0 when
 the model call fails, so the entrypoint greps the last assistant message for
 `stopReason=error` and fails the job. Silence must never be indistinguishable from "no bugs".
 
 ## Filing limits by design
 
-- One job per push. A cancelled or failed run means that push is not hunted; the next push is
+- One job per push. A cancelled or failed run means that push is not scanned; the next push is
   the retry.
 - The token is the workflow's `GITHUB_TOKEN`, scoped to one repository with `contents: read` and
-  `issues: write`. The entrypoint moves it to a root-only file and unsets it before the hunt
+  `issues: write`. The entrypoint moves it to a root-only file and unsets it before the scan
   starts, so the agent's environment never contains it.
-- The model key is in the hunter's process, because the process that calls the model API has to
-  hold a key for it. One key per hunt: only the selected provider's credential is passed.
-- No runs table. Spend is attributable by session id (`hunt-…`) on the provider side.
+- The model key is in the cleaner's process, because the process that calls the model API has to
+  hold a key for it. One key per scan: only the selected provider's credential is passed.
+- No runs table. Spend is attributable by session id (`clean-…`) on the provider side.
 
 ## License
 

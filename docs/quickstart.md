@@ -18,17 +18,20 @@ Then:
 
 3. Add `CORALBRICKS_API_KEY` as a repository secret. For another provider, change `GOBY_PROVIDER`
    / `GOBY_MODEL` and use that provider's secret.
-4. Require **Goby Gate** and CI in branch protection — not Goby Review.
+4. Optionally require CI, and **Goby Gate** if you turned it on — never Goby Review.
 
 The reviewer clones the pull request and runs in a container; the gate recheck runs the same image
 with no model call. Neither uses `pull_request_target`, and neither checks out anything into the
 runner.
 
-## Two statuses
+## Statuses
 
 - **Goby Review** — execution telemetry. Success does not imply no bugs.
-- **Goby Gate** — fail-closed eligibility for the exact head: a complete review bound to
-  head/base/diff, accounted finding threads, no open findings, complete GitHub data.
+- **Goby Gate** — off by default. It is a fail-closed eligibility verdict for the exact head
+  (complete review bound to head/base/diff, accounted finding threads, no open findings), computed
+  from GitHub state with no model. Turn it on with `GOBY_GATE: "on"` when branch protection
+  requires it; until then it is a status nothing reads, and a policy about evidence should not fail
+  a pull request nobody asked to gate.
 
 ## Run it locally
 

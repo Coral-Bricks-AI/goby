@@ -1,4 +1,4 @@
-"""Tests for the decisions that used to live in shell: what to hunt, and what was found."""
+"""Tests for the decisions that used to live in shell: what to scan, and what was found."""
 import hashlib
 import importlib.util
 import subprocess
@@ -15,27 +15,27 @@ spec.loader.exec_module(plan)
 
 
 def test_a_component_is_the_directory_holding_the_file():
-    found, notes = plan.components(["services/api/HUNT.md",
-                                    "cleaners/HUNT.md"])
+    found, notes = plan.components(["services/api/CLEANER.md",
+                                    "cleaners/CLEANER.md"])
     assert found == ["cleaners", "services/api"]
     assert notes == []
 
 
-def test_the_root_hunt_md_is_named_and_dropped():
-    """A root-level HUNT.md means "hunt the whole repo", the one scope this design exists to
-    avoid — and `sed 's|/HUNT.md$||'` used to leave it as a component called `HUNT.md`."""
-    found, notes = plan.components(["HUNT.md", "a/HUNT.md"])
+def test_the_root_cleaner_md_is_named_and_dropped():
+    """A root-level CLEANER.md means "scan the whole repo", the one scope this design exists to
+    avoid — and `sed 's|/CLEANER.md$||'` used to leave it as a component called `CLEANER.md`."""
+    found, notes = plan.components(["CLEANER.md", "a/CLEANER.md"])
     assert found == ["a"]
     assert notes and "root-level" in notes[0]
 
 
 def test_a_duplicate_path_yields_one_component():
-    found, _ = plan.components(["a/HUNT.md", "a/HUNT.md"])
+    found, _ = plan.components(["a/CLEANER.md", "a/CLEANER.md"])
     assert found == ["a"]
 
 
-def test_a_file_that_is_not_hunt_md_is_reported_not_guessed():
-    found, notes = plan.components(["a/HUNT.md", "a/README.md", ""])
+def test_a_file_that_is_not_cleaner_md_is_reported_not_guessed():
+    found, notes = plan.components(["a/CLEANER.md", "a/README.md", ""])
     assert found == ["a"]
     assert any("a/README.md" in n for n in notes)
 
@@ -51,7 +51,7 @@ def test_only_components_containing_a_changed_file_are_picked():
 
 
 def test_a_sibling_with_a_common_prefix_is_not_a_match():
-    """`a/bc/x` is not inside `a/b`; a prefix test without the separator would hunt it."""
+    """`a/bc/x` is not inside `a/b`; a prefix test without the separator would scan it."""
     chosen, _ = plan.picked(["a/b"], ["a/bc/x.py"], 3, True)
     assert chosen == []
 
@@ -61,7 +61,7 @@ def test_a_component_whose_directory_changed_is_picked():
     assert chosen == ["a/b"]
 
 
-def test_an_unknown_change_set_hunts_everything():
+def test_an_unknown_change_set_scans_everything():
     chosen, note = plan.picked(["a", "b"], [], 5, before_known=False)
     assert chosen == ["a", "b"] and "unknown" in note
 
@@ -82,7 +82,7 @@ def test_nothing_touched_picks_nothing_rather_than_everything():
     assert chosen == []
 
 
-def test_the_component_with_more_changed_files_is_hunted_first():
+def test_the_component_with_more_changed_files_is_scanned_first():
     """The cap used to slice the alphabet, so `a` won a push that moved `z` twice as far."""
     chosen, note = plan.picked(["a", "z"], ["a/one.py", "z/one.py", "z/two.py"], 1, True)
     assert chosen == ["z"]
@@ -128,8 +128,8 @@ def test_two_pushes_over_the_same_paths_can_drop_different_components():
 
 def test_the_default_cap_is_four_wherever_it_is_defaulted(tmp_path):
     """The workflow hands the task the value; the task, the picker and the reusable workflow's
-    input also carry defaults. A half-raised cap hunts three on one trigger and four on
-    another, and nobody notices until a component is silently never hunted."""
+    input also carry defaults. A half-raised cap scans three on one trigger and four on
+    another, and nobody notices until a component is silently never scanned."""
     assert 'MAX_COMPONENTS:-4' in (HERE / "entrypoint.sh").read_text()
     assert 'default: 4' in (HERE.parent / ".github" / "workflows"
                             / "cleaners-post-merge.yml").read_text()
@@ -138,7 +138,7 @@ def test_the_default_cap_is_four_wherever_it_is_defaulted(tmp_path):
     changed.write_text("".join(f"c{n}/x.py\n" for n in range(5)))
     out = subprocess.run(
         [sys.executable, str(HERE / "plan.py"), "picked", "--changed", str(changed)],
-        input="".join(f"c{n}/HUNT.md\n" for n in range(5)),
+        input="".join(f"c{n}/CLEANER.md\n" for n in range(5)),
         capture_output=True, text=True)
     assert len(out.stdout.split()) == 4, out.stdout
 
@@ -146,7 +146,7 @@ def test_the_default_cap_is_four_wherever_it_is_defaulted(tmp_path):
 # --- collect -------------------------------------------------------------------------
 
 
-def test_every_hunt_directory_contributes_its_findings(tmp_path):
+def test_every_cleaner_directory_contributes_its_findings(tmp_path):
     """One level under `agent/`: the retry directory (`<slug>-retry`) sits here too, and a
     finding it produced must be filed."""
     agent = tmp_path / "agent"
@@ -169,7 +169,7 @@ def test_no_findings_writes_an_empty_file_and_counts_zero(tmp_path):
     assert out.read_text() == ""
 
 
-def test_a_missing_newline_between_hunts_does_not_merge_two_findings(tmp_path):
+def test_a_missing_newline_between_scans_does_not_merge_two_findings(tmp_path):
     agent = tmp_path / "agent"
     for slug in ("a", "b"):
         d = agent / slug
@@ -188,7 +188,7 @@ def test_the_cli_prints_the_picked_components_one_per_line(tmp_path):
     changed.write_text("services/api/registry.py\n")
     out = subprocess.run(
         [sys.executable, str(HERE / "plan.py"), "picked", "--changed", str(changed), "--max", "3"],
-        input="services/api/HUNT.md\nservices/billing/HUNT.md\n",
+        input="services/api/CLEANER.md\nservices/billing/CLEANER.md\n",
         capture_output=True, text=True)
     assert out.returncode == 0
     assert out.stdout.split() == ["services/api"]
@@ -198,7 +198,7 @@ def test_the_cli_prints_the_picked_components_one_per_line(tmp_path):
 # --- classify ------------------------------------------------------------------------
 
 
-def test_a_hunt_that_worked_is_ok():
+def test_a_scan_that_worked_is_ok():
     assert plan.classify(0, model_failed=False, findings=0) == "ok"
 
 
@@ -208,13 +208,13 @@ def test_a_failed_model_call_is_retried_when_it_left_nothing_behind():
 
 def test_a_failed_model_call_after_findings_is_filed_not_retried():
     """The findings came through the emit tool, which refuses one without its repro and its
-    flip; re-hunting would file them again under reworded titles."""
+    flip; re-scanning would file them again under reworded titles."""
     assert plan.classify(0, model_failed=True, findings=2) == "warn"
 
 
-def test_hunt_sh_refusals_are_wiring_and_never_retried():
-    """`hunt.sh` exits 2 for a missing brief, an unknown provider or a missing credential.
-    Retrying one reports a broken component as a clean hunt."""
+def test_cleaner_sh_refusals_are_wiring_and_never_retried():
+    """`cleaner.sh` exits 2 for a missing brief, an unknown provider or a missing credential.
+    Retrying one reports a broken component as a clean scan."""
     for status in (2,):
         assert plan.classify(status, model_failed=False, findings=0) == "wiring"
         assert plan.classify(status, model_failed=True, findings=0) == "wiring"
@@ -241,3 +241,12 @@ def test_the_cli_prints_the_decision():
                           "--exit", "0", "--model-failed", "--findings", "3"],
                          capture_output=True, text=True)
     assert out.stdout.strip() == "warn"
+
+
+def test_a_legacy_brief_is_still_a_component(tmp_path):
+    """The fallback existed so a repository that had not renamed its briefs yet would keep working.
+    Logging the old name and then rejecting it would have answered "nothing to scan" — the silent
+    failure the fallback was for."""
+    found, notes = plan.components(["services/api/HUNT.md", "services/billing/CLEANER.md"])
+    assert found == ["services/api", "services/billing"]
+    assert any("legacy component brief" in note for note in notes)

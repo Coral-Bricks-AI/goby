@@ -1,7 +1,7 @@
 name: test cleaners
 
 # The harness's own tests. The image is built here too so a broken Dockerfile fails on the PR
-# that broke it, not on the push to main that was supposed to hunt.
+# that broke it, not on the push to main that was supposed to scan.
 
 on:
   pull_request:

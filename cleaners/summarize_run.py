@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""One line summarising a hunt's event stream, and the model-failure check, for its log.
+"""One line summarising a scan's event stream, and the model-failure check, for its log.
 
     summarize_run.py /workspace/out/agent/<component>/events.jsonl
     summarize_run.py --status …/events.jsonl     # exit 3 when the model call failed
 
-A clean hunt prints nothing to GitHub and nothing to stdout, so the log line is the only
+A clean scan prints nothing to GitHub and nothing to stdout, so the log line is the only
 evidence that the run happened and what it concluded. This prints turns, tool calls, the
 final stop reason, and the last assistant text — never the raw events, whose final entry
 contains the entire conversation including the system prompt.
 
 `--status` exists because pi in `--mode json` exits 0 even when the model call failed: a
 429/402 arrives as a message with `stopReason=error` and the run then looks exactly like a
-clean hunt that found nothing. Only the *last* assistant message decides — pi retries a
-failed turn, and an error that was recovered from must not fail a completed hunt.
+clean scan that found nothing. Only the *last* assistant message decides — pi retries a
+failed turn, and an error that was recovered from must not fail a completed scan.
 """
 import json
 import sys

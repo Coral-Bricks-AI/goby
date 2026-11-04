@@ -101,3 +101,24 @@ test('an incomplete run says so in the review body', () => {
   }, '9.9.9');
   expect(text).toContain('**This review is incomplete:** open review threads could not be read.');
 });
+
+test('a bounded scan is a caveat, not an incomplete review', () => {
+  // A spent tool budget means the reviewer stopped looking early, not that its evidence is
+  // unusable. Treating it as incomplete blocked a large pull request on a cap we chose.
+  const text = build_summary([], [], {dupes: [], resolved: []}, {
+    model: 'm', head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 2307, elapsedS: 146,
+    toolCalls: 80, droppedPaths: 0, droppedCap: 0, droppedDupe: 0, droppedResolved: 0,
+    droppedRetracted: 0, incomplete: null, caveat: 'the reviewer reached its tool-call budget.',
+  }, '9.9.9');
+  expect(text).toContain('Partial scan: the reviewer reached its tool-call budget.');
+  expect(text).not.toContain('This review is incomplete');
+});
+
+test('the summary reports how long the scan took, not zero', () => {
+  const text = build_summary([], [], {dupes: [], resolved: []}, {
+    model: 'm', head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 13, elapsedS: 146,
+    toolCalls: 72, droppedPaths: 0, droppedCap: 0, droppedDupe: 0, droppedResolved: 0,
+    droppedRetracted: 0, incomplete: null,
+  }, '9.9.9');
+  expect(text).toContain('72 tool call(s), 146.0s');
+});
