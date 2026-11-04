@@ -72,6 +72,10 @@ on:
         description: CLEANERS_TOOL_KEY_ENV; extra credential names a custom tool needs.
         type: string
         default: ""
+      label:
+        description: Issue label to file under (and to dedupe against).
+        type: string
+        default: goby-cleaners
   workflow_call:
     inputs:
       image:
@@ -114,6 +118,10 @@ on:
         description: CLEANERS_TOOL_KEY_ENV; extra credential names a custom tool needs.
         type: string
         default: ""
+      label:
+        description: Issue label to file under (and to dedupe against).
+        type: string
+        default: goby-cleaners
     secrets:
       CORALBRICKS_API_KEY:
         required: false
@@ -154,6 +162,7 @@ jobs:
       CLEANERS_TOOLS: ${{ inputs.tools }}
       CLEANERS_EXTENSIONS: ${{ inputs.extensions }}
       CLEANERS_TOOL_KEY_ENV: ${{ inputs.tool-key-env }}
+      CLEANERS_LABEL: ${{ inputs.label || 'goby-cleaners' }}
       CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

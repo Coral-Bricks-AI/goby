@@ -32,9 +32,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
-LABEL = "coral-cleaners"
+LABEL = "goby-cleaners"
 MARKER = re.compile(
-    r"<!-- coral-cleaners fp=([0-9a-f]{12}) component=(\S+) severity=(\w+) -->")
+    r"<!-- goby-cleaners fp=([0-9a-f]{12}) component=(\S+) severity=(\w+) -->")
+
+
+def issue_label() -> str:
+    """The label this run files under, and the one its dedupe reads.
+
+    Both must be the same label, or two producers of the same findings cannot see each
+    other's issues and file one defect twice — which is what a transition between two
+    runners looks like. `CLEANERS_LABEL` exists for that window and for a repo that already
+    uses its own name; the marker comment keeps the default either way.
+    """
+    return os.environ.get("CLEANERS_LABEL") or LABEL
 
 
 def _norm(text) -> str:
@@ -53,7 +64,7 @@ def fingerprint(component: str, finding: dict) -> str:
 
 
 def marker(component: str, finding: dict, fp: str, severity: str) -> str:
-    return (f"<!-- coral-cleaners fp={fp} component={component} "
+    return (f"<!-- goby-cleaners fp={fp} component={component} "
             f"severity={severity} -->")
 
 
@@ -70,7 +81,7 @@ def _parse_ts(value: str) -> datetime | None:
 
 def decide(findings: list[dict], existing: list[dict], *,
            issues_per_day: int, now: datetime | None = None) -> tuple[list[dict], list[dict]]:
-    """Split findings into (file, skip). `existing` is the repo's `coral-cleaners` issues.
+    """Split findings into (file, skip). `existing` is the repo's `goby-cleaners` issues.
 
     Order matters: a duplicate is dropped before it can consume budget, so a re-hunt of the
     same component does not starve a real finding by spending the day's allowance on things
@@ -138,12 +149,12 @@ def render_issue(component: str, item: dict, sha: str) -> tuple[str, str]:
     f = item["finding"]
     fp, severity = item["fingerprint"], item["severity"]
     short = Path(component).name or component
-    title = f"[{LABEL}] {short}: {f.get('title', 'defect')}"
+    title = f"[{issue_label()}] {short}: {f.get('title', 'defect')}"
     body = "\n".join([
         marker(component, f, fp, severity),
         "",
         f"**Component:** `{component}` · **Severity:** {severity} · "
-        f"**Commit:** `{sha[:10]}` · **Found by:** coral-cleaners",
+        f"**Commit:** `{sha[:10]}` · **Found by:** goby-cleaners",
         "",
         f"**Invariant violated:** {f.get('invariant', '(none given)')}",
         "",
@@ -216,7 +227,7 @@ def _http(method: str, path: str, token: str, payload=None):
 MAX_LABELLED_PAGES = 100
 
 
-def list_labelled(repo: str, token: str, label: str = LABEL,
+def list_labelled(repo: str, token: str, label: str | None = None,
                   max_pages: int = MAX_LABELLED_PAGES) -> list[dict] | None:
     """Every issue carrying the label, newest first, in any state.
 
@@ -227,6 +238,7 @@ def list_labelled(repo: str, token: str, label: str = LABEL,
     returns a prefix. The caller decides what to do with None; this function refuses to
     guess.
     """
+    label = label or issue_label()
     out: list[dict] = []
     for page in range(1, max_pages + 1):
         st, body = _http("GET", f"/repos/{repo}/issues?labels={label}&state=all"
@@ -253,10 +265,11 @@ def list_labelled(repo: str, token: str, label: str = LABEL,
     return None
 
 
-def ensure_label(repo: str, token: str, name: str = LABEL) -> None:
+def ensure_label(repo: str, token: str, name: str | None = None) -> None:
+    name = name or issue_label()
     st, _ = _http("POST", f"/repos/{repo}/labels", token,
                   {"name": name, "color": "0e8a16",
-                   "description": "filed by coral-cleaners"})
+                   "description": "filed by goby-cleaners"})
     if st not in (201, 422):  # 422 = already exists
         print(f"warning: label {name} -> HTTP {st}", file=sys.stderr)
 
@@ -277,7 +290,7 @@ def file_findings(repo: str, token: str, sha: str, filed: list[dict]) -> tuple[l
     for item in filed:
         title, body = render_issue(str(item["finding"].get("component") or ""), item, sha)
         st, resp = _http("POST", f"/repos/{repo}/issues", token,
-                         {"title": title, "body": body, "labels": [LABEL]})
+                         {"title": title, "body": body, "labels": [issue_label()]})
         if st == 201 and isinstance(resp, dict):
             urls.append(resp["html_url"])
             continue

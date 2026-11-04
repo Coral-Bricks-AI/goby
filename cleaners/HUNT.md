@@ -1,5 +1,5 @@
 <!--
-Passed verbatim to the coral-cleaners agent as its brief for this directory: the hunter
+Passed verbatim to the goby-cleaners agent as its brief for this directory: the hunter
 hunting itself. A bug here is code that makes one of these invariants false, or false under
 some reachable input.
 
@@ -8,9 +8,9 @@ failure modes are uid, container or cloud interactions, and a claim about one of
 be reproduced from inside the hunt.
 -->
 
-# coral_cleaners
+# goby_cleaners
 
-Paths: `coral_cleaners/**`
+Paths: `goby_cleaners/**`
 
 This is the hunter. Its defects do not make a hunt fail — they make it **file nothing**, or
 file something false, which is the failure the whole design exists to prevent. A defect in
@@ -34,7 +34,7 @@ the *gate* is therefore the most valuable finding this component can produce.
 
 3. **A finding is filed at most once, and the cap never hides a real one.** The fingerprint is
    component + file basename + normalised title, checked against issues labelled
-   `coral-cleaners` in any state — a closed "not a bug" is an answer that must not be asked
+   `goby-cleaners` in any state — a closed "not a bug" is an answer that must not be asked
    again. `issues_per_day` bounds the rest and exempts `high`. In particular: a finding
    skipped by the cap must not mark the batch as filed, or the `high` finding that follows it
    with the same fingerprint is suppressed by something no human ever saw.

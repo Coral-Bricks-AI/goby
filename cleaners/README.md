@@ -125,6 +125,7 @@ it from the workflow — no fork of this harness:
 | `tools:` | `CLEANERS_TOOLS`, the whole `--tools` list. `report_finding` must remain in it. |
 | `extensions:` | `CLEANERS_EXTENSIONS`, comma-separated pi extension files. `report_finding.ts` must remain in it. |
 | `tool-key-env:` | `CLEANERS_TOOL_KEY_ENV`, comma-separated credential names a tool needs. |
+| `label:` | Issue label to file under and dedupe against. Default `goby-cleaners`. |
 
 The last one is a deliberate widening and is logged: `tool credentials: …` names every
 credential handed to the hunt. Prefer a credential-free shim — a local socket held by root,
@@ -140,7 +141,7 @@ bills from rather than a guess. In Actions the line lands in the job summary, on
 - `gateway/dispatch` · coral/deepseek-v4.1-flash-fast · 7 turns · 42 tool calls · 95 s · 0 findings · $0.0213
 ```
 
-The catalog is the first of `--models-json`, `$CLEANERS_MODELS_JSON`, a `.coral/models.json`
+The catalog is the first of `--models-json`, `$CLEANERS_MODELS_JSON`, a `.goby/models.json`
 committed in the hunted repo, then `ml/platform/models.json` beside the checkout. Commit your
 own rates if you want a number; without one the price reads `unknown`, never `0.0000` — a
 printed zero reads as a measurement somebody made. The image deliberately carries no rates,

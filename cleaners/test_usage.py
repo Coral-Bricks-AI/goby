@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location("coral_cleaners_usage", HERE / "usage.py")
+spec = importlib.util.spec_from_file_location("goby_cleaners_usage", HERE / "usage.py")
 usage = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(usage)
 
@@ -127,9 +127,9 @@ def test_a_stated_zero_rate_is_used_as_a_decision(tmp_path, capsys):
 
 
 def test_our_own_rates_file_prices_the_default_model(tmp_path, capsys):
-    """`.coral/models.json` is what the entrypoint adopts; if it stops matching the default
+    """`.goby/models.json` is what the entrypoint adopts; if it stops matching the default
     model name, every hunt silently goes back to "price unknown"."""
-    path = Path(__file__).resolve().parents[1] / ".coral" / "models.json"
+    path = Path(__file__).resolve().parents[1] / ".goby" / "models.json"
     if not path.is_file():
         pytest.skip("this checkout has no committed rates file")
     out = hunt_dir(tmp_path, {"input": 1, "output": 1, "cacheRead": 1, "cacheWrite": 1},

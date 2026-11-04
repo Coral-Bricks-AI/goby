@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The coral-cleaners task: one push, every component it touched, one issue per defect.
+# The goby-cleaners task: one push, every component it touched, one issue per defect.
 #
-# Started by the webhook lambda with these overrides (see coral_cleaners/receiver):
+# Started by the webhook lambda with these overrides (see goby_cleaners/receiver):
 #   REPO SHA BEFORE MODEL FALLBACK_MODEL MAX_TOOLS ISSUES_PER_DAY MAX_COMPONENTS
 #   HUNTER_INDEX GITHUB_TOKEN CORALBRICKS_API_KEY
 #
@@ -30,7 +30,7 @@ REPO_DIR="$WORK/repo"
 SANDBOX="$WORK/sandbox"
 OUT="$WORK/out"
 
-log() { printf '%s coral-cleaners %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+log() { printf '%s goby-cleaners %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 count_lines() { if [[ -f "$1" ]]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
 
 # A provider is usable when every *credential* its models file interpolates is set. The
@@ -73,11 +73,11 @@ HEAD_SHA="$(git -C "$REPO_DIR" rev-parse HEAD)"
 log "at $HEAD_SHA"
 
 # A repo may commit its own billed rates; the image carries none, because a stale rate is a
-# false measurement rather than a missing one. `.coral/models.json` is the convention, and an
+# false measurement rather than a missing one. `.goby/models.json` is the convention, and an
 # explicit CLEANERS_MODELS_JSON in the environment still wins over it.
-if [[ -z "${CLEANERS_MODELS_JSON:-}" && -f "$REPO_DIR/.coral/models.json" ]]; then
-  export CLEANERS_MODELS_JSON="$REPO_DIR/.coral/models.json"
-  log "pricing from .coral/models.json"
+if [[ -z "${CLEANERS_MODELS_JSON:-}" && -f "$REPO_DIR/.goby/models.json" ]]; then
+  export CLEANERS_MODELS_JSON="$REPO_DIR/.goby/models.json"
+  log "pricing from .goby/models.json"
 fi
 
 # The predecessor: the diff, `git log` and `git blame` are the cheapest context a hunt has,

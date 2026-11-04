@@ -1,5 +1,5 @@
 /**
- * coral-cleaners emit tool.
+ * goby-cleaners emit tool.
  *
  * The hunter never returns prose that a harness has to parse. It ends by calling a tool
  * whose arguments are already validated, and the harness reads the resulting JSONL. That

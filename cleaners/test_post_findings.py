@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location("coral_cleaners_post", HERE / "post_findings.py")
+spec = importlib.util.spec_from_file_location("goby_cleaners_post", HERE / "post_findings.py")
 pf = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pf)
 
@@ -43,7 +43,7 @@ def issue(fp, component=COMPONENT, severity="medium", days_ago=0, state="open", 
     created = (NOW - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {"number": number, "state": state, "created_at": created,
             "html_url": f"https://github.com/x/y/issues/{number}",
-            "body": f"<!-- coral-cleaners fp={fp} component={component} "
+            "body": f"<!-- goby-cleaners fp={fp} component={component} "
                     f"severity={severity} -->\n\nbody"}
 
 
@@ -210,7 +210,7 @@ def test_issue_carries_both_runs_and_the_marker():
     f = finding()
     item = {"fingerprint": pf.fingerprint(COMPONENT, f), "finding": f, "severity": "high"}
     title, body = pf.render_issue(COMPONENT, item, "a" * 40)
-    assert title == "[coral-cleaners] dispatch: slot over-admitted"
+    assert title == "[goby-cleaners] dispatch: slot over-admitted"
     assert "python3 /tmp/sandbox/repro1.py" in body
     assert "(2, None, 2)" in body, "the flip run is the evidence the line is the cause"
     assert pf.parse_marker(body).group(3) == "high"
@@ -247,7 +247,7 @@ def test_one_issue_per_finding_and_no_assignee(monkeypatch):
              {"fingerprint": "e" * 12, "finding": finding(title="b"), "severity": "high"}]
     urls, failures = pf.file_findings("o/r", "tok", "c" * 40, items)
     assert failures == [] and len(urls) == 2
-    assert [c["labels"] for c in gh.created] == [["coral-cleaners"], ["coral-cleaners"]]
+    assert [c["labels"] for c in gh.created] == [["goby-cleaners"], ["goby-cleaners"]]
     assert all("assignees" not in c for c in gh.created), "humans route issues"
 
 
@@ -401,7 +401,7 @@ def labelled_issues(count: int) -> list[dict]:
     """Newest first, as GitHub returns them. Issue 1 is the oldest and closed as not-a-bug."""
     return [{"number": n, "state": "closed" if n == 1 else "open",
              "created_at": "2026-01-01T00:00:00Z",
-             "body": f"<!-- coral-cleaners fp={n:012x} component=x severity=medium -->"}
+             "body": f"<!-- goby-cleaners fp={n:012x} component=x severity=medium -->"}
             for n in range(count, 0, -1)]
 
 
@@ -487,3 +487,12 @@ def test_a_failed_listing_still_returns_none(monkeypatch):
 def test_the_page_bound_covers_years_of_filings():
     """3 issues a day: the bound must not be the thing that stops dedupe working."""
     assert pf.MAX_LABELLED_PAGES * 100 >= 3 * 365, "less than a year of filings would be unsafe"
+
+
+def test_the_label_can_be_overridden_for_a_transition(monkeypatch):
+    """Two producers of the same findings must share one label, or neither sees the other's
+    issues and the same defect is filed twice while both run."""
+    monkeypatch.setenv("CLEANERS_LABEL", "coral-cleaners")
+    assert pf.issue_label() == "coral-cleaners"
+    monkeypatch.delenv("CLEANERS_LABEL")
+    assert pf.issue_label() == pf.LABEL == "goby-cleaners"

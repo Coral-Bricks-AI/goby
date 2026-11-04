@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location("coral_cleaners_model_check",
+spec = importlib.util.spec_from_file_location("goby_cleaners_model_check",
                                              HERE / "model_check.py")
 mc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mc)

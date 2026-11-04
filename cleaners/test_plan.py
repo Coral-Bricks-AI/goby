@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location("coral_cleaners_plan", HERE / "plan.py")
+spec = importlib.util.spec_from_file_location("goby_cleaners_plan", HERE / "plan.py")
 plan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plan)
 
@@ -16,8 +16,8 @@ spec.loader.exec_module(plan)
 
 def test_a_component_is_the_directory_holding_the_file():
     found, notes = plan.components(["ml/platform/gateway/dispatch/HUNT.md",
-                                    "coral_cleaners/HUNT.md"])
-    assert found == ["coral_cleaners", "ml/platform/gateway/dispatch"]
+                                    "goby_cleaners/HUNT.md"])
+    assert found == ["goby_cleaners", "ml/platform/gateway/dispatch"]
     assert notes == []
 
 
