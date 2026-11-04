@@ -21,7 +21,9 @@ name: Goby review
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, edited]
+    # `labeled` is here so adding `no-review` to an open pull request actually skips it:
+    # `gh pr create --label` adds the label after `opened` fires.
+    types: [opened, reopened, synchronize, ready_for_review, edited, labeled]
 
 permissions:
   contents: read
