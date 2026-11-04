@@ -65,3 +65,5 @@ eligibility.
 
 Path filters live in `src/core/contract.ts`; transport and retry logic in
 `src/platforms/github.ts`.
+
+<!-- smoke: removed by the same pull request that adds it -->
