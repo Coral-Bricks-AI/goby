@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/coral-bricks-ai/goby-review@sha256:bc9fd987da497129a7836c93c253e01b30ac9689dd28832ae6c2377363cfbd3f
+      image: ghcr.io/coral-bricks-ai/goby-review@sha256:a1292893c66e80cd8ded82ca9b760cd65d48077be36456ac5cb037a9d91b53f4
     env:
       GOBY_REPO: ${{ github.repository }}
       GOBY_PR: ${{ github.event.pull_request.number }}
