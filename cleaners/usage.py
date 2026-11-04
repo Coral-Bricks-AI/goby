@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Sum one hunt's output directory into the numbers phase 0 is supposed to produce.
+
+    python3 usage.py /tmp/hunt7 [--model deepseek-v4.1-flash-fast]
+
+Reports tool calls, wall time, tokens, and the billed cost at the rates in a model catalog
+(`bill.input_cents_per_m`, `output_cents_per_m`, `cache_read_cents_per_m`,
+`cache_write_cents_per_m`), so a hunt's price is quoted from the same table the customer is
+charged from rather than from a guess.
+
+The catalog is whichever of these exists first: `--models-json`, `$CLEANERS_MODELS_JSON`,
+then `ml/platform/models.json` beside the checkout (our own repo's layout). Without one the
+run still reports its tokens; it reports the price as unknown rather than inventing rates.
+
+A run without an `events.jsonl` (a `pi --print` hunt) has no token counts at all. That
+is reported as unavailable, never as zero spend: a printed 0.0 reads as a measurement.
+
+The model comes from the run's own `run.json` when present, because pricing the
+`s-flash` tokens at the `-fast` rate would understate the cheaper model's cost and
+overstate the dearer one's.
+"""
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+DEFAULT_MODEL = "deepseek-v4.1-flash-fast"
+DEFAULT_CATALOG = REPO / "ml/platform/models.json"
+
+
+def catalog(explicit=None) -> Path | None:
+    """The model catalog to price from, or None when this checkout has none.
+
+    A consuming repo has no `ml/platform/models.json`, and a price is only worth printing
+    when it comes from a table somebody actually bills from — so a missing catalog is a
+    reported unknown, never a default rate.
+    """
+    for candidate in (explicit, os.environ.get("CLEANERS_MODELS_JSON"), DEFAULT_CATALOG):
+        if candidate and Path(candidate).is_file():
+            return Path(candidate)
+    return None
+
+
+def rate_for(model: str, path=None) -> dict | None:
+    """Billing rates for a model, whether or not it carries a `provider/` prefix.
+
+    `run.json` stores the model as it was passed on the command line (`coral/...`), while the
+    catalog is keyed by bare id, public slug and aliases; comparing those directly reported
+    "no bill rates" for the default model. The full name is tried first, because some
+    aliases are themselves provider-qualified (`moonshotai/Kimi-K3`) and stripping the prefix
+    before the lookup lost them.
+    """
+    catalog_path = catalog(path)
+    if catalog_path is None:
+        return None
+    models = json.loads(catalog_path.read_text())["models"]
+    bare = model.split("/", 1)[1] if "/" in model else model
+    for candidate in dict.fromkeys([model, bare]):
+        for name, row in models.items():
+            if candidate in (name, row.get("public_slug"), *(row.get("aliases") or [])):
+                return row
+    return None
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("out_dir", type=Path)
+    ap.add_argument("--model", default=None, help="overrides run.json")
+    ap.add_argument("--models-json", default=None,
+                    help="model catalog to price from; default $CLEANERS_MODELS_JSON")
+    ap.add_argument("--markdown", action="store_true",
+                    help="one markdown line for $GITHUB_STEP_SUMMARY instead of JSON")
+    args = ap.parse_args(argv)
+
+    events = args.out_dir / "events.jsonl"
+    run = {}
+    if (args.out_dir / "run.json").is_file():
+        run = json.loads((args.out_dir / "run.json").read_text())
+    model = args.model or run.get("model") or DEFAULT_MODEL
+
+    tool_calls: list[str] = []
+    usage = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+    turns = 0
+    if events.is_file():
+        for line in events.read_text(errors="ignore").splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            t = ev.get("type")
+            if t == "tool_execution_start":
+                tool_calls.append(ev.get("toolName") or ev.get("name") or "?")
+            elif t == "turn_start":
+                turns += 1
+            elif t == "message_end":
+                u = (ev.get("message") or {}).get("usage") or {}
+                for k in usage:
+                    usage[k] += u.get(k) or 0
+
+    if not events.is_file():
+        usage = None  # unknown, not zero
+    summary = {
+        "component": run.get("component"),
+        "model": model,
+        "turns": turns,
+        "tool_calls": len(tool_calls),
+        "tool_histogram": {n: tool_calls.count(n) for n in sorted(set(tool_calls))},
+        "tokens": usage,
+        "findings": sum(1 for _ in open(args.out_dir / "findings.jsonl"))
+        if (args.out_dir / "findings.jsonl").is_file() else 0,
+        "wall_s": run.get("wall_s"),
+    }
+
+    row = rate_for(model, args.models_json)
+    bill = (row or {}).get("bill")
+    if usage is None:
+        summary["billed_cents"] = None
+        summary["billed_usd"] = None
+        summary["note"] = (
+            "no events.jsonl: this hunt ran without CLEANERS_JSON=1, so tokens and cost "
+            "are unknown. Spend for it has to come from inference_requests."
+        )
+    elif bill:
+        # Bill rates are cents per million tokens, so this is cents; /100 gives USD.
+        # pi reports the prompt as cacheRead/cacheWrite, so cache_read is where most of
+        # the prompt lands; pricing it at 0 would understate every hunt.
+        cents = (usage["input"] * bill.get("input_cents_per_m", 0)
+                 + usage["output"] * bill.get("output_cents_per_m", 0)
+                 + usage["cacheRead"] * bill.get("cache_read_cents_per_m", 0)
+                 + usage["cacheWrite"] * bill.get("cache_write_cents_per_m", 0)) / 1e6
+        summary["billed_cents"] = round(cents, 2)
+        summary["billed_usd"] = round(cents / 100, 4)
+    else:
+        summary["billed_cents"] = None
+        summary["billed_usd"] = None
+        found = catalog(args.models_json)
+        summary["note"] = (f"no bill rates for {model!r} in {found}" if found else
+                          "no model catalog: price unknown")
+
+    if args.markdown:
+        print(markdown(summary))
+    else:
+        print(json.dumps(summary, indent=2))
+    return 0
+
+
+def markdown(summary: dict) -> str:
+    """One line for the Actions job summary: what this hunt cost is the product's whole
+    argument, so it belongs where a user is already looking."""
+    def money(value):
+        return "price unknown" if value is None else f"${value:.4f}"
+
+    parts = [f"`{summary.get('component') or '?'}`", str(summary.get("model") or "?")]
+    if summary.get("turns") is not None:
+        parts.append(f"{summary['turns']} turns")
+    parts.append(f"{summary.get('tool_calls', 0)} tool calls")
+    if summary.get("wall_s") is not None:
+        parts.append(f"{summary['wall_s']} s")
+    parts.append(f"{summary.get('findings', 0)} findings")
+    parts.append(money(summary.get("billed_usd")))
+    return "- " + " · ".join(parts)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

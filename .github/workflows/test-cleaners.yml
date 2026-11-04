@@ -1,0 +1,58 @@
+name: test cleaners
+
+# The harness's own tests. The image is built here too so a broken Dockerfile fails on the PR
+# that broke it, not on the push to main that was supposed to hunt.
+
+on:
+  pull_request:
+    paths:
+      - "cleaners/**"
+      - ".github/workflows/test-cleaners.yml"
+      - ".github/workflows/cleaners-image.yml"
+      - ".github/workflows/cleaners-post-merge.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cleaners/**"
+
+concurrency:
+  group: test-cleaners-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet pytest
+      - name: Harness tests
+        working-directory: cleaners
+        run: python -m pytest -q
+
+  dockerfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: cleaners
+          file: cleaners/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: goby-cleaners:test
+          cache-from: type=gha
+      # A build that succeeds but cannot start is the failure mode that only shows up on the
+      # first real push. `--help` proves pi, python3, bash and git are all on the path.
+      - name: The image can start
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint bash goby-cleaners:test -lc \
+            'pi --version && python3 --version && git --version && bash --version | head -1'

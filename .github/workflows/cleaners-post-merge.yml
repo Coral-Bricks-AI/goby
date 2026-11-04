@@ -1,0 +1,119 @@
+name: Goby cleaners
+
+# Post-merge hunting: a push to main reads every component that push touched and files one
+# issue per defect the hunter could reproduce *and* prove gone after changing the blamed line.
+# A component is a directory with a `HUNT.md`; there is no registry to keep in sync.
+#
+# Two ways to run it, same code:
+#
+#   **GitHub-hosted runner (default).** Copy this file into your repo, add the model key as a
+#   secret. No AWS account, no GitHub App, nothing else. It cannot reach a private network, so
+#   a hunt sees your code and nothing behind your firewall.
+#
+#   **Self-hosted runner.** Set `runs-on` (e.g. `[self-hosted, linux]`). The job then runs
+#   inside your network, which is the only way a hunt can read a private database or an
+#   internal service. Install one runner; everything else is unchanged.
+#
+# Or call it from your own workflow, pinned to a digest so the container cannot change
+# underneath you:
+#
+#   jobs:
+#     hunt:
+#       uses: Coral-Bricks-AI/goby/.github/workflows/cleaners-post-merge.yml@<sha>
+#       with:
+#         image: ghcr.io/coral-bricks-ai/goby-cleaners@sha256:...
+#       secrets:
+#         CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      image:
+        description: Hunter image, preferably a @sha256 digest.
+        type: string
+        default: ghcr.io/coral-bricks-ai/goby-cleaners:latest
+      runs-on:
+        description: Runner label(s); a self-hosted runner is what reaches a private network.
+        type: string
+        default: ubuntu-latest
+      model:
+        description: MODEL, in provider/name form; the provider picks the credential.
+        type: string
+        default: coral/deepseek-v4.1-flash-fast
+      fallback-model:
+        description: Used when the chosen provider has no key or its call fails.
+        type: string
+        default: coral/deepseek-v4.1-flash-fast
+      max-tools:
+        description: Tool calls one hunt may make.
+        type: number
+        default: 60
+      issues-per-day:
+        description: Issues this repo may receive in 24h; a high finding is exempt.
+        type: number
+        default: 3
+      max-components:
+        description: Components one push may hunt.
+        type: number
+        default: 4
+      tools:
+        description: CLEANERS_TOOLS override; empty uses the image's list.
+        type: string
+        default: ""
+      extensions:
+        description: CLEANERS_EXTENSIONS override; comma-separated pi extensions.
+        type: string
+        default: ""
+      tool-key-env:
+        description: CLEANERS_TOOL_KEY_ENV; extra credential names a custom tool needs.
+        type: string
+        default: ""
+    secrets:
+      CORALBRICKS_API_KEY:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+# One hunt per pushed commit. Not cancelled: a run cancelled halfway can lose a finding that
+# was already reproduced, and the next push is a worse retry than finishing this one.
+concurrency:
+  group: goby-cleaners-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  hunt:
+    runs-on: ${{ inputs.runs-on || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    container:
+      image: ${{ inputs.image || 'ghcr.io/coral-bricks-ai/goby-cleaners:latest' }}
+    env:
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      BEFORE: ${{ github.event.before }}
+      MODEL: ${{ inputs.model || 'coral/deepseek-v4.1-flash-fast' }}
+      FALLBACK_MODEL: ${{ inputs.fallback-model || 'coral/deepseek-v4.1-flash-fast' }}
+      MAX_TOOLS: ${{ inputs.max-tools || 60 }}
+      ISSUES_PER_DAY: ${{ inputs.issues-per-day || 3 }}
+      MAX_COMPONENTS: ${{ inputs.max-components || 4 }}
+      CLEANERS_TOOLS: ${{ inputs.tools }}
+      CLEANERS_EXTENSIONS: ${{ inputs.extensions }}
+      CLEANERS_TOOL_KEY_ENV: ${{ inputs.tool-key-env }}
+      CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # The image clones, hunts and files; the step is one line because there is nothing for
+      # the runner to set up. Nothing from the pushed tree is executed by the runner itself.
+      - name: Hunt
+        working-directory: /workspace
+        run: bash /opt/cleaners/entrypoint.sh
