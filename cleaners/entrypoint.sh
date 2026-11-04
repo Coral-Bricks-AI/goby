@@ -90,6 +90,11 @@ if [[ "$BEFORE" =~ ^[0-9a-f]{40}$ && ! "$BEFORE" =~ ^0+$ ]] \
   BEFORE_OK=1
   log "predecessor $BEFORE"
 else
+  # Cleared, not merely unused: the sha stays set when the fetch fails, and `run_hunt` passes
+  # --before unconditionally. The prompt would then name a commit the clone does not have and
+  # tell the hunter to diff an object that is not there — which reads as a clean one-commit
+  # clone with a stale label, not as "no predecessor".
+  BEFORE=""
   log "no predecessor; the clone has one commit and no diff"
 fi
 
@@ -204,6 +209,9 @@ run_hunt() {
 
   # Empty environment on purpose: nothing from this shell leaks into the agent's process.
   #
+  # REPO is on the list because the prompt renders it. Without it, hunt.sh falls back to the
+  # checkout directory's name and every hunt of every repository says it is reviewing "repo".
+  #
   # CLEANERS_TOOL_KEY_ENV names extra credentials a custom tool in the image needs. Every one
   # of them widens what the agent's shell can reach, so each is named in the log: a hunt that
   # can touch a database must not look like one that cannot. The rule stays that a tool should
@@ -232,6 +240,7 @@ run_hunt() {
     GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 \
     PI_CODING_AGENT_DIR="$agent_home" PI_OFFLINE=1 PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 \
     CLEANERS_JSON=1 CLEANERS_MAX_TOOLS="$MAX_TOOLS" \
+    REPO="$REPO" \
     CLEANERS_COMPONENT="$dir" CLEANERS_OUT="$agent_out" \
     CLEANERS_SANDBOX="$SANDBOX" CLEANERS_SCRATCH="$agent_out/scratch" \
     bash /opt/cleaners/hunt.sh \
