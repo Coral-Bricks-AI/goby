@@ -29,6 +29,49 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    # Mirrors the workflow_call inputs, so a manual run can pin what a caller could pin. The
+    # fallbacks in `env` below are what a push event uses, since it has no inputs at all.
+    inputs:
+      image:
+        description: Hunter image, preferably a @sha256 digest.
+        type: string
+        default: ghcr.io/coral-bricks-ai/goby-cleaners:latest
+      runs-on:
+        description: Runner label(s); a self-hosted runner is what reaches a private network.
+        type: string
+        default: ubuntu-latest
+      model:
+        description: MODEL, in provider/name form.
+        type: string
+        default: coral/deepseek-v4.1-flash-fast
+      fallback-model:
+        description: Used when the chosen provider has no key or its call fails.
+        type: string
+        default: coral/deepseek-v4.1-flash-fast
+      max-tools:
+        description: Tool calls one hunt may make.
+        type: number
+        default: 60
+      issues-per-day:
+        description: Issues this repo may receive in 24h.
+        type: number
+        default: 3
+      max-components:
+        description: Components one push may hunt.
+        type: number
+        default: 4
+      tools:
+        description: CLEANERS_TOOLS override; empty uses the image's list.
+        type: string
+        default: ""
+      extensions:
+        description: CLEANERS_EXTENSIONS override; comma-separated pi extensions.
+        type: string
+        default: ""
+      tool-key-env:
+        description: CLEANERS_TOOL_KEY_ENV; extra credential names a custom tool needs.
+        type: string
+        default: ""
   workflow_call:
     inputs:
       image:
@@ -82,6 +125,10 @@ on:
 permissions:
   contents: read
   issues: write
+  # The job runs our published image, and the runner authenticates to ghcr.io with this
+  # token before pulling. Without `packages: read` that pull is denied even when the package
+  # is public — the runner's login sends a token that does not carry the scope.
+  packages: read
 
 # One hunt per pushed commit. Not cancelled: a run cancelled halfway can lose a finding that
 # was already reproduced, and the next push is a worse retry than finishing this one.
