@@ -1,0 +1,22 @@
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "coral": {
+      "baseUrl": "https://inference.coralbricks.ai/v1",
+      "api": "openai-responses",
+      "apiKey": "$CORALBRICKS_API_KEY",
+      "headers": {
+        "x-session-id": "$CLEANERS_SESSION_ID"
+      },
+      "models": [
+        {
+          "id": "deepseek-v4.1-flash-fast",
+          "samplingParams": {
+            "reasoning_effort": "high"
+          }
+        },
+        { "id": "deepseek-v4.1-flash" }
+      ]
+    }
+  }
+}

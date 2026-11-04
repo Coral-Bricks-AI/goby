@@ -2,6 +2,13 @@
 
 An AI code-review agent that reads the code before it comments.
 
+Goby ships two halves of one crew. **Review** (this file, `action.yml`) reads a pull request
+before it merges and posts bugs on the exact lines. **Cleaners** (`cleaners/`) reads the
+default branch after every push, reproduces what it suspects, and files an issue per defect it
+can prove — see [`cleaners/README.md`](cleaners/README.md).
+
+Licensed under [Apache-2.0](LICENSE).
+
 Goby is TypeScript on Node, with **gdp-wired as its executable policy
 foundation**. It reads code around a pull request, posts bugs on the exact
 lines, and keeps review completion separate from merge eligibility.

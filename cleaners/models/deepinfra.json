@@ -1,0 +1,19 @@
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "deepinfra": {
+      "baseUrl": "https://api.deepinfra.com/v1/openai",
+      "api": "openai-completions",
+      "apiKey": "$DEEPINFRA_API_KEY",
+      "models": [
+        { "id": "Qwen/Qwen3.6-35B-A3B" },
+        {
+          "id": "zai-org/GLM-5.3",
+          "samplingParams": {
+            "reasoning_effort": "high"
+          }
+        }
+      ]
+    }
+  }
+}
