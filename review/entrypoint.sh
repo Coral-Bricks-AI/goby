@@ -60,11 +60,11 @@ rm -rf "${REPO_DIR:?}" "${SANDBOX:?}"; mkdir -p "$REPO_DIR" "$SANDBOX"
 
 # --- the change -------------------------------------------------------------------------
 # AUTH goes in a per-command header, never the URL: a URL lands in .git/config inside the tree the
-# reviewer reads. Blobless clone plus explicit fetches of both commits: the diff needs the base,
-# and the reviewer needs the history around the head for blame and file_history.
+# reviewer reads, and the sandbox copy would carry it. Not a partial clone either: a blobless clone
+# fetches blobs lazily, and that lazy fetch would go out unauthenticated from inside the sandbox.
 AUTH=(-c "http.extraHeader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)")
 goby_log "clone $GOBY_REPO@${GOBY_HEAD:0:10} (base ${GOBY_BASE:0:10})"
-git "${AUTH[@]}" -c advice.detachedHead=false clone --quiet --filter=blob:none --no-checkout \
+git "${AUTH[@]}" -c advice.detachedHead=false clone --quiet --no-checkout \
   "https://github.com/${GOBY_REPO}.git" "$REPO_DIR"
 git -C "$REPO_DIR" remote set-url origin "https://github.com/${GOBY_REPO}.git"
 if ! git "${AUTH[@]}" -C "$REPO_DIR" fetch --quiet --depth 200 origin "$GOBY_HEAD" "$GOBY_BASE"; then

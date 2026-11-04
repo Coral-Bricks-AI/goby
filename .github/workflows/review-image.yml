@@ -1,0 +1,69 @@
+name: review image
+
+# Publishes the two images the reviewer runs from, and prints the digests to pin.
+#
+# Two tags, two digests: `goby-base` is what `cleaners/` and `review/` build on, and
+# `goby-review` is what the workflow points at. Pin the review digest in the workflow — a tag is
+# a movable handle, and the bytes a review runs are the product.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "base/**"
+      - "review/**"
+      - "src/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/review-image.yml"
+    tags: ["review-v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: review-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # amd64 only: it is what `ubuntu-latest` is, and a container job pulls what the runner can
+      # execute. An arm64 consumer can rebuild this context in one step.
+      - name: Build goby-base
+        run: docker build --platform linux/amd64 -t base:local base
+
+      - name: Build the reviewer
+        run: docker build --platform linux/amd64 --build-arg BASE_IMAGE=base:local -f review/Dockerfile -t review:local .
+
+      - name: Publish both, and print what to pin
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse --short=12 HEAD)"
+          for pair in "base:local:goby-base" "review:local:goby-review"; do
+            LOCAL="${pair%%:*}"; REST="${pair#*:}"; NAME="${REST#*:}"
+            IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${NAME}"
+            docker tag "$LOCAL" "$IMAGE:$SHA"
+            docker tag "$LOCAL" "$IMAGE:latest"
+            docker push --quiet "$IMAGE:$SHA"
+            docker push --quiet "$IMAGE:latest"
+            DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$SHA")"
+            # The digest, not the tag: it is the only thing a consumer can pin that cannot move.
+            echo "### $NAME — pin this" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "$NAME -> $DIGEST"
+          done
