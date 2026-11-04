@@ -57,3 +57,16 @@ test('CI stays one job on one Node version', () => {
   expect(text).not.toContain('docker/build-push-action');
   expect(text).toContain('bun run check');
 });
+
+test('publishing an image bumps the pin by pull request, and skips its own review', () => {
+  // The reviewer pins its own digest, so every publish is a one-line commit. Doing that by hand is
+  // the step everyone forgets; doing it on the default branch bypasses the branch rule.
+  const publish = read('.github/workflows/review-image.yml');
+  expect(publish).toContain('Bump the pinned digest');
+  expect(publish).toContain('gh pr create');
+  expect(publish).toContain('--label no-review');
+  expect(publish).toContain('gh pr merge --squash --auto');
+  expect(publish).not.toContain('git push origin main');
+  expect(publish).toContain('contents: write');
+  expect(publish).toContain('pull-requests: write');
+});
