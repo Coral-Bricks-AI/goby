@@ -96,3 +96,21 @@ def test_the_shipped_models_files_only_ask_for_credentials(tmp_path):
     assert mc.credential_vars(HERE / "models" / "coral.json") == {"CORALBRICKS_API_KEY"}
     assert mc.credential_vars(HERE / "models" / "anthropic.json") == {"ANTHROPIC_API_KEY"}
     assert mc.credential_vars(HERE / "models" / "openai.json") == {"OPENAI_API_KEY"}
+
+
+def test_every_shipped_provider_is_one_the_shell_can_run():
+    """A models file that ships but cannot be selected is a provider that never runs.
+
+    The first hunt on the GitHub path found this: `models/deepinfra.json` loaded, model_check
+    accepted `deepinfra/...` because the file interpolates `$DEEPINFRA_API_KEY`, and then
+    `hunt.sh` fell into its `*)` arm and exited 2 before reading the charter. The entrypoint's
+    credential case had the same hole, so the job logged a failed hunt for a valid key.
+    """
+    for path in sorted((HERE / "models").glob("*.json")):
+        provider = path.stem
+        (credential,) = mc.credential_vars(path) or {None}
+        assert credential, f"{path.name} interpolates no credential"
+        for script in ("hunt.sh", "entrypoint.sh"):
+            text = (HERE / script).read_text()
+            assert f"{provider})" in text, f"{script} does not know provider {provider}"
+            assert credential in text, f"{script} never mentions {credential}"

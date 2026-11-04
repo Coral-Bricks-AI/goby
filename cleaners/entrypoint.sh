@@ -189,6 +189,7 @@ run_hunt() {
     coral) key_env=(CORALBRICKS_API_KEY="$CORALBRICKS_API_KEY") ;;
     anthropic) key_env=(ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}") ;;
     openai) key_env=(OPENAI_API_KEY="${OPENAI_API_KEY:-}") ;;
+    deepinfra) key_env=(DEEPINFRA_API_KEY="${DEEPINFRA_API_KEY:-}") ;;
     *) log "error: no credential name known for provider $provider"; return 2 ;;
   esac
 
@@ -309,13 +310,17 @@ for dir in "${PICKED[@]}"; do
   if [[ -f "$OUT/agent/$SLUG/run.json" ]]; then
     log "run $(tr -d '\n' < "$OUT/agent/$SLUG/run.json")"
   fi
-  # The hunt's own price, where a user already looks: GITHUB_STEP_SUMMARY is set by Actions
-  # and absent everywhere else, so this is inert for a local docker run. A hunt that could
-  # not be priced still prints its tokens (usage.py never invents a rate) or says unknown.
-  if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -f "$OUT/agent/$SLUG/events.jsonl" ]]; then
-    if ! python3 /opt/cleaners/usage.py "$OUT/agent/$SLUG" --markdown \
-         >> "$GITHUB_STEP_SUMMARY"; then
-      log "warn: could not write the job summary for $dir"
+  # The hunt's own price, where a user already looks. It goes to the log unconditionally,
+  # because GITHUB_STEP_SUMMARY is set by Actions and absent everywhere else — and because a
+  # container that cannot reach the summary file must still report what it spent.
+  if [[ -f "$OUT/agent/$SLUG/events.jsonl" ]]; then
+    summary_line="$(python3 /opt/cleaners/usage.py "$OUT/agent/$SLUG" --markdown || true)"
+    if [[ -n "$summary_line" ]]; then
+      log "usage ${summary_line#- }"
+      if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] \
+         && ! printf '%s\n' "$summary_line" >> "$GITHUB_STEP_SUMMARY"; then
+        log "warn: could not write the job summary for $dir"
+      fi
     fi
   fi
 done

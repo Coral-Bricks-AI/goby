@@ -34,6 +34,7 @@ case "${MODEL%%/*}" in
   coral)     : "${CORALBRICKS_API_KEY:?CORALBRICKS_API_KEY must be set for a coral model}" ;;
   anthropic) : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY must be set for an anthropic model}" ;;
   openai)    : "${OPENAI_API_KEY:?OPENAI_API_KEY must be set for an openai model}" ;;
+  deepinfra) : "${DEEPINFRA_API_KEY:?DEEPINFRA_API_KEY must be set for a deepinfra model}" ;;
   *) echo "unknown provider in --model $MODEL" >&2; exit 2 ;;
 esac
 # Checked here rather than left to a traceback: a missing brief is a wiring error, and a
