@@ -47,7 +47,7 @@ jobs:
       GOBY_BASE: ${{ github.event.pull_request.base.sha }}
       GOBY_PROVIDER: coral
       GOBY_MODEL: deepseek-v4.1-flash-fast
-      GOBY_MAX_TOOL_CALLS: "80"
+      GOBY_MAX_TOOL_CALLS: "200"
       GOBY_MAX_DIFF_LINES: "10000"
       GOBY_MAX_FINDINGS: "30"
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
