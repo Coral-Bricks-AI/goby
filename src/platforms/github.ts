@@ -143,6 +143,24 @@ export class GitHubClient {
     return { head_sha: data.head.sha, head_ref: data.head.ref, base_ref: data.base.ref };
   }
 
+  /**
+   * The commit the pull request's diff is against.
+   *
+   * GitHub computes a PR diff against the merge base, not against the current base tip, and that
+   * difference matters: diffing `base..head` after the base branch has moved includes the base's own
+   * newer commits, reversed, which is how a reviewer reports changes nobody made. One compare call
+   * gives the exact commit, so the clone needs three commits at depth 1 instead of a guessed depth of
+   * history.
+   */
+  async fetch_merge_base(base: string, head: string): Promise<string> {
+    const data = JSON.parse(await this.get(`/repos/${this.repo}/compare/${base}...${head}`));
+    const sha = data?.merge_base_commit?.sha;
+    if (typeof sha !== 'string' || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(sha)) {
+      throw new GitHubError(200, `/repos/${this.repo}/compare`, 'Missing merge base in compare response');
+    }
+    return sha;
+  }
+
   async fetch_pr_intent(pr: number): Promise<{ title: string; body: string }> {
     const data = JSON.parse(await this.get(`/repos/${this.repo}/pulls/${pr}`));
     return { title: text(data.title), body: text(data.body) };

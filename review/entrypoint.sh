@@ -67,22 +67,33 @@ goby_log "clone $GOBY_REPO@${GOBY_HEAD:0:10} (base ${GOBY_BASE:0:10})"
 git "${AUTH[@]}" -c advice.detachedHead=false clone --quiet --no-checkout \
   "https://github.com/${GOBY_REPO}.git" "$REPO_DIR"
 git -C "$REPO_DIR" remote set-url origin "https://github.com/${GOBY_REPO}.git"
-if ! git "${AUTH[@]}" -C "$REPO_DIR" fetch --quiet --depth 200 origin "$GOBY_HEAD" "$GOBY_BASE"; then
-  goby_log "error: cannot fetch $GOBY_HEAD/$GOBY_BASE; refusing to review a different commit"
+# The merge base comes from GitHub, so three commits at depth 1 are enough: the head, the base the
+# pull request was opened against, and the commit the diff is actually taken from. Guessing a depth
+# of history means either fetching far more than needed or discovering, on a quiet day, that the
+# merge base was never downloaded and the diff is against the wrong thing.
+MERGE_BASE=""
+if MERGE_BASE=$(GOBY_REPO="$GOBY_REPO" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
+     GITHUB_TOKEN="$GITHUB_TOKEN" node /opt/goby/reviewRun.js merge-base 2>/dev/null); then
+  goby_log "merge base ${MERGE_BASE:0:10}"
+else
+  # A compare that fails (an enormous range, a transient error) is not a reason to review nothing:
+  # fall back to the base commit, which is what a two-dot diff uses anyway.
+  MERGE_BASE="$GOBY_BASE"
+  goby_log "warn: no merge base from the API; diffing against the base commit"
+fi
+if ! git "${AUTH[@]}" -C "$REPO_DIR" fetch --quiet --depth 1 origin "$GOBY_HEAD" "$MERGE_BASE"; then
+  goby_log "error: cannot fetch $GOBY_HEAD/$MERGE_BASE; refusing to review a different commit"
   exit 2
 fi
-git -C "$REPO_DIR" -c advice.detachedHead=false checkout --quiet "$GOBY_HEAD"
-
-# Three-dot when a merge base exists (what GitHub shows), two-dot otherwise. Which one was used is
-# recorded, because the two answer different questions and a reader deserves to know.
-DIFF="$OUT/diff.patch"
-if BASE_MERGE=$(git -C "$REPO_DIR" merge-base "$GOBY_BASE" "$GOBY_HEAD" 2>/dev/null) && [[ -n "$BASE_MERGE" ]]; then
-  git -C "$REPO_DIR" diff --find-renames "$BASE_MERGE" "$GOBY_HEAD" > "$DIFF"
-  goby_log "diff merge-base..head"
-else
-  git -C "$REPO_DIR" diff --find-renames "$GOBY_BASE" "$GOBY_HEAD" > "$DIFF"
-  goby_log "diff base..head (no merge base in the fetched history)"
+if [[ "$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)" != "$GOBY_HEAD" ]] \
+   && ! git -C "$REPO_DIR" -c advice.detachedHead=false checkout --quiet "$GOBY_HEAD"; then
+  goby_log "error: checkout of $GOBY_HEAD failed; refusing to review a different commit"
+  exit 2
 fi
+
+DIFF="$OUT/diff.patch"
+git -C "$REPO_DIR" diff --find-renames "$MERGE_BASE" "$GOBY_HEAD" > "$DIFF"
+goby_log "diff merge-base..head (${MERGE_BASE:0:10}..${GOBY_HEAD:0:10})"
 DIFF_LINES=$(wc -l < "$DIFF" | tr -d ' ')
 goby_log "diff $DIFF_LINES lines"
 if [[ "$DIFF_LINES" -gt "$MAX_DIFF_LINES" ]]; then

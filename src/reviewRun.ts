@@ -234,7 +234,14 @@ async function gate(client: GitHubClient): Promise<number> {
 
 async function main(): Promise<number> {
   const mode = process.argv[2];
-  if (!['prepare', 'finish', 'skip', 'gate'].includes(mode ?? '')) throw new Error('usage: reviewRun.ts prepare|finish|skip|gate');
+  if (!['prepare', 'finish', 'skip', 'gate', 'merge-base'].includes(mode ?? '')) {
+    throw new Error('usage: reviewRun.ts prepare|finish|skip|gate|merge-base');
+  }
+  if (mode === 'merge-base') {
+    // Printed alone, so the entrypoint can fetch exactly these commits and nothing else.
+    console.log(await new GitHubClient(env('GOBY_REPO'), env('GITHUB_TOKEN')).fetch_merge_base(env('GOBY_BASE'), env('GOBY_HEAD')));
+    return 0;
+  }
   const out = env('GOBY_OUT');
   const client = new GitHubClient(env('GOBY_REPO'), env('GITHUB_TOKEN'));
   if (mode === 'skip') return skip(client);
