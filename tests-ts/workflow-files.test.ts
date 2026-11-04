@@ -58,21 +58,32 @@ test('CI stays one job on one Node version', () => {
   expect(text).toContain('bun run check');
 });
 
-test('publishing an image bumps the pin by pull request, and skips its own review', () => {
-  // The reviewer pins its own digest, so every publish is a one-line commit. Doing that by hand is
-  // the step everyone forgets; doing it on the default branch bypasses the branch rule.
+test('the publish workflow tells the reader which digest to pin', () => {
+  // Automating this was tried and is not possible with `GITHUB_TOKEN`: the pin lives in a workflow
+  // file, and no permission on that token allows updating one. So the publish job prints the digest
+  // and a human makes the one-line change.
   const publish = read('.github/workflows/review-image.yml');
-  expect(publish).toContain('Bump the pinned digest');
-  expect(publish).toContain('gh pr create');
-  expect(publish).toContain('--label no-review');
-  expect(publish).toContain('gh pr merge --squash --auto');
+  expect(publish).toContain('Tell the reader which digest to pin');
   expect(publish).not.toContain('git push origin main');
-  expect(publish).toContain('contents: write');
-  expect(publish).toContain('pull-requests: write');
+  expect(publish).not.toContain('workflows:');
 });
 
-test('the pin bump is allowed to edit a workflow file', () => {
-  // A token without this scope is refused on push: "refusing to allow a GitHub App to create or
-  // update workflow ... without `workflows` permission".
-  expect(read('.github/workflows/review-image.yml')).toContain('workflows: write');
+test('every workflow parses under actionlint rules we rely on', () => {
+  // A bad `permissions:` scope makes a workflow invalid, and GitHub then refuses to run it at all —
+  // which is how a "grant" turned the publish pipeline off. CI runs actionlint; this test states the
+  // one property that bit: no scope outside the allowed set.
+  const allowed = new Set(['actions', 'artifact-metadata', 'attestations', 'checks', 'contents',
+    'deployments', 'discussions', 'id-token', 'issues', 'models', 'packages', 'pages',
+    'pull-requests', 'repository-projects', 'security-events', 'statuses']);
+  for (const file of ['.github/workflows/ci.yml', '.github/workflows/review-image.yml',
+    '.github/workflows/cleaners-image.yml', '.github/workflows/cleaners-post-merge.yml',
+    '.github/workflows/test-cleaners.yml', '.github/workflows/goby-review.yml']) {
+    const block = read(file).split(/^permissions:$/m)[1];
+    if (!block) continue;
+    for (const line of block.split('\n')) {
+      const match = /^\s{2}([a-z-]+):/.exec(line);
+      if (!match) { if (line.trim() === '' || !line.startsWith('  ')) break; continue; }
+      expect(allowed.has(match[1])).toBe(true);
+    }
+  }
 });

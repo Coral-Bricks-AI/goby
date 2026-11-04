@@ -26,3 +26,9 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       # typecheck → kernel-checked policies → Node build → offline tests
       - run: bun run check
+      # A workflow file with a bad key is not a lint failure: GitHub refuses to run it at all, so a
+      # mistake here silently turns a pipeline off. Cheap, and it reads every workflow in the repo.
+      - name: Lint the workflows
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash
+          ./actionlint -color
