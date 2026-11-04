@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One hunt: one component of one repo at one commit.
+# One scan: one component of one repo at one commit.
 #
-#   hunt.sh --repo-dir DIR --component PATH --sha SHA [--before SHA] \
+#   cleaner.sh --repo-dir DIR --component PATH --sha SHA [--before SHA] \
 #           --charter FILE --model PROVIDER/MODEL --out DIR [--rules FILE] [--changed FILE]
 #
 # Exits 0 whether or not findings were produced. The harness reads $CLEANERS_OUT.
@@ -28,7 +28,7 @@ done
 : "${REPO_DIR:?}"; : "${COMPONENT:?}"; : "${SHA:?}"; : "${CHARTER:?}"
 : "${MODEL:?}"; : "${OUT:?}"
 # The credential the selected provider needs, and no other: the models file interpolates it,
-# and pi refuses to start on an unset variable. Checked per provider so a hunt on Claude or
+# and pi refuses to start on an unset variable. Checked per provider so a scan on Claude or
 # GPT does not demand our Coral key — the entrypoint already resolved which one is usable.
 case "${MODEL%%/*}" in
   coral)     : "${CORALBRICKS_API_KEY:?CORALBRICKS_API_KEY must be set for a coral model}" ;;
@@ -40,7 +40,7 @@ esac
 # Checked here rather than left to a traceback: a missing brief is a wiring error, and a
 # traceback would exit non-zero and be retried as if the model call had failed.
 if [[ ! -f "$CHARTER" ]]; then
-  echo "error: charter $CHARTER does not exist; refusing to hunt without a brief" >&2
+  echo "error: charter $CHARTER does not exist; refusing to scan without a brief" >&2
   exit 2
 fi
 
@@ -54,7 +54,7 @@ if ! mkdir -p "$OUT"; then
 fi
 OUT="$(cd "$OUT" && pwd)"
 
-# One id per run, not per component+sha: two hunts of the same component at the same sha
+# One id per run, not per component+sha: two scans of the same component at the same sha
 # are two jobs, and merging their spend under one session id makes cost attribution wrong.
 RUN_ID="${CLEANERS_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 
@@ -92,11 +92,11 @@ fi
 export PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-/opt/cleaners}"
 export CLEANERS_OUT="$OUT"
 export CLEANERS_COMPONENT="$COMPONENT"
-# The only writable places a hunter's shell gets, and the only CLEANERS_* variables that
+# The only writable places a cleaner's shell gets, and the only CLEANERS_* variables that
 # survive the child-environment allowlist.
 export CLEANERS_SCRATCH="${CLEANERS_SCRATCH:-$OUT/scratch}"
 mkdir -p "$CLEANERS_SCRATCH"
-export CLEANERS_SESSION_ID="${CLEANERS_SESSION_ID:-hunt-$(echo "$COMPONENT" | tr '/' '-')-${SHA:0:10}-$RUN_ID}"
+export CLEANERS_SESSION_ID="${CLEANERS_SESSION_ID:-clean-$(echo "$COMPONENT" | tr '/' '-')-${SHA:0:10}-$RUN_ID}"
 
 PROMPT=$(python3 - "$COMPONENT" "$SHA" "$BEFORE" "$CHARTER" "$RULES" "$CHANGED" "$REPO_DIR" <<'PY'
 import os, pathlib, sys
@@ -133,7 +133,7 @@ PI_ARGS=(
 )
 for extension in ${EXTENSIONS//,/ }; do
   # Named, absent, and silently skipped is the failure mode that loses findings, so a
-  # missing extension stops the hunt instead.
+  # missing extension stops the scan instead.
   if [[ ! -f "$extension" ]]; then
     echo "error: extension $extension does not exist" >&2
     exit 2
@@ -149,7 +149,7 @@ else
   pi --print "${PI_ARGS[@]}"
 fi
 
-# The run's own record: what was hunted, with which model, for how long, and where it came
+# The run's own record: what was scanned, with which model, for how long, and where it came
 # from. usage.py reads this for the wall time, which the event stream does not carry.
 python3 - "$OUT/run.json" "$COMPONENT" "$SHA" "$BEFORE" "$MODEL" "$(( SECONDS - STARTED ))" \
          "$RUN_ID" "$REPO_DIR" <<'PY'

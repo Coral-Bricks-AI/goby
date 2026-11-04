@@ -1,24 +1,24 @@
 name: Goby cleaners
 
-# Post-merge hunting: a push to main reads every component that push touched and files one
-# issue per defect the hunter could reproduce *and* prove gone after changing the blamed line.
-# A component is a directory with a `HUNT.md`; there is no registry to keep in sync.
+# Post-merge scanning: a push to main reads every component that push touched and files one
+# issue per defect the cleaner could reproduce *and* prove gone after changing the blamed line.
+# A component is a directory with a `CLEANER.md`; there is no registry to keep in sync.
 #
 # Two ways to run it, same code:
 #
 #   **GitHub-hosted runner (default).** Copy this file into your repo, add the model key as a
 #   secret. No AWS account, no GitHub App, nothing else. It cannot reach a private network, so
-#   a hunt sees your code and nothing behind your firewall.
+#   a scan sees your code and nothing behind your firewall.
 #
 #   **Self-hosted runner.** Set `runs-on` (e.g. `[self-hosted, linux]`). The job then runs
-#   inside your network, which is the only way a hunt can read a private database or an
+#   inside your network, which is the only way a scan can read a private database or an
 #   internal service. Install one runner; everything else is unchanged.
 #
 # Or call it from your own workflow, pinned to a digest so the container cannot change
 # underneath you:
 #
 #   jobs:
-#     hunt:
+#     scan:
 #       uses: Coral-Bricks-AI/goby/.github/workflows/cleaners-post-merge.yml@<sha>
 #       with:
 #         image: ghcr.io/coral-bricks-ai/goby-cleaners@sha256:...
@@ -33,7 +33,7 @@ on:
     # fallbacks in `env` below are what a push event uses, since it has no inputs at all.
     inputs:
       image:
-        description: Hunter image, preferably a @sha256 digest.
+        description: Cleaner image, preferably a @sha256 digest.
         type: string
         default: ghcr.io/coral-bricks-ai/goby-cleaners:latest
       runs-on:
@@ -49,7 +49,7 @@ on:
         type: string
         default: coral/deepseek-v4.1-flash-fast
       max-tools:
-        description: Tool calls one hunt may make.
+        description: Tool calls one scan may make.
         type: number
         default: 60
       issues-per-day:
@@ -57,7 +57,7 @@ on:
         type: number
         default: 3
       max-components:
-        description: Components one push may hunt.
+        description: Components one push may scan.
         type: number
         default: 4
       tools:
@@ -79,7 +79,7 @@ on:
   workflow_call:
     inputs:
       image:
-        description: Hunter image, preferably a @sha256 digest.
+        description: Cleaner image, preferably a @sha256 digest.
         type: string
         default: ghcr.io/coral-bricks-ai/goby-cleaners:latest
       runs-on:
@@ -95,7 +95,7 @@ on:
         type: string
         default: coral/deepseek-v4.1-flash-fast
       max-tools:
-        description: Tool calls one hunt may make.
+        description: Tool calls one scan may make.
         type: number
         default: 60
       issues-per-day:
@@ -103,7 +103,7 @@ on:
         type: number
         default: 3
       max-components:
-        description: Components one push may hunt.
+        description: Components one push may scan.
         type: number
         default: 4
       tools:
@@ -138,14 +138,14 @@ permissions:
   # is public — the runner's login sends a token that does not carry the scope.
   packages: read
 
-# One hunt per pushed commit. Not cancelled: a run cancelled halfway can lose a finding that
+# One scan per pushed commit. Not cancelled: a run cancelled halfway can lose a finding that
 # was already reproduced, and the next push is a worse retry than finishing this one.
 concurrency:
   group: goby-cleaners-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
-  hunt:
+  scan:
     runs-on: ${{ inputs.runs-on || 'ubuntu-latest' }}
     timeout-minutes: 60
     container:
@@ -164,14 +164,14 @@ jobs:
       CLEANERS_TOOL_KEY_ENV: ${{ inputs.tool-key-env }}
       CLEANERS_LABEL: ${{ inputs.label || 'goby-cleaners' }}
     steps:
-      # The image clones, hunts and files; the step is one line because there is nothing for
+      # The image clones, scans and files; the step is one line because there is nothing for
       # the runner to set up. Nothing from the pushed tree is executed by the runner itself.
       #
       # Secrets are step-scoped, never job-scoped: a job-level env becomes part of the
       # container's own environment, and these belong to the one process that needs them. The
-      # entrypoint then moves the token to a root-only file and gives the hunt an empty
+      # entrypoint then moves the token to a root-only file and gives the scan an empty
       # environment, so neither reaches the agent's shell.
-      - name: Hunt
+      - name: Scan
         working-directory: /workspace
         env:
           CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}

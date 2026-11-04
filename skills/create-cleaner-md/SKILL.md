@@ -1,11 +1,11 @@
 ---
-name: create-hunt-md
-description: Write HUNT.md briefs for a repo so goby cleaners can hunt it — one file per component directory, each stating observable invariants. Use when adopting goby cleaners, or when a directory has no brief yet.
+name: create-cleaner-md
+description: Write CLEANER.md briefs for a repo so goby cleaners can scan it — one file per component directory, each stating observable invariants. Use when adopting goby cleaners, or when a directory has no brief yet.
 ---
 
-# Create HUNT.md briefs
+# Create CLEANER.md briefs
 
-A component is a directory containing a `HUNT.md`. That file is the hunter's entire brief: it
+A component is a directory containing a `CLEANER.md`. That file is the cleaner's entire brief: it
 is what makes it find your bugs instead of reporting style.
 
 ## What to do
@@ -13,7 +13,7 @@ is what makes it find your bugs instead of reporting style.
 1. Find components: directories with a coherent runtime property — a service, a dispatcher, a
    scheduler, a money path. Not every directory. Ten good briefs beat forty shallow ones.
 2. For each, read the code enough to state **3-6 invariants** that must hold.
-3. Write `<dir>/HUNT.md` using the shape below.
+3. Write `<dir>/CLEANER.md` using the shape below.
 4. Open one PR with all the files. They are reviewed by humans, and that review is the point.
 
 ## The shape
@@ -67,4 +67,4 @@ written down once stops being filed every week. Add them as issues close, not no
 - Write a brief for a directory with no observable runtime property (config, types, docs).
 - Restate the code. If the file can be regenerated from the implementation, it will be, and
   then it finds nothing.
-- Include instructions to the hunter about tools, budget or output — the harness owns those.
+- Include instructions to the cleaner about tools, budget or output — the harness owns those.

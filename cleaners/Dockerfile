@@ -1,4 +1,4 @@
-# coral-cleaners hunter task image.
+# goby-cleaners scanner image.
 #
 # One job per container: clone the pushed sha, hunt every component it touched, file the
 # issues, exit. Started by the post-merge workflow as a container job (see
@@ -10,7 +10,7 @@
 #
 # **Adding a tool.** This image is the extension point: install the binary or driver here,
 # then name it via CLEANERS_TOOLS / CLEANERS_EXTENSIONS (and CLEANERS_TOOL_KEY_ENV if it needs
-# a credential). See the README, "Giving the hunter better tools".
+# a credential). See the README, "Giving the cleaner better tools".
 
 FROM node:24-bookworm-slim
 
@@ -19,14 +19,14 @@ RUN apt-get update \
       bash ca-certificates git git-lfs jq ripgrep coreutils python3 python3-venv \
  && rm -rf /var/lib/apt/lists/*
 
-# Pinned, not floating: a hunter that changes personality because npm published cannot be
+# Pinned, not floating: a cleaner that changes personality because npm published cannot be
 # compared across weeks, and phase 0's numbers would stop meaning anything.
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.4.0
 
 COPY report_finding.ts /opt/cleaners/report_finding.ts
 COPY prompt.md /opt/cleaners/prompt.md
 COPY models/ /opt/cleaners/models/
-COPY hunt.sh /opt/cleaners/hunt.sh
+COPY cleaner.sh /opt/cleaners/cleaner.sh
 COPY entrypoint.sh /opt/cleaners/entrypoint.sh
 COPY post_findings.py /opt/cleaners/post_findings.py
 COPY model_check.py /opt/cleaners/model_check.py
@@ -43,9 +43,9 @@ ENV PI_CODING_AGENT_DIR=/opt/cleaners \
     PI_SKIP_VERSION_CHECK=1 \
     CLEANERS_WORK=/workspace
 
-# The entrypoint runs as root so each hunt can be dropped to `hunter` with no environment
+# The entrypoint runs as root so each scan can be dropped to `agent` with no environment
 # at all; see entrypoint.sh. The agent never runs as root and never sees a credential.
-RUN useradd --create-home --uid 10001 hunter && mkdir -p /workspace /home/hunter/.pi-agent
+RUN useradd --create-home --uid 10001 agent && mkdir -p /workspace /home/agent/.pi-agent
 
 WORKDIR /workspace
 CMD ["/opt/cleaners/entrypoint.sh"]

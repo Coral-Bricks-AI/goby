@@ -3,16 +3,16 @@
 
     model_check.py --models-dir models --model coral/x --fallback coral/x
 
-Prints the model to hunt with and exits 0; prints why it cannot hunt and exits 3. The
+Prints the model to scan with and exits 0; prints why it cannot scan and exits 3. The
 entrypoint runs this before any clone, because a missing credential must fail in one log
-line rather than after a task start, a checkout and a sandbox copy — and because a hunt that
-cannot call a model must never look like a hunt that found nothing.
+line rather than after a task start, a checkout and a sandbox copy — and because a scan that
+cannot call a model must never look like a scan that found nothing.
 
 A provider is usable when every variable its models file interpolates is set — **except the
 ones this harness supplies itself** (`CLEANERS_*`, `PI_*`). Those do not exist yet when the
 check runs, and they are not credentials: `models/coral.json` interpolates
 `CLEANERS_SESSION_ID` for spend attribution, and counting it as a credential refused every
-default hunt.
+default scan.
 
 This lives in Python, not in the shell, because it decides whether the system does anything
 at all, and shell arithmetic on a JSON file cannot be tested.
@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 VAR = re.compile(r"\$([A-Z_][A-Z0-9_]*)")
-# Names the harness sets for the hunt itself. A models file may interpolate them; they are
+# Names the harness sets for the scan itself. A models file may interpolate them; they are
 # config, not credentials.
 HARNESS_PREFIXES = ("CLEANERS_", "PI_")
 
@@ -54,7 +54,7 @@ def missing(models_dir: Path, model: str, env: dict[str, str]) -> list[str] | No
 
 def choose(models_dir: Path, model: str, fallback: str,
            env: dict[str, str]) -> tuple[str | None, str]:
-    """(the model to hunt with, why not when there is none)."""
+    """(the model to scan with, why not when there is none)."""
     reasons = []
     for candidate, label in ((model, "model"), (fallback, "fallback")):
         gone = missing(models_dir, candidate, env)

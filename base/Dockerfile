@@ -33,7 +33,7 @@ ENV GOBY_HOME=/opt/goby \
 
 # The agent runs as this uid and never as root; the token and the model key stay in processes it
 # cannot read. 10001 matches cleaners, so a finding's environment looks the same in both.
-RUN useradd --create-home --uid 10001 hunter && mkdir -p /run/goby /workspace \
- && chown -R hunter:hunter /workspace
+RUN useradd --create-home --uid 10001 agent && mkdir -p /run/goby /workspace \
+ && chown -R agent:agent /workspace
 
 WORKDIR /workspace

@@ -184,6 +184,7 @@ RUN
 chmod 755 "$OUT/run-agent.sh"
 
 goby_log "review $GOBY_REPO#$GOBY_PR model=$MODEL max_tool_calls=${GOBY_MAX_TOOL_CALLS:-80}"
+AGENT_STARTED=$SECONDS
 set +e
 goby_run_as_agent \
   PI_CODING_AGENT_DIR="$AGENT_HOME" \
@@ -195,6 +196,7 @@ goby_run_as_agent \
   GOBY_MAX_TOOL_CALLS="${GOBY_MAX_TOOL_CALLS:-80}" \
   bash "$OUT/run-agent.sh" > "$OUT/agent.log" 2>&1
 AGENT_STATUS=$?
+AGENT_ELAPSED=$((SECONDS - AGENT_STARTED))
 set -e
 tail -20 "$OUT/agent.log" || true
 goby_log "agent exit=$AGENT_STATUS findings=$(grep -c '"kind":"findings"' "$AGENT_OUT/findings.jsonl" 2>/dev/null || echo 0)"
@@ -214,5 +216,5 @@ fi
 goby_proxy_stop
 GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
 GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" GOBY_AGENT_OUT="$AGENT_OUT" \
-GOBY_MAX_FINDINGS="${GOBY_MAX_FINDINGS:-30}" \
+GOBY_ELAPSED_S="$AGENT_ELAPSED" GOBY_MAX_FINDINGS="${GOBY_MAX_FINDINGS:-30}" \
   node /opt/goby/reviewRun.js finish

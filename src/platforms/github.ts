@@ -172,46 +172,6 @@ export class GitHubClient {
   }
 
 
-  private contents_path(ref: string, path: string): string {
-    return `/repos/${this.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`;
-  }
-
-  async fetch_file(ref: string, path: string): Promise<string | null> {
-    let data: JsonObject;
-    try {
-      data = JSON.parse(await this.get(this.contents_path(ref, path)));
-    } catch (error) {
-      if (error instanceof GitHubError && error.code === 404) return null;
-      throw error;
-    }
-    if (typeof data?.content !== 'string') {
-      if (Number.isInteger(data?.size)) {
-        console.error(`note: ${path} at ${ref} is ${data.size} bytes (>1MB); skipping as context`);
-      }
-      return null;
-    }
-    return Buffer.from(data.content, 'base64').toString('utf8');
-  }
-
-  async fetch_dir_listing(ref: string, path: string): Promise<{ name: string; type: string }[] | null> {
-    let data: unknown;
-    try {
-      data = JSON.parse(await this.get(this.contents_path(ref, path)));
-    } catch (error) {
-      if (error instanceof GitHubError && error.code === 404) return null;
-      throw error;
-    }
-    if (!Array.isArray(data)) return null;
-    return data.filter(object).map(e => ({ name: text(e.name), type: text(e.type) }));
-  }
-
-  async fetch_tree_paths(ref: string): Promise<[string[], boolean]> {
-    const data = JSON.parse(await this.get(`/repos/${this.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`));
-    const paths: string[] = (data.tree ?? []).filter((e: unknown) => object(e) && e.type === 'blob')
-      .map((e: JsonObject) => e.path);
-    return [paths.sort(), Boolean(data.truncated)];
-  }
-
   async fetch_path_history(path: string, at_ref: string, limit = 10): Promise<{ sha: string; date: string; message: string }[]> {
     const query = new URLSearchParams({ path, sha: at_ref, per_page: String(limit) });
     const data = JSON.parse(await this.get(`/repos/${this.repo}/commits?${query}`));
@@ -219,15 +179,6 @@ export class GitHubClient {
     return data.filter(object).map(c => ({
       sha: text(c.sha), date: text(c.commit?.author?.date), message: text(c.commit?.message),
     }));
-  }
-
-  async fetch_repo_context(head: string): Promise<string> {
-    const chunks: string[] = [];
-    for (const path of CONTEXT_PATHS) {
-      const body = await this.fetch_file(head, path);
-      if (body) chunks.push(`### ${path}\n\n${cut(body, CONTEXT_MAX_CHARS)}`);
-    }
-    return chunks.join('\n\n');
   }
 
   /** Like Python, examines the first 100 statuses and selects by updated_at. */
@@ -335,44 +286,6 @@ export class GitHubClient {
     return [threads.filter(t => !t.resolved), threads.filter(t => t.resolved), complete];
   }
 
-  async fetch_own_summaries(pr: number): Promise<[SummaryRecord[], boolean]> {
-    const [owner, ...parts] = this.repo.split('/');
-    const out: SummaryRecord[] = [];
-    let cursor: string | null = null;
-    const seen = new Set<string>();
-    for (let i = 0; i < 5; i++) {
-      const data = await this.graphql(SUMMARY_QUERY, { owner, name: parts.join('/'), n: pr, cursor });
-      const reviews = data?.data?.repository?.pullRequest?.reviews;
-      // Also fail closed for missing/malformed summary pages; a missing page
-      // is not a complete empty list, even if GraphQL returned HTTP 200.
-      if (!object(reviews) || !Array.isArray(reviews.nodes) || !object(reviews.pageInfo) ||
-          typeof reviews.pageInfo.hasNextPage !== 'boolean') return [out, false];
-      for (const node of reviews.nodes) {
-        if (!object(node) || !object(node.author) || typeof node.author.login !== 'string') return [out, false];
-        if (!this.bot_logins.has(node.author.login)) continue;
-        if (typeof node.id !== 'string' || typeof node.body !== 'string' || typeof node.isMinimized !== 'boolean') return [out, false];
-        out.push({
-          node_id: node.id, sha: node.body.match(new RegExp(`<!-- ${MARKER} head=(\\w+)`))?.[1] ?? '',
-          minimized: node.isMinimized, agent: node.body.startsWith(`${SUMMARY_PREFIX} — agentic review`),
-        });
-      }
-      if (!reviews.pageInfo.hasNextPage) return [out, true];
-      const next = reviews.pageInfo.endCursor;
-      if (typeof next !== 'string' || !next || seen.has(next)) return [out, false];
-      seen.add(next);
-      cursor = next;
-    }
-    return [out, false];
-  }
-
-  async minimize_comment(id: string): Promise<boolean> {
-    const data = await this.graphql(`mutation($id: ID!) {
-      minimizeComment(input: {subjectId: $id, classifier: RESOLVED}) {
-        minimizedComment { isMinimized }
-      }
-    }`, { id });
-    return Boolean(data?.data?.minimizeComment?.minimizedComment?.isMinimized);
-  }
 }
 
 /** Use only after both summary and thread traversals reported complete. */

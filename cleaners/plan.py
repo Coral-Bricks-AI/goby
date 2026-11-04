@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """The two decisions the entrypoint used to make in shell.
 
-    git ls-files -- '*HUNT.md' | plan.py picked --changed FILE --max 4 [--before-unknown]
+    git ls-files -- '*CLEANER.md' | plan.py picked --changed FILE --max 4 [--before-unknown]
     plan.py collect --agent-dir DIR --out FILE
 
-`picked` turns "which files carry a `HUNT.md`" plus "which files this push changed" into the
-directories to hunt, printed one per line. What it ignored goes to stderr, where the task log
+`picked` turns "which files carry a `CLEANER.md`" plus "which files this push changed" into the
+directories to scan, printed one per line. What it ignored goes to stderr, where the task log
 keeps it. When more components changed than the cap allows, the ones with the most changed
 files win: the push moved them the furthest, so a defect is likeliest there.
 
-`collect` concatenates every hunt's findings into one file and prints how many findings that
+`collect` concatenates every scan's findings into one file and prints how many findings that
 is, so the number in the log is the number that will be filed.
 
 Both used to be shell — a `sed`/`awk` pair and a glob — and both were wrong in review: a
-root-level `HUNT.md` was read as a component that could never match anything, and the glob's
-depth was questioned. Shell cannot be tested here, and this decides whether a push is hunted
+root-level `CLEANER.md` was read as a component that could never match anything, and the glob's
+depth was questioned. Shell cannot be tested here, and this decides whether a push is scanned
 at all.
 """
 from __future__ import annotations
@@ -24,31 +24,41 @@ import hashlib
 import sys
 from pathlib import Path
 
-SUFFIX = "/HUNT.md"
+SUFFIX = "/CLEANER.md"
+# Temporary: repositories that still carry the old name. Removing this is a one-line change once
+# their files are renamed — the fallback exists so a rename here cannot silently stop a live
+# cleaner from scanning anything.
+LEGACY_SUFFIX = "/HUNT.md"
 
 
-def components(hunt_files: list[str]) -> tuple[list[str], list[str]]:
+def components(cleaner_files: list[str]) -> tuple[list[str], list[str]]:
     """(component directories, notes about what was ignored), both sorted/stable.
 
-    A component is a *directory* that contains a `HUNT.md`. A `HUNT.md` at the repository
-    root would mean "hunt everything", which is the one scope this design exists to avoid,
+    A component is a *directory* that contains a `CLEANER.md`. A `CLEANER.md` at the repository
+    root would mean "scan everything", which is the one scope this design exists to avoid,
     so it is named and dropped rather than turned into a component.
     """
     seen: set[str] = set()
     found: list[str] = []
     notes: list[str] = []
-    for raw in hunt_files:
+    for raw in cleaner_files:
         path = raw.strip()
         if not path:
             continue
-        if path == "HUNT.md":
-            notes.append("ignoring the root-level HUNT.md: a component is a directory, "
+        # A legacy brief is a component, not a note: logging it and then ignoring it would answer
+        # "nothing to scan" for a repository that still uses the old name.
+        if path in ("CLEANER.md", "HUNT.md"):
+            notes.append("ignoring the root-level brief: a component is a directory, "
                          "not the whole repo")
             continue
-        if not path.endswith(SUFFIX):
+        if path.endswith(SUFFIX):
+            directory = path[: -len(SUFFIX)]
+        elif path.endswith(LEGACY_SUFFIX):
+            notes.append(f"using the legacy component brief {path}: rename it to CLEANER.md")
+            directory = path[: -len(LEGACY_SUFFIX)]
+        else:
             notes.append(f"ignoring {path}: a component is <directory>{SUFFIX}")
             continue
-        directory = path[: -len(SUFFIX)]
         if directory in seen:
             continue
         seen.add(directory)
@@ -66,7 +76,7 @@ def rank(directory: str, changed: list[str], sha: str = "") -> tuple[int, str]:
     """Sort key for a component this push touched: most changed files first.
 
     The cap used to slice the alphabet, which made the component that got dropped an accident
-    of its name — a gateway change was skipped while three backend components were hunted. The
+    of its name — a gateway change was skipped while three backend components were scanned. The
     count is how far the push moved each component, so the busier one is the better bet.
 
     Ties are broken by a hash of the commit, the component and the files it changed: a one-line
@@ -74,7 +84,7 @@ def rank(directory: str, changed: list[str], sha: str = "") -> tuple[int, str]:
     same component first every time. The commit is part of the key on purpose — two pushes that
     touch the same five paths would otherwise rank identically, and the cap would drop the same
     component forever. The key is still stable for one push, so a re-run of the same commit
-    hunts the same components.
+    scans the same components.
     """
     prefix = directory + "/"
     inside = sorted(p for p in changed if p == directory or p.startswith(prefix))
@@ -85,7 +95,7 @@ def rank(directory: str, changed: list[str], sha: str = "") -> tuple[int, str]:
 
 def picked(components_list: list[str], changed: list[str], max_components: int,
            before_known: bool, sha: str = "") -> tuple[list[str], str]:
-    """(the components to hunt, one line saying why)."""
+    """(the components to scan, one line saying why)."""
     if before_known:
         chosen = sorted((c for c in components_list if touched(c, changed)),
                         key=lambda directory: rank(directory, changed, sha))
@@ -106,17 +116,17 @@ def picked(components_list: list[str], changed: list[str], max_components: int,
 
 
 def classify(exit_status: int, model_failed: bool, findings: int) -> str:
-    """What to do about one finished hunt: `ok`, `warn`, `retry`, `wiring` or `harness`.
+    """What to do about one finished scan: `ok`, `warn`, `retry`, `wiring` or `harness`.
 
-    `hunt.sh` exits 2 for its own refusals — a missing charter, an unknown provider, a missing
+    `cleaner.sh` exits 2 for its own refusals — a missing charter, an unknown provider, a missing
     credential — which no retry can fix, and retrying one reports a broken component as a
-    clean hunt. Everything else about the *model* is in the event stream, because pi exits 0
+    clean scan. Everything else about the *model* is in the event stream, because pi exits 0
     even when the call fails (verified against a 401 and against a refused connection: both
     exit 0 with `stopReason=error`). A non-zero exit that is not `2` and is not accompanied by
     a failed turn is therefore the harness, not the model.
 
     A run that already emitted findings is not retried however it failed: each finding came
-    through the emit tool, which refuses one without its repro and its flip, and re-hunting
+    through the emit tool, which refuses one without its repro and its flip, and re-scanning
     the component would file the same defects again under reworded titles.
     """
     if exit_status == 2:
@@ -148,14 +158,14 @@ def read_changed(path: Path) -> list[str]:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="mode", required=True)
-    pick = sub.add_parser("picked", help="read HUNT.md paths on stdin")
+    pick = sub.add_parser("picked", help="read CLEANER.md paths on stdin")
     pick.add_argument("--changed", type=Path, required=True)
     pick.add_argument("--max", type=int, default=4)
-    pick.add_argument("--sha", default="", help="the commit being hunted; breaks ties so two "
+    pick.add_argument("--sha", default="", help="the commit being scanned; breaks ties so two "
                                               "pushes over the same paths do not drop the same "
                                               "component forever")
     pick.add_argument("--before-unknown", action="store_true")
-    decide = sub.add_parser("classify", help="what to do about one finished hunt")
+    decide = sub.add_parser("classify", help="what to do about one finished scan")
     decide.add_argument("--exit", type=int, required=True, dest="exit_status")
     decide.add_argument("--model-failed", action="store_true")
     decide.add_argument("--findings", type=int, default=0)
@@ -175,7 +185,7 @@ def main(argv: list[str]) -> int:
     for note in notes:
         print(note, file=sys.stderr)
     if not found:
-        print("no component carries a HUNT.md", file=sys.stderr)
+        print("no component carries a CLEANER.md", file=sys.stderr)
         return 0
     chosen, note = picked(found, read_changed(args.changed), args.max,
                           before_known=not args.before_unknown, sha=args.sha)

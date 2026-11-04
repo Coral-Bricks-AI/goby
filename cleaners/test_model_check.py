@@ -32,7 +32,7 @@ ANTHROPIC = {"providers": {"anthropic": {"apiKey": "$ANTHROPIC_API_KEY"}}}
 def test_harness_variables_are_not_credentials(tmp_path):
     """`models/coral.json` interpolates CLEANERS_SESSION_ID for spend attribution. It does
     not exist yet when this check runs, and treating it as a credential refused every
-    default hunt."""
+    default scan."""
     d = models_dir(tmp_path, {"coral": CORAL})
     assert mc.credential_vars(d / "coral.json") == {"CORALBRICKS_API_KEY"}
     model, why = mc.choose(d, "coral/x", "coral/x", {"CORALBRICKS_API_KEY": "ak_1"})
@@ -101,16 +101,16 @@ def test_the_shipped_models_files_only_ask_for_credentials(tmp_path):
 def test_every_shipped_provider_is_one_the_shell_can_run():
     """A models file that ships but cannot be selected is a provider that never runs.
 
-    The first hunt on the GitHub path found this: `models/deepinfra.json` loaded, model_check
+    The first scan on the GitHub path found this: `models/deepinfra.json` loaded, model_check
     accepted `deepinfra/...` because the file interpolates `$DEEPINFRA_API_KEY`, and then
-    `hunt.sh` fell into its `*)` arm and exited 2 before reading the charter. The entrypoint's
-    credential case had the same hole, so the job logged a failed hunt for a valid key.
+    `cleaner.sh` fell into its `*)` arm and exited 2 before reading the charter. The entrypoint's
+    credential case had the same hole, so the job logged a failed scan for a valid key.
     """
     for path in sorted((HERE / "models").glob("*.json")):
         provider = path.stem
         (credential,) = mc.credential_vars(path) or {None}
         assert credential, f"{path.name} interpolates no credential"
-        for script in ("hunt.sh", "entrypoint.sh"):
+        for script in ("cleaner.sh", "entrypoint.sh"):
             text = (HERE / script).read_text()
             assert f"{provider})" in text, f"{script} does not know provider {provider}"
             assert credential in text, f"{script} never mentions {credential}"

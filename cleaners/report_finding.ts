@@ -1,12 +1,12 @@
 /**
  * goby-cleaners emit tool.
  *
- * The hunter never returns prose that a harness has to parse. It ends by calling a tool
+ * The cleaner never returns prose that a harness has to parse. It ends by calling a tool
  * whose arguments are already validated, and the harness reads the resulting JSONL. That
  * is the whole reason this project uses pi instead of a prompt-and-regex harness: a
  * malformed finding is a failed tool call, not a silently dropped paragraph.
  *
- * There is exactly one emit tool. v1 has no second stage and no second model: the hunter
+ * There is exactly one emit tool. v1 has no second stage and no second model: the cleaner
  * is the only thing between a claim and a GitHub issue, so the claim has to carry a command
  * that made the defect happen, and a second command that made it stop.
  */
@@ -20,7 +20,7 @@ import {
 	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 
-// The hunter has to execute things to prove anything, and it executes code from the repo
+// The cleaner has to execute things to prove anything, and it executes code from the repo
 // under review. A child process inherits the environment, so without this the checkout
 // could read the gateway key straight out of `env`. The tool name is `bash`, so this
 // replaces the built-in and the model still sees only one shell.
@@ -53,7 +53,7 @@ function keepEnv(name: string): boolean {
 }
 
 const OUT_DIR = process.env.CLEANERS_OUT ?? "/scratch/out";
-// One container hunts several components; without this the filing step cannot tell which
+// One container scans several components; without this the filing step cannot tell which
 // component a finding belongs to, and the dedupe key is component-shaped.
 const COMPONENT = process.env.CLEANERS_COMPONENT ?? "";
 

@@ -10,7 +10,7 @@ spec = importlib.util.spec_from_file_location("goby_cleaners_usage", HERE / "usa
 usage = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(usage)
 
-# These check the rates file this repo commits against the model its hunt actually runs. A
+# These check the rates file this repo commits against the model its scan actually runs. A
 # consuming repo that commits no rates file is covered by the fixture tests below, and must not
 # fail on its absence.
 catalog_only = pytest.mark.skipif(usage.catalog() is None,
@@ -20,7 +20,7 @@ catalog_only = pytest.mark.skipif(usage.catalog() is None,
 @catalog_only
 def test_a_provider_prefixed_model_is_priced():
     """`run.json` stores what was passed (`coral/…`); the catalog is keyed by bare id. Without
-    stripping the prefix the default hunt reported "no bill rates"."""
+    stripping the prefix the default scan reported "no bill rates"."""
     row = usage.rate_for("coral/deepseek-v4.1-flash-fast")
     assert row is not None and (row.get("bill") or {}).get("input_cents_per_m") is not None
 
@@ -38,12 +38,12 @@ def test_an_unknown_model_has_no_rates_rather_than_guessed_ones():
 
 @catalog_only
 def test_every_rate_class_is_stated_so_the_total_is_real():
-    """A rate left out would make the price unknown the moment a hunt uses that token class —
+    """A rate left out would make the price unknown the moment a scan uses that token class —
     which is the bug this file's rates table had on its first day."""
     bill = usage.rate_for("coral/deepseek-v4.1-flash-fast")["bill"]
     for field in ("input_cents_per_m", "output_cents_per_m",
                   "cache_read_cents_per_m", "cache_write_cents_per_m"):
-        assert field in bill, f"{field} not stated, so a hunt that uses it is unpriced"
+        assert field in bill, f"{field} not stated, so a scan that uses it is unpriced"
 
 
 def write_catalog(tmp_path: Path) -> Path:
@@ -94,7 +94,7 @@ def test_the_summary_line_says_unknown_rather_than_printing_a_zero():
     assert "price unknown" in line
 
 
-def hunt_dir(tmp_path, usage_tokens, model="coral/test-model-1"):
+def scan_dir(tmp_path, usage_tokens, model="coral/test-model-1"):
     (tmp_path / "run.json").write_text(json.dumps({"component": "c", "model": model}))
     (tmp_path / "events.jsonl").write_text(json.dumps(
         {"type": "message_end", "message": {"usage": usage_tokens}}) + "\n")
@@ -103,11 +103,11 @@ def hunt_dir(tmp_path, usage_tokens, model="coral/test-model-1"):
 
 def test_an_unstated_rate_makes_the_price_unknown_not_zero(tmp_path, capsys):
     """A rate the catalog omits is not a rate of zero. Pricing cache-read tokens at an invented
-    zero produced a confident total for a hunt whose prompt is mostly cache reads."""
+    zero produced a confident total for a scan whose prompt is mostly cache reads."""
     catalog_path = tmp_path / "models.json"
     catalog_path.write_text(json.dumps({"models": {"test-model-1": {"bill": {
         "input_cents_per_m": 1, "output_cents_per_m": 120, "cache_write_cents_per_m": 8}}}}))
-    out = hunt_dir(tmp_path, {"input": 10, "output": 1000, "cacheRead": 500000, "cacheWrite": 0})
+    out = scan_dir(tmp_path, {"input": 10, "output": 1000, "cacheRead": 500000, "cacheWrite": 0})
     assert usage.main([str(out), "--models-json", str(catalog_path)]) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["billed_usd"] is None
@@ -121,7 +121,7 @@ def test_a_stated_zero_rate_is_used_as_a_decision(tmp_path, capsys):
     catalog_path.write_text(json.dumps({"models": {"test-model-1": {"bill": {
         "input_cents_per_m": 1, "output_cents_per_m": 120,
         "cache_read_cents_per_m": 0, "cache_write_cents_per_m": 8}}}}))
-    out = hunt_dir(tmp_path, {"input": 10, "output": 1000, "cacheRead": 500000, "cacheWrite": 0})
+    out = scan_dir(tmp_path, {"input": 10, "output": 1000, "cacheRead": 500000, "cacheWrite": 0})
     assert usage.main([str(out), "--models-json", str(catalog_path)]) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["billed_usd"] == 0.0012  # (10*1 + 1000*120) / 1e6 cents
@@ -129,11 +129,11 @@ def test_a_stated_zero_rate_is_used_as_a_decision(tmp_path, capsys):
 
 def test_our_own_rates_file_prices_the_default_model(tmp_path, capsys):
     """`.goby/models.json` is what the entrypoint adopts; if it stops matching the default
-    model name, every hunt silently goes back to "price unknown"."""
+    model name, every scan silently goes back to "price unknown"."""
     path = Path(__file__).resolve().parents[1] / ".goby" / "models.json"
     if not path.is_file():
         pytest.skip("this checkout has no committed rates file")
-    out = hunt_dir(tmp_path, {"input": 1, "output": 1, "cacheRead": 1, "cacheWrite": 1},
+    out = scan_dir(tmp_path, {"input": 1, "output": 1, "cacheRead": 1, "cacheWrite": 1},
                    model="coral/deepseek-v4.1-flash-fast")
     assert usage.main([str(out), "--models-json", str(path)]) == 0
     summary = json.loads(capsys.readouterr().out)

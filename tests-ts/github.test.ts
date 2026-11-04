@@ -75,50 +75,6 @@ describe('GitHubClient transport and pinned reads', () => {
     await expect(fake(() => ({})).client.fetch_pr_meta(1)).rejects.toMatchObject({ code: 200 });
   });
 
-  test('file content decodes UTF-8 and quotes both ref and path', async () => {
-    const { client, calls } = fake(() => ({ content: Buffer.from('héllo\n').toString('base64') }));
-    expect(await client.fetch_file('head/#1', 'docs/A & B.md')).toBe('héllo\n');
-    const url = new URL(calls[0]!.url);
-    expect(url.pathname).toBe('/repos/owner/repo/contents/docs/A%20%26%20B.md');
-    expect(url.searchParams.get('ref')).toBe('head/#1');
-  });
-
-  test('missing files/listings return null, other HTTP errors propagate', async () => {
-    for (const status of [404, 403, 500]) {
-      const { client } = fake(() => new Response('no', { status }));
-      for (const read of [() => client.fetch_file('head', 'x'), () => client.fetch_dir_listing('head', 'x')]) {
-        if (status === 404) expect(await read()).toBeNull();
-        else await expect(read()).rejects.toMatchObject({ code: status });
-      }
-    }
-    expect(await fake(() => []).client.fetch_file('head', 'dir')).toBeNull();
-    expect(await fake(() => ({ type: 'file' })).client.fetch_dir_listing('head', 'x')).toBeNull();
-  });
-
-  test('large files emit a note instead of silently providing empty context', async () => {
-    const original = console.error;
-    const notes: string[] = [];
-    console.error = (...args: any[]) => { notes.push(args.join(' ')); };
-    try {
-      expect(await fake(() => ({ size: 1_500_000 })).client.fetch_file('head', 'large')).toBeNull();
-    } finally { console.error = original; }
-    expect(notes).toEqual(['note: large at head is 1500000 bytes (>1MB); skipping as context']);
-  });
-
-  test('directory listings preserve the 1000-entry cap for caller disclosure', async () => {
-    const { client, calls } = fake(() => [...Array.from({ length: 1000 }, (_, i) => ({ name: String(i), type: 'file' })), null, 'bad']);
-    const entries = await client.fetch_dir_listing('head', '');
-    expect(entries).toHaveLength(1000);
-    expect(entries![0]).toEqual({ name: '0', type: 'file' });
-    expect(new URL(calls[0]!.url).pathname).toBe('/repos/owner/repo/contents/');
-  });
-
-  test('tree paths are sorted blobs with truncation flag exposed', async () => {
-    const { client, calls } = fake(() => ({ tree: [{ path: 'z', type: 'blob' }, { path: 'dir', type: 'tree' }, null, { path: 'a', type: 'blob' }], truncated: true }));
-    expect(await client.fetch_tree_paths('head/ref')).toEqual([['a', 'z'], true]);
-    expect(calls[0]!.url).toEndWith('/git/trees/head%2Fref?recursive=1');
-  });
-
   test('history is bounded and pinned, and fields default to empty strings', async () => {
     const { client, calls } = fake(() => [{ sha: 'abc', commit: { author: { date: 'date' }, message: 'message' } }, {}, null]);
     expect(await client.fetch_path_history('A & B.md', 'head/#', 3)).toEqual([{ sha: 'abc', date: 'date', message: 'message' }, { sha: '', date: '', message: '' }]);
@@ -127,12 +83,6 @@ describe('GitHubClient transport and pinned reads', () => {
     await client.fetch_path_history('x', 'head');
     expect(new URL(calls[1]!.url).searchParams.get('per_page')).toBe('10');
     expect(await fake(() => ({})).client.fetch_path_history('x', 'head')).toEqual([]);
-  });
-
-  test('repo context is head-pinned, ordered and truncated per file', async () => {
-    const { client, calls } = fake(() => ({ content: Buffer.from('🐟'.repeat(20001)).toString('base64') }));
-    expect(await client.fetch_repo_context('immutable')).toBe(`### CLAUDE.md\n\n${'🐟'.repeat(20000)}\n\n### AGENTS.md\n\n${'🐟'.repeat(20000)}`);
-    expect(calls.map(c => new URL(c.url).searchParams.get('ref'))).toEqual(['immutable', 'immutable']);
   });
 
   test('latest matching status wins, not any historical success', async () => {
@@ -237,77 +187,5 @@ describe('thread state and completeness', () => {
     expect(client.botLogins).toEqual(['my-bot']);
     expect(await client.fetch_open_own_threads(1)).toHaveLength(1);
     expect(await new GitHubClient('owner/repo', 't', { fetch: fetcher, botLogins: [] }).fetch_open_own_threads(1)).toEqual([]);
-  });
-});
-
-describe('summaries, head dedupe and minimization', () => {
-  test('summaries paginate, filter author and retain minimized placeholders and mode', async () => {
-    const { client, calls } = fake((_c, i) => envelope('reviews', i === 0 ? connection([
-      review(), review({ id: 'human', author: { login: 'human' } }),
-      review({ id: 'agent', body: '**Goby Review** — agentic review\n<!-- goby head=beef -->' }),
-    ], true, 'c1') : connection([review({ id: 'R2', body: 'placeholder', isMinimized: true })])));
-    expect(await client.fetch_own_summaries(1)).toEqual([[
-      { node_id: 'R1', sha: 'deadbeef00', minimized: false, agent: false },
-      { node_id: 'agent', sha: 'beef', minimized: false, agent: true },
-      { node_id: 'R2', sha: '', minimized: true, agent: false },
-    ], true]);
-    expect(calls.map(c => c.payload.variables.cursor)).toEqual([null, 'c1']);
-  });
-
-  test('summary pagination caps at five 100-review pages and reports incomplete', async () => {
-    const { client, calls } = fake((_c, i) => envelope('reviews', connection(Array.from({ length: 100 }, () => review()), true, `c${i}`)));
-    const [records, complete] = await client.fetch_own_summaries(1);
-    expect(records).toHaveLength(500);
-    expect(calls).toHaveLength(5);
-    expect(complete).toBe(false);
-  });
-
-  test('unknown summary pages and invalid cursors fail closed', async () => {
-    for (const data of [{}, envelope('reviews', {}), envelope('reviews', connection([], 'false')), envelope('reviews', connection([null])), envelope('reviews', connection([review({ isMinimized: undefined })])), envelope('reviews', connection([], true, null))]) {
-      expect((await fake(() => data).client.fetch_own_summaries(1))[1]).toBe(false);
-    }
-    const stuck = fake(() => envelope('reviews', connection([], true, 'same')));
-    expect((await stuck.client.fetch_own_summaries(1))[1]).toBe(false);
-    expect(stuck.calls).toHaveLength(2);
-  });
-
-  test('only fully resolved raised rounds minimize; clean, live, agentic and minimized rounds stay', () => {
-    const summaries = ['resolved', 'open', 'clean', 'agent', 'minimized', ''].map(sha => ({ node_id: sha, sha, minimized: sha === 'minimized', agent: sha === 'agent' }));
-    const records = summaries.map(s => ({ sha: s.sha }));
-    expect(summaries_to_minimize(summaries, [{ sha: 'open' }], records.filter(t => t.sha !== 'clean')).map(s => s.sha)).toEqual(['resolved']);
-  });
-
-  test('minimizeComment uses RESOLVED and propagates GraphQL errors', async () => {
-    const { client, calls } = fake(() => ({ data: { minimizeComment: { minimizedComment: { isMinimized: true } } } }));
-    expect(await client.minimize_comment('R1')).toBe(true);
-    expect(calls[0]!.payload.variables).toEqual({ id: 'R1' });
-    expect(calls[0]!.payload.query).toContain('classifier: RESOLVED');
-    expect(await fake(() => ({ data: {} })).client.minimize_comment('R1')).toBe(false);
-    await expect(fake(() => ({ errors: [{ message: 'forbidden' }] })).client.minimize_comment('R1')).rejects.toMatchObject({ code: 200 });
-  });
-
-  test('head guard accepts legacy/versioned markers and minimized commit fallback only for bot', async () => {
-    for (const body of ['<!-- goby head=0123456789 -->', '<!-- goby head=0123456789 v=0.2 -->', 'placeholder']) {
-      const { client } = fake(() => [{ user: { login: 'github-actions[bot]' }, body, commit_id: '0123456789abcdef' }]);
-      expect(await client.head_already_reviewed(1, '0123456789abcdef')).toBe(true);
-      expect(await client.head_already_reviewed(1, 'different')).toBe(false);
-      expect(await client.head_already_reviewed(1, '0123456789abcdef', true)).toBe(false);
-    }
-    expect(await fake(() => [{ user: { login: 'human' }, commit_id: 'head' }]).client.head_already_reviewed(1, 'head')).toBe(false);
-  });
-
-  test('agent mode is anchored to header, not findings prose; head prefix requires delimiter', async () => {
-    const { client } = fake(() => [{ user: { login: 'github-actions' }, body: '**Goby Review** — one-turn review\nmentions agentic review\n<!-- goby head=0123456789 v=1 -->' }]);
-    expect(await client.head_already_reviewed(1, '0123456789abcdef', true)).toBe(false);
-    const agent = fake(() => [{ user: { login: 'github-actions' }, body: '**Goby Review** — agentic review (v1)\n<!-- goby head=0123456789 -->' }]);
-    expect(await agent.client.head_already_reviewed(1, '0123456789abcdef', true)).toBe(true);
-    expect(await fake(() => [{ user: { login: 'github-actions' }, body: '<!-- goby head=01234567890 -->' }]).client.head_already_reviewed(1, '0123456789abcdef')).toBe(false);
-  });
-
-  test('head guard follows reviews but is bounded at twenty pages', async () => {
-    const { client, calls } = fake(() => Array.from({ length: 100 }, () => ({ user: { login: 'human' } })));
-    expect(await client.head_already_reviewed(1, 'head')).toBe(false);
-    expect(calls).toHaveLength(20);
-    expect(calls.at(-1)!.url).toEndWith('reviews?per_page=100&page=20');
   });
 });

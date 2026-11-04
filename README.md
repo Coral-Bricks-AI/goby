@@ -31,7 +31,7 @@ Licensed under [Apache-2.0](LICENSE).
 |---|---|
 | `base/` | `goby-base` image: pi, git, ripgrep, python3, the key proxy, the secret conventions |
 | `review/` | reviewer image: `FROM goby-base`, the prompt, the emit tool, the entrypoint |
-| `cleaners/` | the post-merge hunter, its own image, its own HUNT.md contract |
+| `cleaners/` | the post-merge cleaner, its own image, its own CLEANER.md contract |
 | `src/core/contract.ts` | findings shape, parser, retraction, dedupe, re-derivation matching |
 | `src/core/selection.ts` | which findings may be posted, and which are withheld and why |
 | `src/core/gate.ts`, `verdict.ts`, `rules.ts` | receipts, the model-free recheck, and the rules |
@@ -64,4 +64,4 @@ a stub upstream, publication against a stubbed GitHub, the gate over every Boole
 its facts, and the workflow files' own invariants (digest pins, no `pull_request_target`).
 
 Goby never merges itself. Before it replaces a hosted reviewer it needs a historical-PR quality
-comparison — that is unexecuted, not done. See [TODO](TODO.md).
+comparison — that is unexecuted, not done. The open work lives in the issue tracker.

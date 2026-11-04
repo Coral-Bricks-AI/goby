@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""File a hunt's findings as GitHub issues — the last step of every hunter task.
+"""File a scan's findings as GitHub issues — the last step of every cleaner task.
 
     python3 post_findings.py --findings /workspace/out/findings.jsonl \
         --repo <owner>/<repo> --sha <sha> \
@@ -12,7 +12,7 @@ One issue per confirmed finding. Three gates, in order:
    defect from coming back every week.
 2. **`issues_per_day`** — what a human was handed in the last 24 hours, across the repo. A
    `high` finding is exempt, because the cap exists to bound noise, not to bury a real one.
-3. **Nothing else.** There is no digest, no weekly bucket, and no judge: the hunter already
+3. **Nothing else.** There is no digest, no weekly bucket, and no judge: the cleaner already
    proved the defect with two runs, and `report_finding` refuses a claim without them.
 
 Everything that talks to GitHub is one function (`_http`), so the whole decision path is
@@ -34,7 +34,7 @@ from pathlib import Path
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 LABEL = "goby-cleaners"
 # The marker identifies a filing by its fields, not by the name that wrote it: a repo can be
-# hunted by two producers at once, and a rename must not lose the dedupe history. Parsing only
+# scanned by two producers at once, and a rename must not lose the dedupe history. Parsing only
 # our own prefix made every legacy issue invisible to `decide` — it saw no fingerprints and no
 # daily budget, and filed the same defect again.
 MARKER = re.compile(
@@ -70,9 +70,10 @@ def fingerprint(component: str, finding: dict) -> str:
 
 
 def marker(component: str, finding: dict, fp: str, severity: str) -> str:
-    # The producer name here is decoration now; the fields are what `decide` reads. It follows
-    # the active label so an issue's marker and its label agree while a repo runs two producers.
-    return (f"<!-- {issue_label()} fp={fp} component={component} "
+    # The producer token is fixed, not the active label: a label is a repository's own convention
+    # and may contain characters the marker grammar rejects (`cleaners/goby` did exactly that),
+    # which made the issue a run had just filed invisible to its own next dedupe.
+    return (f"<!-- {DEFAULT_PRODUCER} fp={fp} component={component} "
             f"severity={severity} -->")
 
 
@@ -91,7 +92,7 @@ def decide(findings: list[dict], existing: list[dict], *,
            issues_per_day: int, now: datetime | None = None) -> tuple[list[dict], list[dict]]:
     """Split findings into (file, skip). `existing` is the repo's `goby-cleaners` issues.
 
-    Order matters: a duplicate is dropped before it can consume budget, so a re-hunt of the
+    Order matters: a duplicate is dropped before it can consume budget, so a re-scan of the
     same component does not starve a real finding by spending the day's allowance on things
     a human already has.
     """
@@ -174,7 +175,7 @@ def render_issue(component: str, item: dict, sha: str) -> tuple[str, str]:
         "",
         f"**Expected:** {f.get('expected', '(none given)')}",
         "",
-        "**Reproduced by the hunter with:**",
+        "**Reproduced by the cleaner with:**",
         "",
         "```",
         str(f.get("repro_command") or "").strip(),
@@ -198,9 +199,9 @@ def render_issue(component: str, item: dict, sha: str) -> tuple[str, str]:
         str(f.get("flip_output") or "").strip()[:2000],
         "```",
         "",
-        f"_A hunter found and reproduced this. If it is **not** a defect, close it and add a "
-        f"line to `{component}/HUNT.md` under `Known non-findings` — that file is the "
-        f"hunter's brief, and a known non-finding stops being reported._",
+        f"_A cleaner found and reproduced this. If it is **not** a defect, close it and add a "
+        f"line to `{component}/CLEANER.md` under `Known non-findings` — that file is the "
+        f"cleaner's brief, and a known non-finding stops being reported._",
         "",
     ])
     return title, body
@@ -323,7 +324,7 @@ def main(argv: list[str]) -> int:
             if line.strip():
                 findings.append(json.loads(line))
     # The component decides the fingerprint and the issue title. A finding without one means
-    # the extension was not told which component it is hunting, which would file a defect
+    # the extension was not told which component it is scanning, which would file a defect
     # under the wrong owner — fail instead of guessing.
     missing = [f.get("title") for f in findings if not f.get("component")]
     if missing:

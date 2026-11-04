@@ -163,10 +163,12 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
     complete, agent: true, unthreaded: picked.overflow.length + picked.dropped.cap,
     finding_ids: picked.inline.map(f => f.fid),
   };
-  const toolCalls = Number((records.find(r => typeof r.tool_calls === 'number')?.tool_calls) ?? 0);
+  // Every record carries the running count; the last one is the total.
+  const toolCalls = records.reduce((n, record) => Math.max(n, Number(record.tool_calls ?? 0)), 0);
+  const elapsedS = Number(optionalEnv('GOBY_ELAPSED_S') ?? 0);
   const summary = build_summary(picked.inline, picked.overflow, picked.withheld,
     {
-      model: job.model, head: job.head, base: job.base, diffLines: lineCount(diff), elapsedS: 0, toolCalls,
+      model: job.model, head: job.head, base: job.base, diffLines: lineCount(diff), elapsedS, toolCalls,
       droppedPaths: picked.dropped.paths, droppedCap: picked.dropped.cap, droppedDupe: picked.dropped.dupe,
       droppedResolved: picked.dropped.resolved, droppedRetracted: picked.dropped.retracted,
       incomplete: complete ? null : incomplete.join(' '),
