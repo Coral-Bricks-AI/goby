@@ -13,6 +13,11 @@ your firewall — no private database, no internal service. For that, see
 Copy [`cleaners-post-merge.yml`](../.github/workflows/cleaners-post-merge.yml) to
 `.github/workflows/` in your repo. It already runs on `push` to `main`.
 
+Copy, rather than `uses:` the reusable workflow: calling it across repositories is what
+`workflow_call` is for, but some organizations restrict it, and the failure is a run that ends in
+`startup_failure` before any job is scheduled — with nothing in the log to explain it. If your
+`uses:` call dies like that, copy the file; it is the same four lines.
+
 ## 2. The model key
 
 Settings → Secrets and variables → Actions → `CORALBRICKS_API_KEY`. Any provider works — set
