@@ -12,7 +12,6 @@ import { resolve } from 'node:path';
 import { refreshGate } from '../src/core/gate.ts';
 import { validSha } from '../src/core/verdict.ts';
 import { GitHubClient } from '../src/platforms/github.ts';
-import { repoFromRemote } from '../src/core/review.ts';
 
 async function main(): Promise<number> {
   const { values } = parseArgs({
@@ -24,7 +23,7 @@ async function main(): Promise<number> {
   });
   const pr = Number(values.pr);
   if (!Number.isSafeInteger(pr) || pr < 1) throw new Error('--pr must be a positive integer');
-  const repo = (values.repo as string | undefined) ?? process.env.GITHUB_REPOSITORY ?? repoFromRemote();
+  const repo = (values.repo as string | undefined) ?? process.env.GITHUB_REPOSITORY;
   const token = (values.token as string | undefined) ?? process.env.GITHUB_TOKEN;
   if (!repo || !token) throw new Error('--repo and --token (or GITHUB_REPOSITORY and GITHUB_TOKEN) are required');
   const head = values['expected-head'] as string | undefined;

@@ -1,5 +1,12 @@
-# Example only: copy to the target repo and replace REVIEWED_COMMIT_SHA.
-# Must exist on the default branch. No PR checkout or artifact download.
+# Goby gate recheck — copy into `.github/workflows/` and pin the image digest.
+#
+# The gate answers one question: is the evidence on this pull request still sufficient for the
+# current head? It makes no model call, needs no key, and clones nothing — so it is safe to run
+# whenever CI finishes, and cheap enough to do so on every completion.
+#
+# Must exist on the default branch: a workflow_run handoff has to come from trusted code.
+# `pull_request_target` is not used here and must not be: nothing from the pull request is read.
+
 name: Goby gate recheck
 
 on:
@@ -19,6 +26,7 @@ permissions:
   contents: read
   pull-requests: read
   statuses: write
+  packages: read
 
 jobs:
   gate:
@@ -26,39 +34,19 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    container:
+      image: ghcr.io/coral-bricks-ai/goby-review@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    env:
+      # Which pull request this is about comes from the event file, resolved in the image rather
+      # than by a script inlined here. See src/core/gateEvent.ts.
+      GOBY_MODE: gate
+      GOBY_REPO: ${{ github.repository }}
+      GOBY_EVENT_FILE: ${{ github.event_path }}
+      GOBY_PR: ${{ inputs.pr }}
+      GOBY_HEAD: ${{ inputs.head }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Read the event's PR identity (not executable PR content)
-        id: target
-        shell: bash
-        env:
-          INPUT_PR: ${{ inputs.pr }}
-          INPUT_HEAD: ${{ inputs.head }}
-        run: |
-          node --input-type=module <<'JS'
-          import { readFileSync, appendFileSync } from 'node:fs';
-          const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-          let pr, head;
-          if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch') {
-            pr = process.env.INPUT_PR;
-            head = process.env.INPUT_HEAD;
-          } else {
-            const prs = event.workflow_run?.pull_requests ?? [];
-            if (prs.length !== 1) {
-              console.log('No unambiguous PR identity; no gate will be changed');
-              process.exit(0);
-            }
-            pr = String(prs[0].number);
-            head = prs[0].head.sha;
-          }
-          if (!/^[1-9][0-9]*$/.test(pr ?? '') || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head ?? '')) {
-            throw new Error('Invalid PR number or head SHA');
-          }
-          appendFileSync(process.env.GITHUB_OUTPUT, `pr=${pr}\nhead=${head}\n`);
-          JS
-      - uses: Coral-Bricks-AI/goby@REVIEWED_COMMIT_SHA
-        if: steps.target.outputs.pr != ''
-        with:
-          mode: gate
-          pr-number: ${{ steps.target.outputs.pr }}
-          expected-head: ${{ steps.target.outputs.head }}
+      - name: Recheck eligibility
+        run: /opt/goby/entrypoint.sh

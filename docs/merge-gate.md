@@ -27,7 +27,7 @@ not parsed from model claims about safety.
 
 `src/core/rules.ts` defines the gate, turn budget, and review lifecycle with
 `gdp-wired`. Production executes these compiled rules directly.
-`tests-ts/prove.ts` kernel-checks 19 laws, and tests exercise all 1024 Boolean
+`tests-ts/prove.ts` kernel-checks the gate and lifecycle laws, and tests exercise all 1024 Boolean
 gate inputs plus an unsafe completion-only mutant. This proves the rules,
 **not** GitHub authorization, model accuracy, or external API freshness.
 
@@ -41,8 +41,8 @@ head can be rechecked without a model call:
 bun run scripts/gate.ts --repo owner/name --pr 123 --expected-head <full-head-sha>
 ```
 
-`mode: gate`, `pr-number`, and `expected-head` expose the same operation in
-the action; no provider key is needed. Deleted threads are not resolutions.
+The same operation is `GOBY_MODE=gate` in the reviewer image — no clone, no model, no key —
+and it is what [the example gate workflow](../examples/workflows/goby-gate.yml) runs. Deleted threads are not resolutions.
 Summary-only or capped findings require a fixed/new head and review; there is
 no implicit "approve anyway" override. Old unstructured reviews cannot mint
 new eligibility; they need a review with a current receipt.
@@ -53,9 +53,9 @@ Events generated with `GITHUB_TOKEN`, including commit statuses, generally
 do not launch another Actions workflow. **Do not rely on a `status` trigger
 for Goby's default token.**
 
-Copy [the example gate workflow](../examples/workflows/goby-gate.yml), replace
-`REVIEWED_COMMIT_SHA` with the same full Goby SHA as the review workflow, and
-commit it to the default branch. It uses:
+Copy [the example gate workflow](../examples/workflows/goby-gate.yml), replace the
+image digest with the same one the review workflow pins, and commit it to the default
+branch. It uses:
 
 - `workflow_run` after **Goby review** completes, whether the job passes or
   is blocked;

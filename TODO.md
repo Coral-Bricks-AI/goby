@@ -3,7 +3,7 @@
 Goby is two halves of one crew:
 
 - **Review / Gate** — pre-merge. Reads a pull request before it merges, posts bugs on the exact
-  lines, and keeps review completion separate from merge eligibility (`action.yml`,
+  lines, and keeps review completion separate from merge eligibility (`review/`,
   `docs/merge-gate.md`, `docs/trust-model.md`).
 - **Cleaners** — post-merge. A push to `main` hunts every component the push touched, reproduces
   what it suspects, and files one issue per defect it can prove (`cleaners/`, docs under

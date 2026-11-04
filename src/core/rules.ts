@@ -1,4 +1,4 @@
-import {all, bool, fun, nat, oneOf, proveDecision, proveSteps, rule, when} from 'gdp-wired';
+import {all, bool, fun, oneOf, proveDecision, proveSteps, rule, when} from 'gdp-wired';
 
 export const gateFields = [
   'receipt_valid', 'same_head', 'complete', 'agent', 'no_unthreaded',
@@ -14,54 +14,6 @@ export const gateRule = fun('Goby review eligibility').inputs(gateInputs).return
 export function gateAllowed(facts: GateFacts): boolean {
   if (gateFields.some(key => typeof facts[key] !== 'boolean')) return false;
   return gateRule.run(facts).allowed === 1;
-}
-
-export const turnRule = rule('Goby agent turn admission')
-  .params({limit: nat, wall: nat})
-  .pre(({limit, wall}) => limit.atLeast(1).and(wall.atLeast(1)))
-  .inputs({elapsed: nat})
-  .state({regular: 0, finals: 0, decision: 0})
-  .flags(({regular, finals, limit, wall, elapsed}) => ({
-    admitRegular: finals.eq(0).and(regular.lt(limit), regular.eq(0).or(elapsed.lt(wall))),
-  }))
-  .step(({regular, finals, admitRegular}) => ({
-    regular: regular.plus(when(admitRegular, 1, 0)),
-    finals: finals.plus(when(finals.eq(0).and(admitRegular.not()), 1, 0)),
-    decision: when(admitRegular, 1, when(finals.eq(0), 2, 0)),
-  }));
-
-export const turnLaws = [
-  turnRule.law('Regular calls never exceed the configured limit', ({regular, limit}) => regular.atMost(limit)),
-  turnRule.law('At most one final call', ({finals}) => finals.atMost(1)),
-  turnRule.law('Total calls never exceed limit plus one', ({regular, finals, limit}) => regular.plus(finals).atMost(limit.plus(1))),
-];
-export const turnSteps = [
-  turnRule.stepLaw('A final closes admission permanently', ({finals}, after) =>
-    finals.eq(1).implies(after.decision.eq(0))),
-  turnRule.stepLaw('No regular turn after the deadline except the first', ({regular, elapsed, wall}, after) =>
-    regular.gt(0).and(elapsed.atLeast(wall)).implies(after.decision.eq(1).not())),
-];
-
-export type TurnAdmission = 'regular' | 'final' | 'stop';
-export class TurnBudget {
-  private readonly runtime = turnRule.compiled();
-  private readonly params;
-  private state;
-  constructor(limit: number, wallMs: number) {
-    if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isFinite(wallMs) || wallMs <= 0 || wallMs > Number.MAX_SAFE_INTEGER) {
-      throw new Error('Turn limit must be a positive integer and wall budget positive and finite');
-    }
-    this.params = turnRule.encodeParams({limit, wall: Math.ceil(wallMs)});
-    this.state = this.runtime.init(this.params);
-  }
-  take(elapsedMs: number): TurnAdmission {
-    if (!Number.isFinite(elapsedMs) || elapsedMs < 0 || elapsedMs > Number.MAX_SAFE_INTEGER) throw new Error('Invalid elapsed time');
-    this.state = this.runtime.step(this.params, this.state, turnRule.encodeInput({elapsed: Math.floor(elapsedMs)}));
-    const decision = turnRule.decode(this.state).decision;
-    if (decision === 1) return 'regular';
-    if (decision === 2) return 'final';
-    return 'stop';
-  }
 }
 
 export type ReviewEvent = 'fetched' | 'started' | 'complete' | 'incomplete' | 'skipped' | 'error' | 'superseded' | 'reused';
@@ -104,7 +56,7 @@ export class ReviewLifecycle {
 }
 
 /** Run in CI; no theorem search or external solver at review time. */
-export function provePolicies(): {gateLaws: number; turnLaws: number; lifecycleLaws: number; checked: true} {
+export function provePolicies(): {gateLaws: number; lifecycleLaws: number; checked: true} {
   for (const key of gateFields) {
     const proof = proveDecision(gateRule.law(`Eligibility requires ${key}`, () => [],
       (out, input) => out.allowed.eq(1).implies(input[key])));
@@ -113,9 +65,7 @@ export function provePolicies(): {gateLaws: number; turnLaws: number; lifecycleL
   const positive = proveDecision(gateRule.law('All established facts suffice', () => [],
     (out, input) => all(...gateFields.map(key => input[key])).implies(out.allowed.eq(1))));
   if (!positive.proven || !positive.checked) throw new Error('Unproven positive gate law');
-  const budget = proveSteps(turnRule, turnLaws, turnSteps, {search: false});
-  if (!budget.proven || !budget.checked) throw new Error(`Unproven turn budget: ${JSON.stringify(budget)}`);
   const lifecycle = proveSteps(reviewRule, reviewLaws, reviewSteps, {search: false});
   if (!lifecycle.proven || !lifecycle.checked) throw new Error(`Unproven review lifecycle: ${JSON.stringify(lifecycle)}`);
-  return {gateLaws: gateFields.length + 1, turnLaws: turnLaws.length + turnSteps.length, lifecycleLaws: reviewLaws.length + reviewSteps.length, checked: true};
+  return {gateLaws: gateFields.length + 1, lifecycleLaws: reviewLaws.length + reviewSteps.length, checked: true};
 }

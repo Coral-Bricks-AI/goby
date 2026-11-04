@@ -1,74 +1,67 @@
 # Quickstart
 
-## Build trusted source
+## Install
+
+Two files, one secret, one branch-protection rule.
 
 ```sh
-git clone https://github.com/Coral-Bricks-AI/goby.git
-cd goby
-bun install --frozen-lockfile --ignore-scripts
-bun run build
-git rev-parse HEAD  # record this reviewed revision's full SHA
+# 1. the reviewer
+cp goby/review/workflow.yml .github/workflows/goby-review.yml
+# 2. the gate recheck (workflow_run handoff; must live on the default branch)
+cp goby/examples/workflows/goby-gate.yml .github/workflows/goby-gate.yml
 ```
 
-The bundle runs on Node 20+. Bun is needed for source builds, not for running
-the finished CLI. `bun link` optionally exposes the local `goby` command.
-From your target repository, copy the workflow template and pin it:
+In both files, replace the image digest with the one you reviewed — `ghcr.io/coral-bricks-ai/goby-review@sha256:…`,
+printed by the image build. A tag would be a movable handle over executable code.
 
-```sh
-cp /path/to/goby/examples/workflows/goby-review.yml .github/workflows/
-# replace <GOBY_COMMIT_SHA> with the full commit you reviewed
-git ls-remote https://github.com/Coral-Bricks-AI/goby.git refs/heads/main
-```
+Then:
 
-Add the `CORALBRICKS_API_KEY` repository secret and commit the workflow. For the OpenAI
-provider, change `provider:` to `openai` and use `OPENAI_API_KEY` instead. No PyPI upload,
-npm publication, or `v1` tag is required.
+3. Add `CORALBRICKS_API_KEY` as a repository secret. For another provider, change `GOBY_PROVIDER`
+   / `GOBY_MODEL` and use that provider's secret.
+4. Require **Goby Gate** and CI in branch protection — not Goby Review.
 
-Upgrading is a one-line edit to the SHA. A tag would be a movable handle over executable code,
-which is why the pin is a commit.
-
-The action installs pinned build dependencies from its lockfile and builds
-its own trusted revision. Never add a checkout of the PR or install PR
-dependencies. The copied workflow handles same-repository PRs only;
-see the [trust model](trust-model.md) for forks.
+The reviewer clones the pull request and runs in a container; the gate recheck runs the same image
+with no model call. Neither uses `pull_request_target`, and neither checks out anything into the
+runner.
 
 ## Two statuses
 
-- **Goby Review**: execution telemetry. Success does not imply no bugs.
-- **Goby Gate**: fail-closed eligibility for the exact head, requiring a
-  complete agentic review bound to the head/base/diff, successful latest execution, accounted-for
-  finding threads, no open findings, and complete GitHub data.
+- **Goby Review** — execution telemetry. Success does not imply no bugs.
+- **Goby Gate** — fail-closed eligibility for the exact head: a complete review bound to
+  head/base/diff, accounted finding threads, no open findings, complete GitHub data.
 
-Require **Goby Gate** and CI in branch protection. The action fails on a
-blocked gate by default. `fail-on-blocked: "false"` makes only the review job
-advisory; it does not turn a blocked gate green. `mode: gate` always fails closed.
+## Run it locally
 
-## Review and refresh
+Against a real pull request, posting nothing:
 
 ```sh
-export CORALBRICKS_API_KEY=... GITHUB_TOKEN=...
-bun run scripts/replay.ts --diff change.diff --repo owner/name --head-sha <sha>
+export GITHUB_TOKEN=... CORALBRICKS_API_KEY=...
+docker build -t goby-base base
+docker build -t goby-review -f review/Dockerfile .
+docker run --rm -e GITHUB_TOKEN -e CORALBRICKS_API_KEY \
+  -e GOBY_REPO=owner/name -e GOBY_PR=123 \
+  -e GOBY_HEAD=$(gh pr view 123 --json headRefOid -q .headRefOid) \
+  -e GOBY_BASE=$(gh pr view 123 --json baseRefOid -q .baseRefOid) \
+  -e GOBY_MODEL=deepseek-v4.1-flash-fast \
+  goby-review
+```
+
+Refresh the gate without a model call:
+
+```sh
 bun run scripts/gate.ts --pr 123 --expected-head <full-pr-head-sha>
 ```
 
-The gate needs no model key or call. It rechecks existing evidence and thread resolution;
-deleted threads are not resolutions. budget-exhausted/truncated reviews are
-retried on the next review run without that flag.
+Deleted threads are not resolutions. An incomplete review is retried on the next push, because its
+receipt says so. Exit codes: gate `0` pass, `2` blocked, `1` error.
 
-Exit codes: `review` preserves execution-only success unless
-`--fail-on-blocked` is set. With that flag, 2 means blocked and 1 means error.
-`gate` returns 0/2/1 for pass/block/error. Dry-run never writes GitHub state.
-
-Use the [workflow_run handoff](merge-gate.md), not a `status` trigger, when
-using the default GitHub token. Neither the action nor the handoff merges code.
-
-## Historical comparison
+## Develop
 
 ```sh
-bun run scripts/replay.ts --diff change.diff --repo owner/name --head-sha <sha> --pr-hint 123
+bun install --frozen-lockfile --ignore-scripts
+bun run check   # typecheck → kernel-checked policies → Node build → offline tests
 ```
 
-With `GITHUB_TOKEN`, tools and context read the pinned revision. PR intent is
-the description as it stands now. Keep those inputs fixed when comparing
-models. Without `--agent`, the local diff-only path uses one chat completion
-and does not satisfy the merge gate's code-reading requirement.
+The tests are offline: the contract corpus, the diff and line-positioning rules, the key proxy
+against a stub upstream, the publisher against a stubbed GitHub, and the gate over every Boolean
+combination of its facts.

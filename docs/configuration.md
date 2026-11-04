@@ -1,74 +1,67 @@
 # Configuration
 
-The action takes its configuration as inputs (`action.yml`), which reach the entrypoint as
-environment variables. The two local scripts take flags, which override the same environment
-values, which override provider defaults.
+Everything is an environment variable, because the only caller is a workflow. The two local
+scripts take flags that override the same values.
+
+## The job
+
+| variable | meaning |
+|---|---|
+| `GOBY_MODE` | `review` (default) or `gate` — gate rechecks eligibility only |
+| `GOBY_REPO` | `owner/name` under review |
+| `GOBY_PR` | pull request number |
+| `GOBY_HEAD` | full commit SHA under review |
+| `GOBY_BASE` | full base commit SHA; the diff is `merge-base(base, head)..head` when one exists |
+| `GITHUB_TOKEN` | the workflow token; `pull-requests: write`, `statuses: write`, `contents: read` |
 
 ## Provider
 
-| action input | script flag | environment | meaning |
-|---|---|---|---|
-| `provider` | `--provider` | `GOBY_PROVIDER` | `coral` (default) or `openai` |
-| `model` | `--model` | `GOBY_MODEL` | model name; otherwise provider default |
-| `base-url` | `--base-url` | `GOBY_BASE_URL` | override endpoint |
-| — | — | `GOBY_API_KEY` | key, ahead of the provider's own variable |
+| variable | meaning |
+|---|---|
+| `GOBY_PROVIDER` | `coral` (default), `anthropic` or `openai` — picks the upstream the proxy forwards to |
+| `GOBY_MODEL` | model name |
+| `CORALBRICKS_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | the key for that provider |
 
-Key lookup: `GOBY_API_KEY`, then the provider's variable
-(`CORALBRICKS_API_KEY` or `OPENAI_API_KEY`), then `~/.config/goby/api_key`. Agent mode requires
-the Responses API; the one-turn path speaks chat completions. Providers live in
-`src/providers/index.ts`.
+The key never reaches the reviewer. The entrypoint writes it to a root-only file, the proxy reads
+it, and the agent's `models.json` holds a dummy value and a loopback base URL. One provider per run:
+the proxy has one upstream.
 
-## Review
+## Bounds
 
-| action input | script flag | default |
+| variable | default | meaning |
 |---|---|---|
-| — | `--no-agent` | agent on in both; the flag turns it off for a one-turn replay |
-| `max-tool-turns` | `--max-tool-turns` | 25 |
-| `wall-timeout` | `--wall-timeout` | 1200 seconds |
-| — | `--max-diff-lines` | 10000 |
-| — | `--max-findings` | 30 |
-| `expected-head` | `--expected-head` | unset; refuse stale workflow heads when set |
-| `fail-on-blocked` | — | on in the action |
+| `GOBY_MAX_TOOL_CALLS` | 80 | tool calls one review may make; enforced in the emit extension, not the prompt |
+| `GOBY_MAX_DIFF_LINES` | 10000 | larger diffs are skipped: the review says so and the gate fails closed |
+| `GOBY_MAX_FINDINGS` | 30 | findings posted, highest severity first; the rest are counted in the summary |
+| job `timeout-minutes` | 30 | the outer backstop |
 
-The runtime executes gdp-wired turn admission: up to the configured regular
-turns, followed by at most one forced final turn. Budget exhaustion and
-parseable output truncation can preserve useful findings but fail the gate.
-Oversized diffs skip the model and fail the gate. Malformed answers are errors.
+## What the reviewer is given
 
-`grep` reads files in batches of 100 through one GraphQL request each, instead
-of one contents request per file: a directory search that cost 200 requests now
-costs 2. Per-file reads still use the contents API, and the same 1 MiB per-file
-limit and read windows apply on both paths, so a review cannot depend on which
-transport served a file.
+- The diff, inlined in `prompt.md` after rendering.
+- `CLAUDE.md` and `AGENTS.md` from the head commit (20 000 chars each), when present. These come
+  from the change itself and are therefore a prompt-injection surface — the review may be talked
+  out of a finding, which the gate cannot detect.
+- The PR title and body (4 000 chars), labelled as intent so the stated purpose is not reported as
+  a bug.
+- Every open goby thread on the PR, with its span: a repeat at the same place is suppressed before
+  it reaches the review.
+- The resolved threads, newest 40, with the text that resolved them: a re-derivation at the same
+  span with a similar title is withheld and listed in the summary instead of posted.
 
-## GitHub and replay
+## Repositories that need more than the default image
 
-`GITHUB_REPOSITORY` defaults the repo, then the git origin; `GITHUB_TOKEN` the token. A live
-review takes `pr-number` (or `--pr` for the gate). `scripts/replay.ts` takes a saved diff plus
-`--head-sha` and `--pr-hint`, never posts, and writes JSON to `--out`. `scripts/gate.ts` takes
-`--pr` and `--expected-head`.
-
-`GOBY_BOT_LOGINS` is a comma-separated list of trusted authors; defaults are
-`github-actions,github-actions[bot]`. A dedicated GitHub App must configure
-its own login. This is an authorization boundary, not just display metadata.
-
-## Action inputs
-
-The source action exposes `provider`, `model`, `base-url`, `github-token`,
-`pr-number`, `expected-head`, `mode` (`review` or `gate`), `fail-on-blocked`,
-`max-tool-turns`, and `wall-timeout`. PR number/head default to the pull request
-event; supply them explicitly for workflow_run/dispatch. There is no package
-`version` input: pin the full action commit SHA.
+The reviewer image carries node, bun, python3, git and ripgrep. A project whose tests need Go, Rust
+or a system library should build its own image `FROM goby-base`, add the toolchain, and point the
+workflow at its digest. That also pre-bakes dependencies: the job can install packages (there is no
+egress filtering), but a warm image is faster than an install on every review.
 
 ## Stable contracts
 
-`src/identity.ts` defines `Goby Review` (execution), `Goby Gate` (eligibility),
-the `goby` marker, bot identities, and version. Changing markers can orphan
-old threads. Receipts in `<!-- goby-gate {...} -->` carry schema version,
-full head, base ref, SHA-256 diff digest, completeness, mode, unthreaded count,
-and expected inline IDs. Older receipt schemas cannot grant eligibility.
-See [merge integration](merge-gate.md) for the gate prerequisites.
+`src/identity.ts` holds the two status contexts (`Goby Review`, `Goby Gate`), the marker, the bot
+logins and the version. Changing a marker orphans existing threads. Receipts in
+`<!-- goby-gate {...} -->` carry the schema version, full head, base ref, SHA-256 diff digest,
+completeness, mode, unthreaded count and expected inline ids; an older schema cannot grant
+eligibility.
 
-Path filters are in `src/core/contract.ts`; transport/retry logic is in
-`src/providers/base.ts`. JavaScript regex syntax powers grep, with common
-`(?i)`/`(?m)`/`(?s)` flag and named-group compatibility.
+Path filters live in `src/core/contract.ts`; transport and retry logic in
+`src/platforms/github.ts`.

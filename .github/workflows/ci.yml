@@ -26,14 +26,52 @@ jobs:
           bun-version: "1.4.4"
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run check
-      # `-e` would abort on the first line of a naive version of this: the expected failure is
-      # the point, so the check is written as a case rather than a pipeline and an exit code.
-      - name: Bundled entrypoint smoke (no network)
+      - name: Bundled publisher smoke (no network)
         run: |
-          if out=$(node dist/main.js 2>&1); then
-            echo "entrypoint succeeded without inputs: $out" >&2; exit 1
+          if out=$(node dist/reviewRun.js prepare 2>&1); then
+            echo "publisher succeeded without configuration: $out" >&2; exit 1
           fi
           case "$out" in
-            *"INPUT_PR is required"*) ;;
+            *GOBY_OUT*|*GOBY_REPO*|*GITHUB_TOKEN*) ;;
             *) echo "unexpected failure: $out" >&2; exit 1 ;;
+          esac
+
+  images:
+    # The images are the product's delivery: a Dockerfile that builds is not the same as one that
+    # starts, and both failures show up on a push that was supposed to review something.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build goby-base
+        uses: docker/build-push-action@v6
+        with:
+          context: base
+          load: true
+          tags: goby-base:test
+          cache-from: type=gha,scope=base
+          cache-to: type=gha,mode=max,scope=base
+      - name: Build the reviewer and prove it starts
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: review/Dockerfile
+          load: true
+          tags: goby-review:test
+          cache-from: type=gha,scope=review
+          cache-to: type=gha,mode=max,scope=review
+      - name: The reviewer exits cleanly with no configuration
+        run: |
+          set +e
+          out=$(docker run --rm goby-review:test 2>&1)
+          status=$?
+          set -e
+          # 2 is the entrypoint's "missing input" exit; anything else means it started work.
+          if [ "$status" -ne 2 ]; then
+            echo "expected exit 2, got $status: $out" >&2; exit 1
+          fi
+          case "$out" in
+            *GOBY_REPO*) ;;
+            *) echo "the entrypoint did not name the missing input: $out" >&2; exit 1 ;;
           esac

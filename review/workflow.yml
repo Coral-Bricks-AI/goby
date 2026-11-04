@@ -1,0 +1,59 @@
+# Goby Review — copy this file into `.github/workflows/` in your repository.
+#
+# The reviewer clones the pull request, runs in a container as an unprivileged user, and can use a
+# shell against the change: it may run your tests, write a probe, patch a line and re-run. The
+# process that can write to the pull request is a different user, in the same container, holding
+# the token; the model key lives in a root-only file behind a loopback proxy, so neither is in the
+# environment of the code being reviewed.
+#
+# Three things to change:
+#   1. `image:` — pin the reviewer image by digest, not by tag.
+#   2. `provider:`/`model:` if you are not using the Coral gateway, and the matching secret.
+#   3. Nothing else. `permissions:` is the whole grant: the reviewed code runs without the token.
+#
+# Use `pull_request`, never `pull_request_target`: the latter runs from the base branch with
+# secrets present, and this job then executes code from the pull request.
+#
+# Same-repository pull requests only. Fork PRs get no secrets, so the `if:` below skips them
+# instead of failing. See docs/trust-model.md.
+
+name: Goby review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+  packages: read
+
+concurrency:
+  group: goby-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ghcr.io/coral-bricks-ai/goby-review@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    env:
+      GOBY_REPO: ${{ github.repository }}
+      GOBY_PR: ${{ github.event.pull_request.number }}
+      GOBY_HEAD: ${{ github.event.pull_request.head.sha }}
+      GOBY_BASE: ${{ github.event.pull_request.base.sha }}
+      GOBY_PROVIDER: coral
+      GOBY_MODEL: deepseek-v4.1-flash-fast
+      GOBY_MAX_TOOL_CALLS: "80"
+      GOBY_MAX_DIFF_LINES: "10000"
+      GOBY_MAX_FINDINGS: "30"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
+    steps:
+      # A container job ignores the image's ENTRYPOINT — GitHub keeps its own — so the step names
+      # it. Everything else (clone, sandbox, agent, publish) happens inside.
+      - name: Review
+        run: /opt/goby/entrypoint.sh
