@@ -26,7 +26,7 @@ jobs:
           bun-version: "1.4.4"
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run check
-      - name: Bundled Node CLI smoke (no network)
+      - name: Bundled entrypoint smoke (no network)
         run: |
-          node dist/cli.js version
-          node dist/cli.js --help
+          node dist/main.js; [ $? -eq 1 ]
+          node dist/main.js 2>&1 | grep -q 'INPUT_PR is required'

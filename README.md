@@ -34,50 +34,31 @@ git clone https://github.com/Coral-Bricks-AI/goby.git
 cd goby
 bun install --frozen-lockfile --ignore-scripts
 bun run build
-node dist/cli.js version
-node dist/cli.js --help
-# Optional: bun link makes the local `goby` command available.
+bun run check   # typecheck → kernel-checked policies → Node build → offline tests
 ```
 
-`goby doctor` reports the resolved endpoint, model and credential source.
-`goby doctor --deep` additionally spends two real turns against the provider: it
-makes the model call a tool, then resends the whole transcript for a second
-turn, and fails unless every request carried `store: false` and no
-`previous_response_id`. Run it after configuring a key, and whenever a gateway
-or organization retention setting changes — an organization with zero data
-retention cannot serve a stored-turn continuation, and a review that cannot
-run a second turn posts nothing.
-
-```sh
-node dist/cli.js doctor --deep
-```
+The loop is stateless by construction — every turn resends the whole transcript — so a gateway
+under zero data retention can serve it; there is no stored-turn continuation to fail.
 
 `gdp-wired` is the sole direct runtime dependency. No Python, PyPI package,
 or unpublished major tag is needed. Publishing remains owner-controlled.
 
 ## Add it to a repository
 
-From the target repo, run the built CLI and pin a **reviewed full Goby SHA**.
-`--ref` also accepts a release tag such as `v0.3.0`, which is resolved to the
-commit it names: the workflow always ends up pinned to a commit, never a tag.
+Copy [`examples/workflows/goby-review.yml`](examples/workflows/goby-review.yml) into
+`.github/workflows/`, and replace `<GOBY_COMMIT_SHA>` with the full commit SHA you reviewed:
 
 ```sh
-node /path/to/goby/dist/cli.js init --ref v0.3.0
-node /path/to/goby/dist/cli.js init --ref <full-goby-commit-sha>
+git ls-remote https://github.com/Coral-Bricks-AI/goby.git refs/heads/main
 ```
 
-Add the `CORALBRICKS_API_KEY` repository secret, commit the generated workflow,
-and require **Goby Gate** plus CI in branch protection. Move the pin later with
-one command instead of hand-editing the YAML:
+A tag would be a movable handle over executable code, so the workflow carries a commit — and
+that commit is the entire "trusted source" claim: the action builds only its own pinned source
+and never checks out PR code.
 
-```sh
-node /path/to/goby/dist/cli.js pin --ref v0.3.1 --dry-run
-node /path/to/goby/dist/cli.js pin --ref v0.3.1
-```
-
-The action builds only
-its own pinned source and never checks out PR code. Fork PRs are skipped by
-the generated workflow; see the [trust model](docs/trust-model.md).
+Then add `CORALBRICKS_API_KEY` as a repository secret, and require **Goby Gate** plus CI in
+branch protection — not Goby Review, which is execution telemetry. Fork PRs are skipped by the
+workflow; see the [trust model](docs/trust-model.md).
 
 **Do not gate merges on Goby Review.** That compatibility status means the
 review ran, including when it found bugs or skipped a large diff. The separate
@@ -85,20 +66,20 @@ Goby Gate verdict fails closed. The action fails on a blocked gate by default.
 
 ## Review and recheck
 
+The review runs as the action, from `action.yml`. Two scripts cover the local cases:
+
 ```sh
-goby doctor
-goby review --pr 123 --dry-run --agent
-goby review --pr 123 --agent --fail-on-blocked
-goby gate --pr 123 --expected-head <full-pr-head-sha>
+export CORALBRICKS_API_KEY=... GITHUB_TOKEN=...
+bun run scripts/replay.ts --diff change.diff --repo owner/name --head-sha <sha>  # never posts
+bun run scripts/gate.ts --pr 123 --expected-head <full-pr-head-sha>             # no model, no key
 ```
 
-A maintainer can resolve inline findings and refresh the gate without another
-model call. Deleted/missing threads do not count as resolved. Summary-only or
-capped findings require a new review after a fix. `--force` explicitly reruns
-an unchanged head; incomplete reviews are automatically eligible for rerun.
+A maintainer can resolve inline findings and refresh the gate without another model call.
+Deleted/missing threads do not count as resolved. Summary-only or capped findings require a new
+review after a fix; incomplete reviews are automatically eligible for rerun.
 
-For a historical comparison, use `--diff-file`, `--head-sha`, `--repo`, and
-`--dry-run --agent`. A token enables pinned code reads. See
+For a historical comparison, replay a saved diff at its commit as above; a token enables pinned
+code reads. See
 [quickstart](docs/quickstart.md), [configuration](docs/configuration.md), and
 [merge integration](docs/merge-gate.md).
 
@@ -123,7 +104,9 @@ review/gate scenarios. Tests are offline and need no Python. See
 | `src/providers/`, `src/platforms/` | model and GitHub transport |
 | `tests-ts/prove.ts` | kernel-check the exact production rules |
 
-Goby never merges itself. Production rollout still needs a sandbox GitHub
-check and a historical-PR quality comparison before removing a hosted
-reviewer. License: to be chosen (intended Apache-2.0); until then, all rights
-reserved. See [TODO](TODO.md) and [contributing](CONTRIBUTING.md).
+The action spins up with `bun install --frozen-lockfile --ignore-scripts` and a build from that
+pinned source, so there is no published package to trust and none to keep in sync.
+
+Goby never merges itself. Before it replaces a hosted reviewer it needs a historical-PR quality
+comparison — that is unexecuted, not done. See [TODO](TODO.md). Licensed under
+[Apache-2.0](LICENSE).

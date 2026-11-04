@@ -76,7 +76,7 @@ Current posture:
 
 Open work: fetching convention files from the **base** branch for pull requests
 that come from forks, and refusing instruction-shaped content in the context
-block. Contributions welcome — see `docs/extensions.md`.
+block.
 
 ## Secrets
 

@@ -75,23 +75,7 @@ runs:
         INPUT_HEAD: ${{ inputs.expected-head }}
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_FAIL: ${{ inputs.fail-on-blocked }}
-      run: |
-        set -euo pipefail
-        [[ "$INPUT_PR" =~ ^[1-9][0-9]*$ ]] || { echo "pr-number must be a positive integer" >&2; exit 2; }
-        args=("$INPUT_MODE" --pr "$INPUT_PR")
-        [ -z "$INPUT_HEAD" ] || args+=(--expected-head "$INPUT_HEAD")
-        case "$INPUT_MODE" in
-          review)
-            args+=(--agent --provider "$GOBY_PROVIDER")
-            [ -z "$INPUT_MODEL" ] || args+=(--model "$INPUT_MODEL")
-            [ -z "$INPUT_BASE_URL" ] || args+=(--base-url "$INPUT_BASE_URL")
-            case "$INPUT_FAIL" in
-              true) args+=(--fail-on-blocked) ;;
-              false) ;;
-              *) echo "fail-on-blocked must be true or false" >&2; exit 2 ;;
-            esac
-            ;;
-          gate) ;;
-          *) echo "mode must be review or gate" >&2; exit 2 ;;
-        esac
-        node "$ACTION_PATH/dist/cli.js" "${args[@]}"
+      # Validation lives in the entrypoint, so a bad input fails before any network call and
+      # never reaches a URL, a git ref or a shell.
+      run: node "$ACTION_PATH/dist/main.js"
+

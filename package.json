@@ -5,9 +5,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "description": "Code review with kernel-checked review and gate policies",
-  "bin": { "goby": "./dist/cli.js" },
   "scripts": {
-    "build": "bun build src/cli.ts --target=node --outfile=dist/cli.js",
+    "build": "bun build src/main.ts --target=node --outfile=dist/main.js && bun build scripts/replay.ts --target=node --outfile=dist/replay.js && bun build scripts/gate.ts --target=node --outfile=dist/gate.js",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests-ts",
     "proof": "bun run tests-ts/prove.ts",

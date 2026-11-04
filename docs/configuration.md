@@ -1,36 +1,34 @@
 # Configuration
 
-CLI flags override environment values; environment values override provider
-defaults. `goby` below means the linked CLI or `node /path/to/dist/cli.js`.
+The action takes its configuration as inputs (`action.yml`), which reach the entrypoint as
+environment variables. The two local scripts take flags, which override the same environment
+values, which override provider defaults.
 
 ## Provider
 
-| flag | environment | meaning |
-|---|---|---|
-| `--provider` | `GOBY_PROVIDER` | `coral` (default) or `openai` |
-| `--model` | `GOBY_MODEL` | model name; otherwise provider default |
-| `--base-url` | `GOBY_BASE_URL` | override endpoint |
-| `--api-key-file` | — | `API_KEY=...` file; default `~/.config/goby/api_key` |
+| action input | script flag | environment | meaning |
+|---|---|---|---|
+| `provider` | `--provider` | `GOBY_PROVIDER` | `coral` (default) or `openai` |
+| `model` | `--model` | `GOBY_MODEL` | model name; otherwise provider default |
+| `base-url` | `--base-url` | `GOBY_BASE_URL` | override endpoint |
+| — | — | `GOBY_API_KEY` | key, ahead of the provider's own variable |
 
 Key lookup: `GOBY_API_KEY`, then the provider's variable
-(`CORALBRICKS_API_KEY` or `OPENAI_API_KEY`), then the key file. `doctor`
-prints the source, never the key value. Agent mode requires Responses API;
-the one-turn path speaks chat completions. Providers live in
+(`CORALBRICKS_API_KEY` or `OPENAI_API_KEY`), then `~/.config/goby/api_key`. Agent mode requires
+the Responses API; the one-turn path speaks chat completions. Providers live in
 `src/providers/index.ts`.
 
 ## Review
 
-| flag | environment | default |
+| action input | script flag | default |
 |---|---|---|
-| `--agent` | — | off locally; on in action |
-| `--max-tool-turns` | `GOBY_MAX_TOOL_TURNS` | 10 locally; 25 in action |
-| `--agent-wall-timeout` | `GOBY_WALL_TIMEOUT` | 600 seconds locally; 1200 in action |
-| `--max-diff-lines` | — | 10000 |
-| `--max-findings` | — | 30 |
-| `--timeout` | — | 300 seconds per model call |
-| `--expected-head` | — | unset; refuse stale workflow heads when set |
-| `--fail-on-blocked` | — | off locally; on in action |
-| `--force` | — | off; bypass completed-head reuse |
+| — | `--no-agent` | agent on in both; the flag turns it off for a one-turn replay |
+| `max-tool-turns` | `--max-tool-turns` | 25 |
+| `wall-timeout` | `--wall-timeout` | 1200 seconds |
+| — | `--max-diff-lines` | 10000 |
+| — | `--max-findings` | 30 |
+| `expected-head` | `--expected-head` | unset; refuse stale workflow heads when set |
+| `fail-on-blocked` | — | on in the action |
 
 The runtime executes gdp-wired turn admission: up to the configured regular
 turns, followed by at most one forced final turn. Budget exhaustion and
@@ -45,10 +43,10 @@ transport served a file.
 
 ## GitHub and replay
 
-`--repo` defaults to `GITHUB_REPOSITORY`, then the git origin. `--token`
-defaults to `GITHUB_TOKEN`. `--pr` reviews a live PR. `--diff-file` requires
-`--dry-run`; `--head-sha` and `--pr-hint` are replay-only flags. `--dry-run`
-never posts. `--output-file` writes JSON for review or gate commands.
+`GITHUB_REPOSITORY` defaults the repo, then the git origin; `GITHUB_TOKEN` the token. A live
+review takes `pr-number` (or `--pr` for the gate). `scripts/replay.ts` takes a saved diff plus
+`--head-sha` and `--pr-hint`, never posts, and writes JSON to `--out`. `scripts/gate.ts` takes
+`--pr` and `--expected-head`.
 
 `GOBY_BOT_LOGINS` is a comma-separated list of trusted authors; defaults are
 `github-actions,github-actions[bot]`. A dedicated GitHub App must configure

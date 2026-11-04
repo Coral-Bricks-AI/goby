@@ -7,42 +7,29 @@ git clone https://github.com/Coral-Bricks-AI/goby.git
 cd goby
 bun install --frozen-lockfile --ignore-scripts
 bun run build
-node dist/cli.js version
 git rev-parse HEAD  # record this reviewed revision's full SHA
-node dist/cli.js doctor --deep  # spend two real turns: tools + a resent transcript
 ```
 
 The bundle runs on Node 20+. Bun is needed for source builds, not for running
 the finished CLI. `bun link` optionally exposes the local `goby` command.
-From your target repository:
+From your target repository, copy the workflow template and pin it:
 
 ```sh
-node /path/to/goby/dist/cli.js init --ref <reviewed-full-goby-commit-sha>
-node /path/to/goby/dist/cli.js init --ref v0.3.0   # tag resolves to its commit
+cp /path/to/goby/examples/workflows/goby-review.yml .github/workflows/
+# replace <GOBY_COMMIT_SHA> with the full commit you reviewed
+git ls-remote https://github.com/Coral-Bricks-AI/goby.git refs/heads/main
 ```
 
-A tag is only a handle: `init` and `pin` always write the full commit SHA into
-the workflow. Upgrade an existing pin in place instead of hand-editing YAML:
+Add the `CORALBRICKS_API_KEY` repository secret and commit the workflow. For the OpenAI
+provider, change `provider:` to `openai` and use `OPENAI_API_KEY` instead. No PyPI upload,
+npm publication, or `v1` tag is required.
 
-```sh
-node /path/to/goby/dist/cli.js pin --ref v0.3.1 --dry-run
-node /path/to/goby/dist/cli.js pin --ref v0.3.1
-```
-
-`doctor --deep` is the live transport canary: two model turns, an exercised tool
-round trip, and a hard failure unless every request was stateless
-(`store: false`, no `previous_response_id`). Run it after configuring a key and
-after any gateway or retention-policy change; a review that cannot run a second
-turn posts nothing.
-
-Add the `CORALBRICKS_API_KEY` repository secret and commit the generated
-`.github/workflows/goby-review.yml`. `init openai --ref <sha>` uses the OpenAI
-provider and its secret instead. No PyPI upload, npm publication, or `v1` tag
-is required.
+Upgrading is a one-line edit to the SHA. A tag would be a movable handle over executable code,
+which is why the pin is a commit.
 
 The action installs pinned build dependencies from its lockfile and builds
 its own trusted revision. Never add a checkout of the PR or install PR
-dependencies. The generated workflow handles same-repository PRs only;
+dependencies. The copied workflow handles same-repository PRs only;
 see the [trust model](trust-model.md) for forks.
 
 ## Two statuses
@@ -59,17 +46,13 @@ advisory; it does not turn a blocked gate green. `mode: gate` always fails close
 ## Review and refresh
 
 ```sh
-export CORALBRICKS_API_KEY=...
-export GITHUB_TOKEN=...
-goby doctor
-goby review --pr 123 --dry-run --agent
-goby review --pr 123 --agent --fail-on-blocked
-goby gate --pr 123 --expected-head <full-pr-head-sha>
+export CORALBRICKS_API_KEY=... GITHUB_TOKEN=...
+bun run scripts/replay.ts --diff change.diff --repo owner/name --head-sha <sha>
+bun run scripts/gate.ts --pr 123 --expected-head <full-pr-head-sha>
 ```
 
-The last command needs no model key or call. It rechecks existing evidence
-and thread resolution. Deleted threads are not resolutions. `--force`
-explicitly repeats a full review; budget-exhausted/truncated reviews are
+The gate needs no model key or call. It rechecks existing evidence and thread resolution;
+deleted threads are not resolutions. budget-exhausted/truncated reviews are
 retried on the next review run without that flag.
 
 Exit codes: `review` preserves execution-only success unless
@@ -82,8 +65,7 @@ using the default GitHub token. Neither the action nor the handoff merges code.
 ## Historical comparison
 
 ```sh
-goby review --diff-file change.diff --repo owner/name --head-sha <sha> \
-  --pr-hint 123 --dry-run --agent
+bun run scripts/replay.ts --diff change.diff --repo owner/name --head-sha <sha> --pr-hint 123
 ```
 
 With `GITHUB_TOKEN`, tools and context read the pinned revision. PR intent is

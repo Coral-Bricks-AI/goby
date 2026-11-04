@@ -38,7 +38,7 @@ old head-only receipts cannot grant eligibility. Resolving a thread without chan
 head can be rechecked without a model call:
 
 ```sh
-goby gate --repo owner/name --pr 123 --expected-head <full-head-sha>
+bun run scripts/gate.ts --repo owner/name --pr 123 --expected-head <full-head-sha>
 ```
 
 `mode: gate`, `pr-number`, and `expected-head` expose the same operation in
