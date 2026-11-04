@@ -18,6 +18,10 @@ export interface ReviewStats {
   droppedDupe: number;
   droppedResolved: number;
   droppedRetracted: number;
+  /** The image reference the job ran, usually a `:latest` tag. */
+  image: string | null;
+  /** The digest that tag resolved to at the start of this run, when the registry answered. */
+  imageDigest: string | null;
   /** The evidence cannot be trusted; the gate refuses a review that has one. */
   incomplete: string | null;
   /** The scan was bounded, not broken: the reviewer answered, it just stopped looking early. */
@@ -53,5 +57,10 @@ export function build_summary(
   if (stats.incomplete) lines.push('', `**This review is incomplete:** ${stats.incomplete}`);
   if (stats.caveat) lines.push('', `Partial scan: ${stats.caveat}`);
   lines.push('', `Diff: ${stats.diffLines} lines. ${stats.toolCalls} tool call(s), ${stats.elapsedS.toFixed(1)}s.`);
+  if (stats.image) {
+    // The tag is what the workstation ran; the digest is what it meant at the time. Without the
+    // second, a finding cannot be reproduced once `:latest` moves on.
+    lines.push(`Image: \`${stats.image}\`${stats.imageDigest ? ` (\`${stats.imageDigest}\`)` : ' (digest unresolved)'}.`);
+  }
   return lines.join('\n');
 }

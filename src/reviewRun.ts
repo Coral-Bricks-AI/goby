@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolve_gate_target, type GateTarget } from './core/gateEvent.ts';
 import { gate_enabled } from './core/flags.ts';
+import { resolve_digest } from './core/image.ts';
 import { check_target } from './core/target.ts';
 import * as contract from './core/contract.ts';
 import { select } from './core/selection.ts';
@@ -35,6 +36,8 @@ interface Job {
   base: string;
   model: string;
   session: string;
+  image: string | null;
+  image_digest: string | null;
   diff_digest: string;
   diff_lines: number;
   intent: { title?: string | null; body?: string | null } | null;
@@ -119,8 +122,14 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   const resolved = history.slice(0, 40).map(t => `- \`${contract.format_thread_position(t)}\` — ${t.title}${t.resolution ? ` (resolved: ${t.resolution})` : ''}`);
   if (history.length > 40) resolved.push(`- (${history.length - 40} older resolved thread(s) omitted — this is the most recent history, not all of it.)`);
 
+  // Resolved before the agent runs, so the digest in the review is the image this review used, not
+  // whatever the tag points at by the time it finishes.
+  const image = optionalEnv('GOBY_IMAGE') ?? null;
+  const imageDigest = image ? await resolve_digest(image, optionalEnv('GITHUB_TOKEN')) : null;
+  if (image) console.error(`image ${image}${imageDigest ? ` (${imageDigest})` : ' (digest unresolved)'}`);
   const job: Job = {
     pr, repo: client.repo, head, base: baseRef, model: env('GOBY_MODEL'), session: `review-pr${pr}-${head.slice(0, 10)}`,
+    image, image_digest: imageDigest,
     diff_digest: digest, diff_lines: lineCount(diff), intent,
     already_raised: raised, already_resolved: resolved,
     open_threads: opened, resolved_history: history, reuse, incomplete,
@@ -179,6 +188,7 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   const summary = build_summary(picked.inline, picked.overflow, picked.withheld,
     {
       model: job.model, head: job.head, base: job.base, diffLines: lineCount(diff), elapsedS, toolCalls,
+      image: job.image, imageDigest: job.image_digest,
       droppedPaths: picked.dropped.paths, droppedCap: picked.dropped.cap, droppedDupe: picked.dropped.dupe,
       droppedResolved: picked.dropped.resolved, droppedRetracted: picked.dropped.retracted,
       incomplete: complete ? null : incomplete.join(' '),

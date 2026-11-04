@@ -13,11 +13,18 @@ test('neither workflow uses pull_request_target', () => {
   }
 });
 
-test('every workflow pins its image by digest', () => {
-  for (const file of ['review/workflow.yml', 'examples/workflows/goby-gate.yml']) {
-    for (const match of read(file).matchAll(/^\s+image:\s*(\S+)/gm)) {
-      expect(match[1]).toMatch(/@sha256:[0-9a-f]{64}$/);
-    }
+test('every workflow runs the moving tag, and passes it through for attribution', () => {
+  // Pinning meant a one-line commit per change and GitHub tokens cannot edit workflow files, so the
+  // tag is under this repository's control and the digest is recorded in the review instead.
+  for (const file of ['review/workflow.yml', 'examples/workflows/goby-gate.yml', '.github/workflows/goby-review.yml']) {
+    const text = read(file);
+    expect(text).toContain('goby-review:latest');
+    expect(text).not.toMatch(/goby-review@sha256/);
+  }
+  // Only the reviewer writes a body, so only it needs the reference handed to the publisher for
+  // digest resolution; the gate makes no model call and writes nothing but a status.
+  for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
+    expect(read(file)).toContain('GOBY_IMAGE: ghcr.io/coral-bricks-ai/goby-review:latest');
   }
 });
 
@@ -58,12 +65,9 @@ test('CI stays one job on one Node version', () => {
   expect(text).toContain('bun run check');
 });
 
-test('the publish workflow tells the reader which digest to pin', () => {
-  // Automating this was tried and is not possible with `GITHUB_TOKEN`: the pin lives in a workflow
-  // file, and no permission on that token allows updating one. So the publish job prints the digest
-  // and a human makes the one-line change.
+test('the publish workflow still prints the digest, for anyone who wants to pin it', () => {
   const publish = read('.github/workflows/review-image.yml');
-  expect(publish).toContain('Tell the reader which digest to pin');
+  expect(publish).toContain('Print the digest');
   expect(publish).not.toContain('git push origin main');
   expect(publish).not.toContain('workflows:');
 });

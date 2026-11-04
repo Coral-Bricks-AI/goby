@@ -6,10 +6,11 @@
 # the token; the model key lives in a root-only file behind a loopback proxy, so neither is in the
 # environment of the code being reviewed.
 #
-# Three things to change:
-#   1. `image:` — pin the reviewer image by digest, not by tag.
+# Two things to change:
+#   1. Nothing about the image, unless you want immutable bytes: the reviewer runs `:latest` and
+#      names the digest it resolved in every review.
 #   2. `provider:`/`model:` if you are not using the Coral gateway, and the matching secret.
-#   3. Nothing else. `permissions:` is the whole grant: the reviewed code runs without the token.
+# Nothing else. `permissions:` is the whole grant: the reviewed code runs without the token.
 #
 # Use `pull_request`, never `pull_request_target`: the latter runs from the base branch with
 # secrets present, and this job then executes code from the pull request.
@@ -47,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: ghcr.io/coral-bricks-ai/goby-review@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      image: ghcr.io/coral-bricks-ai/goby-review:latest
     env:
       GOBY_REPO: ${{ github.repository }}
       GOBY_PR: ${{ github.event.pull_request.number }}
@@ -57,6 +58,9 @@ jobs:
       GOBY_MODEL: deepseek-v4.1-flash-fast
       GOBY_MAX_TOOL_CALLS: "80"
       GOBY_MAX_DIFF_LINES: "10000"
+      # The reviewer runs `:latest` and reports the digest it resolved, so a finding stays
+      # attributable after the tag moves. Pin a digest here instead if you want immutable bytes.
+      GOBY_IMAGE: ghcr.io/coral-bricks-ai/goby-review:latest
       GOBY_MAX_FINDINGS: "30"
       # The gate is the second status ("Goby Gate"), an eligibility verdict recomputed from GitHub
       # state with no model involved. Turn it on when branch protection requires it; off, the review

@@ -1,9 +1,10 @@
-# Goby gate recheck — copy into `.github/workflows/` and pin the image digest.
+# Goby gate recheck — copy into `.github/workflows/`.
 #
 # The gate answers one question: is the evidence on this pull request still sufficient for the
 # current head? It makes no model call, needs no key, and clones nothing — so it is safe to run
 # whenever CI finishes, and cheap enough to do so on every completion.
 #
+# Runs `:latest`, same as the reviewer, so it checks evidence with the code that wrote it.
 # Must exist on the default branch: a workflow_run handoff has to come from trusted code.
 # `pull_request_target` is not used here and must not be: nothing from the pull request is read.
 
@@ -36,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     container:
-      image: ghcr.io/coral-bricks-ai/goby-review@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      image: ghcr.io/coral-bricks-ai/goby-review:latest
     env:
       # Which pull request this is about comes from the event file, resolved in the image rather
       # than by a script inlined here. See src/core/gateEvent.ts.
