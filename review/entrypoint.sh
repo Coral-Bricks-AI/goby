@@ -202,7 +202,12 @@ goby_log "agent exit=$AGENT_STATUS findings=$(grep -c '"kind":"findings"' "$AGEN
 # A review that produced no findings record did not answer. Treat it as a failed review rather
 # than as "no bugs": those two are the failure this design exists to keep apart.
 if ! grep -q '"kind":"findings"' "$AGENT_OUT/findings.jsonl" 2>/dev/null; then
-  goby_log "error: the reviewer never reported (exit $AGENT_STATUS); posting nothing"
+  # Not "no bugs": the reviewer never answered. Both statuses have to resolve, or the gate stays
+  # pending forever and the pull request is blocked with nothing to read.
+  goby_log "error: the reviewer never reported (exit $AGENT_STATUS)"
+  GOBY_REPO="$GOBY_REPO" GOBY_HEAD="$GOBY_HEAD" GITHUB_TOKEN="$GITHUB_TOKEN" \
+  GOBY_FAIL_REASON="the reviewer exited without reporting (exit $AGENT_STATUS)" \
+    node /opt/goby/reviewRun.js fail || true
   exit 1
 fi
 

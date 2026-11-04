@@ -236,10 +236,22 @@ async function gate(client: GitHubClient): Promise<number> {
   return result.state === 'success' ? 0 : result.state === 'error' ? 1 : 2;
 }
 
+/**
+ * The reviewer never answered. Say so on both statuses: leaving them "pending" blocks the pull
+ * request forever with nothing to read, which is worse than a visible failure.
+ */
+async function fail(client: GitHubClient): Promise<number> {
+  const reason = env('GOBY_FAIL_REASON');
+  await post_status(client, env('GOBY_HEAD'), 'error', `Review failed: ${reason}`);
+  await post_gate_status(client, env('GOBY_HEAD'), 'error', `Review failed: ${reason}`);
+  console.log(JSON.stringify({ phase: 'failed', reason }));
+  return 1;
+}
+
 async function main(): Promise<number> {
   const mode = process.argv[2];
-  if (!['prepare', 'finish', 'skip', 'gate', 'merge-base'].includes(mode ?? '')) {
-    throw new Error('usage: reviewRun.ts prepare|finish|skip|gate|merge-base');
+  if (!['prepare', 'finish', 'skip', 'gate', 'merge-base', 'fail'].includes(mode ?? '')) {
+    throw new Error('usage: reviewRun.ts prepare|finish|skip|gate|merge-base|fail');
   }
   if (mode === 'merge-base') {
     // Printed alone, so the entrypoint can fetch exactly these commits and nothing else.
@@ -250,6 +262,7 @@ async function main(): Promise<number> {
   const client = new GitHubClient(env('GOBY_REPO'), env('GITHUB_TOKEN'));
   if (mode === 'skip') return skip(client);
   if (mode === 'gate') return gate(client);
+  if (mode === 'fail') return fail(client);
   return mode === 'prepare' ? prepare(out, client) : finish(out, client, message => console.error(message));
 }
 

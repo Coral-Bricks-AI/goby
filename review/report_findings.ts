@@ -80,27 +80,33 @@ export default function (pi: ExtensionAPI) {
 	} });
 
 	pi.registerTool(bash);
+	const parameters = Type.Object({
+		findings: Type.Array(Type.Object({
+			path: Type.String({ description: 'Repository-relative path, exactly as in the diff (no a/ or b/).' }),
+			line: Type.Integer({ minimum: 1, description: 'Line in the file AFTER the change.' }),
+			end_line: Type.Optional(Type.Integer({ minimum: 1, description: 'Last line of a multi-line finding.' })),
+			severity: Type.Union([Type.Literal('high'), Type.Literal('medium'), Type.Literal('low')]),
+			title: Type.String({ description: 'One line: what is wrong.' }),
+			detail: Type.String({ description: 'Why it is wrong, and what you ran to check it.' }),
+		}), { description: 'Findings to report. Empty when you found nothing.' }),
+	});
+
 	pi.registerTool(defineTool({
 		name: 'report_findings',
 		label: 'Report findings',
 		description:
 			'Report the bugs you found and verified. Call once at the end with every finding, then stop. ' +
 			'An empty array is a valid answer: most changes have no bug.',
-		parameters: Type.Object({
-			findings: Type.Array(Type.Object({
-				path: Type.String({ description: 'Repository-relative path, exactly as in the diff (no a/ or b/).' }),
-				line: Type.Integer({ minimum: 1, description: 'Line in the file AFTER the change.' }),
-				end_line: Type.Optional(Type.Integer({ minimum: 1, description: 'Last line of a multi-line finding.' })),
-				severity: Type.Union([Type.Literal('high'), Type.Literal('medium'), Type.Literal('low')]),
-				title: Type.String({ description: 'One line: what is wrong.' }),
-				detail: Type.String({ description: 'Why it is wrong, and what you ran to check it.' }),
-			}), { description: 'Findings to report. Empty when you found nothing.' }),
-		}, async (args: { findings: unknown[] }) => {
+		parameters,
+		// `execute` is a method of the definition, not a second argument: passing it separately
+		// produced a tool the model could call and the runtime could not run.
+		outputSchema: parameters,
+		async execute(_id: string, args: { findings: unknown[] }) {
 			record('findings', { findings: args.findings, tool_calls });
 			return {
 				content: [{ type: 'text', text: `recorded ${args.findings.length} finding(s)` }],
 				details: {},
 			};
-		}),
+		},
 	}));
 }
