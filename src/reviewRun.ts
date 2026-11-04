@@ -145,9 +145,14 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   const records = (await readFile(join(agentOut, 'findings.jsonl'), 'utf8').catch(() => ''))
     .split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
   const emitted: unknown[] = [];
+  // Two different things, kept apart on purpose. "Incomplete" means the evidence cannot be
+  // trusted — a failed thread read, or a reviewer that never reported — and the gate refuses it.
+  // A spent tool budget means the scan was bounded: the reviewer answered, and saying otherwise
+  // would block every large pull request on a cap we chose.
   const incomplete: string[] = [...job.incomplete];
+  const caveats: string[] = [];
   for (const record of records) {
-    if (record.kind === 'blocked') incomplete.push('the reviewer hit its tool-call budget and reported what it had.');
+    if (record.kind === 'blocked') caveats.push('the reviewer reached its tool-call budget, so the scan was bounded — findings it would have made later in the change are missing.');
     if (record.kind !== 'findings' || !Array.isArray(record.findings)) continue;
     emitted.push(...(record.findings as unknown[]));
   }
@@ -172,6 +177,7 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
       droppedPaths: picked.dropped.paths, droppedCap: picked.dropped.cap, droppedDupe: picked.dropped.dupe,
       droppedResolved: picked.dropped.resolved, droppedRetracted: picked.dropped.retracted,
       incomplete: complete ? null : incomplete.join(' '),
+      caveat: caveats.length ? caveats.join(' ') : null,
     }, REVIEW_VERSION) + '\n\n' + receiptMarker(receipt);
 
   await assertHead(client, job.pr, job.head);
@@ -182,7 +188,7 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   await cleanup(client, job.pr, job.open_threads, warn);
   const gate = await refreshGate(client, job.pr, { expected_head: job.head });
   console.log(JSON.stringify({
-    phase: 'finished', inline: picked.inline.length, overflow: picked.overflow.length,
+    phase: 'finished', inline: picked.inline.length, overflow: picked.overflow.length, caveats,
     withheld: { already_open: picked.dropped.dupe, resolved: picked.dropped.resolved },
     dropped: picked.dropped, complete, gate: gate.state,
   }));

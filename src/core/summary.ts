@@ -18,8 +18,10 @@ export interface ReviewStats {
   droppedDupe: number;
   droppedResolved: number;
   droppedRetracted: number;
-  /** Set when the run could not see the whole picture; the reviewer is told to distrust it. */
+  /** The evidence cannot be trusted; the gate refuses a review that has one. */
   incomplete: string | null;
+  /** The scan was bounded, not broken: the reviewer answered, it just stopped looking early. */
+  caveat?: string | null;
 }
 
 export function build_summary(
@@ -49,6 +51,7 @@ export function build_summary(
     if (findings.length) lines.push('', `${findings.length} ${label} finding(s) withheld:`, ...findings.map(f => `- \`${f.path}:${f.line}\` **[${f.severity}]** ${f.title}`));
   }
   if (stats.incomplete) lines.push('', `**This review is incomplete:** ${stats.incomplete}`);
+  if (stats.caveat) lines.push('', `Partial scan: ${stats.caveat}`);
   lines.push('', `Diff: ${stats.diffLines} lines. ${stats.toolCalls} tool call(s), ${stats.elapsedS.toFixed(1)}s.`);
   return lines.join('\n');
 }
