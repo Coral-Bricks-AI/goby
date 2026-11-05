@@ -135,11 +135,11 @@ test('the reviewer is bounded by turns, a command timeout and a job timeout', ()
 
 
 test('the reviewer\'s own code carries briefs, so a cleaner can debug the reviewer', () => {
-  // Without a CLEANER.md a directory is invisible to the post-merge cleaner, which is how the
+  // Without an INVARIANTS.md a directory is invisible to the post-merge cleaner, which is how the
   // reviewer would be the one part of this project nothing ever scanned.
   const {existsSync} = require('node:fs') as typeof import('node:fs');
   for (const dir of ['review', 'src']) {
-    const path = join(root, dir, 'CLEANER.md');
+    const path = join(root, dir, 'INVARIANTS.md');
     expect(existsSync(path)).toBe(true);
     const text = readFileSync(path, 'utf8');
     expect(text).toContain('# ');

@@ -4,7 +4,7 @@
 #
 # Sourced, never executed. Nothing here decides anything a test should cover — the decisions
 # (which component, which findings, what may be filed) stay in Python or TypeScript with tests,
-# as cleaners' own CLEANER.md requires.
+# as cleaners' own INVARIANTS.md requires.
 set -euo pipefail
 
 GOBY_AGENT_USER="${GOBY_AGENT_USER:-agent}"

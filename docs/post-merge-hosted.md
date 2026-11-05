@@ -25,13 +25,13 @@ Settings → Secrets and variables → Actions → `CORALBRICKS_API_KEY`. Any pr
 
 ## 3. The briefs
 
-A scan only looks where a `CLEANER.md` file exists. Ask your agent to write them:
-`/create-cleaner-md` (see [`skills/create-cleaner-md`](../skills/create-cleaner-md/SKILL.md)), review
+A scan only looks where an `INVARIANTS.md` file exists. Ask your agent to write them:
+`/create-invariants-md` (see [`skills/create-invariants-md`](../skills/create-invariants-md/SKILL.md)), review
 the PR it opens, merge it. Start with three directories that carry real behaviour.
 
 ## Check it worked
 
-Push a commit touching a directory with a `CLEANER.md`. The run's job summary shows one line per
+Push a commit touching a directory with an `INVARIANTS.md`. The run's job summary shows one line per
 scan — model, turns, tool calls, wall time, findings, price. A run that ends `done (clean)`
 found nothing, which is the usual result.
 

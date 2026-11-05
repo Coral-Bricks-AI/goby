@@ -51,9 +51,9 @@ Pin the image by digest. A tag is a moving handle, and findings are only compara
 weeks if the container that produced them is the same one. `cleaners-image.yml` prints the
 digest for every build.
 
-## Components: a `CLEANER.md` in the directory
+## Components: an `INVARIANTS.md` in the directory
 
-A component is the directory that contains a `CLEANER.md`. The file is the opt-in, so there is no
+A component is the directory that contains an `INVARIANTS.md`. The file is the opt-in, so there is no
 registry to keep in sync: no YAML, no generated JSON, no linter.
 
 ```markdown
@@ -82,7 +82,7 @@ confident false claims, while one stated invariant found a real 4× admission ov
 2. The container clones that sha shallow, fetches `before`, and makes a writable **sandbox**
    copy. The clone stays root-owned and read-only — the finding quotes it, the sandbox is where
    reproducers run.
-3. `git diff --name-only before..after` → every `CLEANER.md` directory it touches. When more than
+3. `git diff --name-only before..after` → every `INVARIANTS.md` directory it touches. When more than
    `MAX_COMPONENTS` (4) changed, the components with the most changed files go first and the
    log names the ones the cap dropped. No predecessor (new branch, forced push) → every
    component.
@@ -169,7 +169,7 @@ export CLEANERS_JSON=1 CLEANERS_MAX_TOOLS=60 CLEANERS_SANDBOX=/tmp/sandbox
 cp -a . /tmp/sandbox && rm -rf /tmp/sandbox/.git
 bash cleaners/cleaner.sh --repo-dir $PWD --component <component dir> \
   --sha $(git rev-parse --short HEAD) --before $(git rev-parse --short HEAD~1) \
-  --charter <component dir>/CLEANER.md \
+  --charter <component dir>/INVARIANTS.md \
   --model coral/deepseek-v4.1-flash-fast --out /tmp/scan
 python3 cleaners/usage.py /tmp/scan
 ```
@@ -183,7 +183,7 @@ A run that reported nothing is a valid result: most components on most pushes ar
 |---|---|
 | `entrypoint.sh` | clone, sandbox, pick components, one scan each, file |
 | `cleaner.sh` | one component: render the prompt, run pi read-only, collect findings |
-| `prompt.md` | cleaner prompt; `{{INVARIANTS}}` is the component's `CLEANER.md` |
+| `prompt.md` | cleaner prompt; `{{INVARIANTS}}` is the component's `INVARIANTS.md` |
 | `report_finding.ts` | emit tool (`outputSchema`, repro **and** flip required) + tool-call cap |
 | `post_findings.py` | fingerprint, dedupe, `issues_per_day`, one issue per finding |
 | `model_check.py` | which model this container can run, and its fallback |

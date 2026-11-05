@@ -237,7 +237,7 @@ def test_issue_carries_both_runs_and_the_marker():
     assert "python3 /tmp/sandbox/repro1.py" in body
     assert "(2, None, 2)" in body, "the flip run is the evidence the line is the cause"
     assert pf.parse_marker(body).group("severity") == "high"
-    assert f"{COMPONENT}/CLEANER.md" in body, "the close instruction must name the brief"
+    assert f"{COMPONENT}/INVARIANTS.md" in body, "the close instruction must name the brief"
 
 
 # --- filing against a stubbed API ---------------------------------------------------
@@ -535,12 +535,12 @@ def test_the_marker_parses_back_whatever_label_is_in_use(monkeypatch):
 
 
 def test_the_close_instruction_names_the_brief_that_component_really_has(monkeypatch):
-    """A legacy component has HUNT.md. Telling a maintainer to edit CLEANER.md invites them to
-    create it, and since the scan prefers CLEANER.md, the original brief — with its invariants and
+    """A legacy component has HUNT.md. Telling a maintainer to edit INVARIANTS.md invites them to
+    create it, and since the scan prefers INVARIANTS.md, the original brief — with its invariants and
     known non-findings — would then be silently ignored."""
     f = finding()
     item = {"fingerprint": pf.fingerprint("services/api", f), "finding": f, "severity": "low"}
     monkeypatch.setattr(pf, "BRIEFS", {"services/api": "HUNT.md"}, raising=False)
     _, body = pf.render_issue("services/api", item, "a" * 40)
     assert "`services/api/HUNT.md`" in body
-    assert "`services/api/CLEANER.md`" not in body
+    assert "`services/api/INVARIANTS.md`" not in body
