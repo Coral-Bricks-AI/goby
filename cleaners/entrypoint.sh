@@ -132,7 +132,7 @@ PICKED_OUT="$OUT/picked.txt"
 BRIEFS_FILE="$OUT/briefs.tsv"
 : > "$BRIEFS_FILE"
 set +e
-git -C "$REPO_DIR" ls-files -- '*INVARIANTS.md' '*HUNT.md' \
+git -C "$REPO_DIR" ls-files -- '*INVARIANTS.md' \
   | python3 /opt/cleaners/plan.py picked "${PLAN_ARGS[@]}" > "$PICKED_OUT"
 PICK_STATUS=${PIPESTATUS[1]}
 set -e
@@ -274,18 +274,15 @@ FAILED_SCANS=0
 # One heading, then a line per scan. Written here rather than per scan so a run that finds
 # nothing still leaves a summary saying so.
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-  printf '## Coral Cleaners\n\n`%s@%s` · model `%s`\n\n' \
+  printf '## Goby Cleaners\n\n`%s@%s` · model `%s`\n\n' \
     "$REPO" "${HEAD_SHA:0:10}" "$MODEL" >> "$GITHUB_STEP_SUMMARY" \
     || log "warn: could not write the job summary header"
 fi
 for dir in "${PICKED[@]}"; do
   SLUG="$(echo "$dir" | tr '/' '_')"
   log "scan $dir (model=$MODEL max_tools=$MAX_TOOLS)"
-  # The brief may still carry its old name; the scan gets whichever file exists.
   charter="$REPO_DIR/$dir/INVARIANTS.md"
-  [[ -f "$charter" ]] || charter="$REPO_DIR/$dir/HUNT.md"
-  # Recorded per component, because a repository can be half-renamed and each issue has to name
-  # the brief its own component actually has.
+  # Recorded per component so each issue names the brief it actually read.
   printf '%s\t%s\n' "$dir" "$(basename "$charter")" >> "$BRIEFS_FILE"
   status=0
   run_scan "$dir" "$MODEL" "$OUT/agent/$SLUG" "$charter" || status=$?

@@ -76,7 +76,7 @@ def test_a_legacy_marker_still_counts_as_filed():
     markers were written by different code. Parsing only our own prefix made every legacy
     issue invisible: no fingerprint, no daily budget, and the same defect filed again."""
     fp = pf.fingerprint(COMPONENT, finding())
-    legacy = [issue(fp, body=f"<!-- coral-cleaners fp={fp} component={COMPONENT} "
+    legacy = [issue(fp, body=f"<!-- other-producer fp={fp} component={COMPONENT} "
                              f"severity=medium -->")
               for _ in range(1)]
     filed, skipped = pf.decide([finding()], legacy, issues_per_day=5, now=NOW)
@@ -87,7 +87,7 @@ def test_a_legacy_issue_spends_the_daily_budget():
     """Budget is counted from the label, whatever wrote the marker, or a legacy-heavy day
     lets a fresh producer file its full allowance on top."""
     fp = pf.fingerprint(COMPONENT, finding(title="other defect"))
-    legacy = [issue(fp, body=f"<!-- coral-cleaners fp={fp} component={COMPONENT} "
+    legacy = [issue(fp, body=f"<!-- other-producer fp={fp} component={COMPONENT} "
                              f"severity=medium -->")]
     _, skipped = pf.decide([finding(title="new defect")], legacy, issues_per_day=1, now=NOW)
     assert skipped[0]["reason"] == "daily budget spent"
@@ -515,8 +515,8 @@ def test_the_page_bound_covers_years_of_filings():
 def test_the_label_can_be_overridden_for_a_transition(monkeypatch):
     """Two producers of the same findings must share one label, or neither sees the other's
     issues and the same defect is filed twice while both run."""
-    monkeypatch.setenv("CLEANERS_LABEL", "coral-cleaners")
-    assert pf.issue_label() == "coral-cleaners"
+    monkeypatch.setenv("CLEANERS_LABEL", "custom-label")
+    assert pf.issue_label() == "custom-label"
     monkeypatch.delenv("CLEANERS_LABEL")
     assert pf.issue_label() == pf.LABEL == "goby-cleaners"
 
@@ -535,12 +535,10 @@ def test_the_marker_parses_back_whatever_label_is_in_use(monkeypatch):
 
 
 def test_the_close_instruction_names_the_brief_that_component_really_has(monkeypatch):
-    """A legacy component has HUNT.md. Telling a maintainer to edit INVARIANTS.md invites them to
-    create it, and since the scan prefers INVARIANTS.md, the original brief — with its invariants and
-    known non-findings — would then be silently ignored."""
+    """The entrypoint records the brief filename per component, so an issue tells a maintainer
+    which file carries the invariants and known non-findings."""
     f = finding()
     item = {"fingerprint": pf.fingerprint("services/api", f), "finding": f, "severity": "low"}
-    monkeypatch.setattr(pf, "BRIEFS", {"services/api": "HUNT.md"}, raising=False)
+    monkeypatch.setattr(pf, "BRIEFS", {"services/api": "INVARIANTS.md"}, raising=False)
     _, body = pf.render_issue("services/api", item, "a" * 40)
-    assert "`services/api/HUNT.md`" in body
-    assert "`services/api/INVARIANTS.md`" not in body
+    assert "`services/api/INVARIANTS.md`" in body

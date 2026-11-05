@@ -1,4 +1,4 @@
-<!-- Coral-cleaners cleaner prompt, rendered per component. It is a template: the text under
+<!-- Goby cleaners prompt, rendered per component. It is a template: the text under
 BODY is what the agent receives. Placeholders: {{REPO}}, {{SHA}}, {{BEFORE}}, {{COMPONENT}},
 {{CHANGED}}, {{INVARIANTS}}, {{RULE_FILES}}, {{SANDBOX}}. -->
 
