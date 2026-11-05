@@ -193,6 +193,26 @@ export class GitHubClient {
   }
 
   /** Legacy reviewed-head guard; gate receipt validation belongs to the caller. */
+  /**
+   * The commits this project has already reviewed on a pull request.
+   *
+   * A project that reviews a pull request once needs to know whether it already did, independent of
+   * which commit is current: a push after the review must not start a second round.
+   */
+  async own_review_heads(pr: number): Promise<string[]> {
+    const heads: string[] = [];
+    for (let page = 1; page <= 20; page++) {
+      const reviews = JSON.parse(await this.get(`/repos/${this.repo}/pulls/${pr}/reviews?per_page=100&page=${page}`));
+      if (!Array.isArray(reviews)) throw new Error('Invalid GitHub review response');
+      for (const review of reviews) {
+        if (!object(review) || !this.bot_logins.has(review.user?.login)) continue;
+        if (typeof review.commit_id === 'string' && review.commit_id) heads.push(review.commit_id);
+      }
+      if (reviews.length < 100) break;
+    }
+    return [...new Set(heads)];
+  }
+
   async head_already_reviewed(pr: number, head: string, require_agent = false): Promise<boolean> {
     const marker = `head=${head.slice(0, 10)}`;
     for (let page = 1; page <= 20; page++) {

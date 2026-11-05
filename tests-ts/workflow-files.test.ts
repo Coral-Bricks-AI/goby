@@ -132,3 +132,24 @@ test('the reviewer is bounded by turns, a command timeout and a job timeout', ()
   // pi's exec takes seconds and converts them itself; multiplying here made "120 s" ~33 hours.
   expect(extension).not.toContain('COMMAND_TIMEOUT_S * 1000');
 });
+
+
+test('the reviewer\'s own code carries briefs, so a cleaner can debug the reviewer', () => {
+  // Without a CLEANER.md a directory is invisible to the post-merge cleaner, which is how the
+  // reviewer would be the one part of this project nothing ever scanned.
+  const {existsSync} = require('node:fs') as typeof import('node:fs');
+  for (const dir of ['review', 'src']) {
+    const path = join(root, dir, 'CLEANER.md');
+    expect(existsSync(path)).toBe(true);
+    const text = readFileSync(path, 'utf8');
+    expect(text).toContain('# ');
+    expect(text.split('\n').filter(line => /^\d+\. /.test(line)).length).toBeGreaterThanOrEqual(3);
+  }
+});
+
+test('a pull request is reviewed once by default', () => {
+  for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
+    expect(read(file)).toContain('GOBY_MAX_ROUNDS: "1"');
+  }
+  expect(read('docs/configuration.md')).toContain('reviews per pull request');
+});

@@ -47,6 +47,8 @@ interface Job {
   open_threads: contract.ThreadRecord[];
   resolved_history: ResolvedThread[];
   reuse: boolean;
+  /** Why the reviewer did not run, when it did not. */
+  reuse_reason: string | null;
   incomplete: string[];
 }
 
@@ -96,7 +98,18 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
 
   const previous = await loadReceipt(client, pr, head);
   // The receipt names the base *ref*, so that is what a reuse decision compares.
-  const reuse = Boolean(previous?.complete && previous.base_ref === baseRef && previous.diff_sha256 === digest);
+  const sameHead = Boolean(previous?.complete && previous.base_ref === baseRef && previous.diff_sha256 === digest);
+
+  // One review per pull request, by default: a later push does not start a second round. Fixes after
+  // that are the cleaner's job, and a reviewer that keeps reading the same change costs a model call
+  // per push to say the same thing again.
+  const maxRounds = intEnv('GOBY_MAX_ROUNDS', 1);
+  const reviewedHeads = maxRounds <= 1 ? await client.own_review_heads(pr).catch(() => []) : [];
+  const alreadyReviewed = reviewedHeads.length > 0 && !reviewedHeads.includes(head);
+  const reuse = sameHead || alreadyReviewed;
+  const reuseReason = sameHead ? 'this commit was already reviewed'
+    : alreadyReviewed ? `this pull request was already reviewed at ${reviewedHeads[0].slice(0, 10)}; it is reviewed once, and the post-merge cleaner takes it from there`
+    : null;
   if (!reuse) {
     if (gate_enabled()) await post_gate_status(client, head, 'pending', 'Review in progress');
     await post_status(client, head, 'pending', 'Review in progress');
@@ -133,7 +146,7 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
     image, image_digest: imageDigest,
     diff_digest: digest, diff_lines: lineCount(diff), intent,
     already_raised: raised, already_resolved: resolved,
-    open_threads: opened, resolved_history: history, reuse, incomplete,
+    open_threads: opened, resolved_history: history, reuse, reuse_reason: reuseReason, incomplete,
   };
   await writeFile(join(out, 'job.json'), JSON.stringify(job, null, 2) + '\n');
   console.log(JSON.stringify({ phase: 'prepared', reuse, open_threads: opened.length, resolved_history: history.length, diff_lines: job.diff_lines, diff_digest: digest }));
@@ -146,7 +159,7 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   const maxFindings = intEnv('GOBY_MAX_FINDINGS', 30);
 
   if (job.reuse) {
-    await post_status(client, job.head, 'success', 'Complete review reused on unchanged head');
+    await post_status(client, job.head, 'success', job.reuse_reason ?? 'Complete review reused on unchanged head');
     if (!gate_enabled()) {
       console.log(JSON.stringify({ phase: 'reused', gate: 'off' }));
       return 0;
