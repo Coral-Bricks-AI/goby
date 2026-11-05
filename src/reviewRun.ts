@@ -14,7 +14,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolve_gate_target, type GateTarget } from './core/gateEvent.ts';
-import { caveat_for } from './core/caveat.ts';
+import { caveats_for } from './core/caveat.ts';
 import { review_budget } from './core/rounds.ts';
 import { gate_enabled } from './core/flags.ts';
 import { resolve_digest } from './core/image.ts';
@@ -180,12 +180,8 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   // A spent tool budget means the scan was bounded: the reviewer answered, and saying otherwise
   // would block every large pull request on a cap we chose.
   const incomplete: string[] = [...job.incomplete];
-  const caveats: string[] = [];
+  const caveats = caveats_for(records);
   for (const record of records) {
-    // One blocked record per blocked tool call, so the same sentence arrives many times; the reader
-    // needs it once.
-    const caveat = caveat_for(record);
-    if (caveat && !caveats.includes(caveat)) caveats.push(caveat);
     if (record.kind !== 'findings' || !Array.isArray(record.findings)) continue;
     emitted.push(...(record.findings as unknown[]));
   }

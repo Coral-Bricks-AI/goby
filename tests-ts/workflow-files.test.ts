@@ -132,10 +132,14 @@ test('the reviewer is bounded by turns, a command timeout and a job timeout', ()
   const extension = read('review/report_findings.ts');
   expect(extension).toContain("pi.on('turn_start'");
   expect(extension).toContain('turns > MAX_TURNS');
-  // The budget notice and the guaranteed wrap-up turn are append-only: a custom message is added
-  // to the transcript, never a rewrite of the prefix.
+  // Budget notices and the wrap-up turn are append-only: a custom message is added to the turn
+  // boundary, never a rewrite of the transcript prefix.
   expect(extension).toContain("pi.on('turn_end'");
-  expect(extension).toContain("deliverAs: 'nextTurn'");
+  expect(extension).toContain("customType: 'goby-budget'");
+  expect(extension).toContain('event.entries');
+  // `nextTurn` only flushes on a new agent run, which `pi --print` never starts; the notice has to
+  // go through the boundary entries instead.
+  expect(extension).not.toContain('pi.sendMessage');
   expect(extension).toContain('continue: true');
   // The bash tool takes cwd first: passing options in that slot silently drops both the env filter
   // and the timeout.

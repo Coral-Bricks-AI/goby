@@ -85,36 +85,40 @@ export default function (pi: ExtensionAPI) {
 		turns += 1;
 	});
 
-	// Budget notices are appended, never injected by rewriting the transcript: the prefix stays
-	// byte-identical, so the provider's prompt cache is not thrown away. One notice per threshold,
-	// delivered with the next turn's request.
+	// Budget notices are appended at the turn boundary, never by rewriting the transcript: the
+	// prefix stays byte-identical, so the provider's prompt cache is not thrown away. The boundary
+	// entry is included in the next request within this run; `sendMessage` with
+	// `deliverAs: 'nextTurn'` only flushes when a new agent run starts, which `pi --print` never
+	// does.
 	pi.on('turn_end', event => {
+		const entries = [...event.entries];
 		const remaining = MAX_TURNS - turns;
 		if (!reported && turns < MAX_TURNS) {
 			const threshold = [10, 5, 2].find(value => remaining <= value && !warned.has(value));
 			if (threshold !== undefined) {
 				warned.add(threshold);
-				pi.sendMessage({
+				entries.push({
+					type: 'custom_message' as const,
 					customType: 'goby-budget',
 					content: `Review budget: ${remaining} turn(s) left. Start converging: verify the strongest remaining suspicion and call report_findings before the cap.`,
 					display: false,
-				}, { deliverAs: 'nextTurn' });
+				});
 			}
 		}
-		if (reported || wrap_up_requested || turns < MAX_TURNS) return;
+		if (reported || wrap_up_requested || turns < MAX_TURNS) {
+			return entries.length > event.entries.length ? { entries } : undefined;
+		}
 		// One guaranteed wrap-up turn. Without it a run that reaches the cap with no pending tool
 		// call can settle in prose and never report, which the harness treats as a failed review.
 		wrap_up_requested = true;
 		record('blocked', { tool_calls, turns, reason: 'turns' });
-		return {
-			entries: [...event.entries, {
-				type: 'custom_message' as const,
-				customType: 'goby-wrap-up',
-				content: 'Turn budget spent. Call report_findings now with every finding you have verified; an empty array is valid. Do not start new exploration.',
-				display: false,
-			}],
-			continue: true,
-		};
+		entries.push({
+			type: 'custom_message' as const,
+			customType: 'goby-wrap-up',
+			content: 'Turn budget spent. Call report_findings now with every finding you have verified; an empty array is valid. Do not start new exploration.',
+			display: false,
+		});
+		return { entries, continue: true };
 	});
 
 	pi.on('tool_call', event => {
