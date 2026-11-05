@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolve_gate_target, type GateTarget } from './core/gateEvent.ts';
 import { caveat_for } from './core/caveat.ts';
+import { review_budget } from './core/rounds.ts';
 import { gate_enabled } from './core/flags.ts';
 import { resolve_digest } from './core/image.ts';
 import { check_target } from './core/target.ts';
@@ -22,7 +23,7 @@ import * as contract from './core/contract.ts';
 import { select } from './core/selection.ts';
 import { build_summary } from './core/summary.ts';
 import { assertHead, HeadChanged, loadReceipt, refreshGate } from './core/gate.ts';
-import { diffDigest, receiptMarker, type ReviewReceipt } from './core/verdict.ts';
+import { diffDigest, parseReceipt, receiptMarker, type ReviewReceipt } from './core/verdict.ts';
 import { REVIEW_VERSION } from './identity.ts';
 import { GitHubClient } from './platforms/github.ts';
 import { post_gate_status, post_review, post_status, reply_in_thread, resolve_thread } from './platforms/publish.ts';
@@ -47,6 +48,14 @@ interface Job {
   open_threads: contract.ThreadRecord[];
   resolved_history: ResolvedThread[];
   reuse: boolean;
+  /** Why the reviewer did not run, when it did not. */
+  reuse_reason: string | null;
+  /**
+   * `same-head` means a receipt exists for this exact commit, so the gate can be recomputed.
+   * `rounds` means this commit was never reviewed: there is no evidence to gate, and asking for it
+   * would fail closed forever.
+   */
+  reuse_kind: 'same-head' | 'rounds' | null;
   incomplete: string[];
 }
 
@@ -96,7 +105,17 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
 
   const previous = await loadReceipt(client, pr, head);
   // The receipt names the base *ref*, so that is what a reuse decision compares.
-  const reuse = Boolean(previous?.complete && previous.base_ref === baseRef && previous.diff_sha256 === digest);
+  const sameHead = Boolean(previous?.complete && previous.base_ref === baseRef && previous.diff_sha256 === digest);
+
+  // Reviews per pull request, default 1: a later push does not start a second round. Fixes after
+  // that are the cleaner's job, and a reviewer that keeps reading the same change costs a model call
+  // per push to say the same thing again.
+  const maxRounds = intEnv('GOBY_MAX_ROUNDS', 1);
+  const prior = (await client.own_reviews(pr).catch(() => []))
+    .map(review => ({ head: review.head, complete: parseReceipt(review.body, review.head)?.complete === true }));
+  const budget = review_budget(maxRounds, prior, head);
+  const reuse = sameHead || budget.stop;
+  const reuseReason = sameHead ? 'this commit was already reviewed' : budget.reason;
   if (!reuse) {
     if (gate_enabled()) await post_gate_status(client, head, 'pending', 'Review in progress');
     await post_status(client, head, 'pending', 'Review in progress');
@@ -133,7 +152,8 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
     image, image_digest: imageDigest,
     diff_digest: digest, diff_lines: lineCount(diff), intent,
     already_raised: raised, already_resolved: resolved,
-    open_threads: opened, resolved_history: history, reuse, incomplete,
+    open_threads: opened, resolved_history: history, reuse, reuse_reason: reuseReason,
+    reuse_kind: sameHead ? 'same-head' : budget.stop ? 'rounds' : null, incomplete,
   };
   await writeFile(join(out, 'job.json'), JSON.stringify(job, null, 2) + '\n');
   console.log(JSON.stringify({ phase: 'prepared', reuse, open_threads: opened.length, resolved_history: history.length, diff_lines: job.diff_lines, diff_digest: digest }));
@@ -146,8 +166,10 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   const maxFindings = intEnv('GOBY_MAX_FINDINGS', 30);
 
   if (job.reuse) {
-    await post_status(client, job.head, 'success', 'Complete review reused on unchanged head');
-    if (!gate_enabled()) {
+    await post_status(client, job.head, 'success', job.reuse_reason ?? 'Complete review reused on unchanged head');
+    // A commit that was never reviewed has no receipt, so a gate check for it can only fail closed
+    // and stay failed: every later push would repeat it. The review status alone carries the answer.
+    if (!gate_enabled() || job.reuse_kind !== 'same-head') {
       console.log(JSON.stringify({ phase: 'reused', gate: 'off' }));
       return 0;
     }

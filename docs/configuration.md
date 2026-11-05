@@ -31,6 +31,7 @@ the proxy has one upstream.
 
 | variable | default | meaning |
 |---|---|---|
+| `GOBY_MAX_ROUNDS` | 1 | reviews per pull request; a later push reuses the first one and says so in the status. Incompatible with requiring the gate: a push after the only review has no receipt to gate, so the gate is not recomputed for it |
 | `GOBY_MAX_TURNS` | 20 | model turns one review may take; pi has no cap, so the emit extension counts `turn_start` |
 | `GOBY_MAX_TOOL_CALLS` | 80 | tool calls, the backstop when a single turn does a lot of work |
 | `GOBY_BASH_TIMEOUT_S` | 120 | wall clock for one shell command; a command with none can run until the job timeout |

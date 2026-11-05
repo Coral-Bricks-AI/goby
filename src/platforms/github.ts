@@ -193,6 +193,33 @@ export class GitHubClient {
   }
 
   /** Legacy reviewed-head guard; gate receipt validation belongs to the caller. */
+  /**
+   * The reviews this project has posted on a pull request: the commit each was for, and its body.
+   *
+   * Returned as records rather than heads because the caller has to tell a completed review from an
+   * incomplete one: only a completed review spends the round, or a failed review on the first commit
+   * would suppress every later push.
+   */
+  async own_reviews(pr: number): Promise<{ head: string; body: string }[]> {
+    const reviews: { head: string; body: string }[] = [];
+    for (let page = 1; page <= 20; page++) {
+      const rows = JSON.parse(await this.get(`/repos/${this.repo}/pulls/${pr}/reviews?per_page=100&page=${page}`));
+      if (!Array.isArray(rows)) throw new Error('Invalid GitHub review response');
+      for (const review of rows) {
+        if (!object(review) || !this.bot_logins.has(review.user?.login)) continue;
+        const body = text(review.body);
+        // Ours means ours: the bot login is shared with every other workflow that posts as the app,
+        // so a review from `github-actions` is only counted when it carries our summary or marker.
+        // Otherwise an unrelated review would suppress this one for the whole pull request.
+        if (!(body.startsWith(SUMMARY_PREFIX) || body.includes(`<!-- ${MARKER} head=`))) continue;
+        if (!['COMMENTED', 'APPROVED', 'CHANGES_REQUESTED'].includes(String(review.state))) continue;
+        if (typeof review.commit_id === 'string' && review.commit_id) reviews.push({ head: review.commit_id, body });
+      }
+      if (rows.length < 100) break;
+    }
+    return reviews;
+  }
+
   async head_already_reviewed(pr: number, head: string, require_agent = false): Promise<boolean> {
     const marker = `head=${head.slice(0, 10)}`;
     for (let page = 1; page <= 20; page++) {

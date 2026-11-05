@@ -123,7 +123,7 @@ trap 'goby_proxy_stop' EXIT
 # Prepare talks to GitHub, so it runs before the drop and while the token is in this process.
 GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
 GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" GOBY_MAX_FINDINGS="${GOBY_MAX_FINDINGS:-30}" \
-GOBY_GATE="${GOBY_GATE:-off}" \
+GOBY_GATE="${GOBY_GATE:-off}" GOBY_MAX_ROUNDS="${GOBY_MAX_ROUNDS:-1}" \
   node /opt/goby/reviewRun.js prepare | tee "$OUT/prepare.json"
 
 if grep -q '"reuse":true' "$OUT/prepare.json"; then
@@ -220,4 +220,5 @@ goby_proxy_stop
 GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
 GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" GOBY_AGENT_OUT="$AGENT_OUT" \
 GOBY_ELAPSED_S="$AGENT_ELAPSED" GOBY_MAX_FINDINGS="${GOBY_MAX_FINDINGS:-30}" GOBY_GATE="${GOBY_GATE:-off}" \
+GOBY_MAX_ROUNDS="${GOBY_MAX_ROUNDS:-1}" \
   node /opt/goby/reviewRun.js finish
