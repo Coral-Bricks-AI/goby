@@ -23,9 +23,10 @@ name: Goby review
 
 on:
   pull_request:
-    # `labeled` is here so adding `no-review` to an open pull request actually skips it:
-    # `gh pr create --label` adds the label after `opened` fires.
-    types: [opened, reopened, synchronize, ready_for_review, edited, labeled]
+    # `labeled`/`unlabeled` are here so adding `no-review` skips an open pull request and removing
+    # it starts the review: `gh pr create --label` adds the label after `opened` fires, and without
+    # `unlabeled` a pull request that loses the label is never picked up again.
+    types: [opened, reopened, synchronize, ready_for_review, edited, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -77,10 +78,13 @@ jobs:
       # state with no model involved. Turn it on when branch protection requires it; off, the review
       # posts its findings and claims nothing about merging.
       GOBY_GATE: "off"
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
     steps:
       # A container job ignores the image's ENTRYPOINT — GitHub keeps its own — so the step names
-      # it. Everything else (clone, sandbox, agent, publish) happens inside.
+      # it. Everything else (clone, sandbox, agent, publish) happens inside. The two secrets are
+      # step-scoped, not job-scoped: a job-level env is part of the container's own environment,
+      # and these belong to the one process that needs them (as in cleaners).
       - name: Review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
         run: /opt/goby/entrypoint.sh
