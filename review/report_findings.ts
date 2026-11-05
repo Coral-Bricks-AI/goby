@@ -88,7 +88,7 @@ export default function (pi: ExtensionAPI) {
 	// Budget notices are appended, never injected by rewriting the transcript: the prefix stays
 	// byte-identical, so the provider's prompt cache is not thrown away. One notice per threshold,
 	// delivered with the next turn's request.
-	pi.on('turn_end', () => {
+	pi.on('turn_end', event => {
 		const remaining = MAX_TURNS - turns;
 		if (!reported && turns < MAX_TURNS) {
 			const threshold = [10, 5, 2].find(value => remaining <= value && !warned.has(value));
@@ -107,7 +107,7 @@ export default function (pi: ExtensionAPI) {
 		wrap_up_requested = true;
 		record('blocked', { tool_calls, turns, reason: 'turns' });
 		return {
-			entries: [{
+			entries: [...event.entries, {
 				type: 'custom_message' as const,
 				customType: 'goby-wrap-up',
 				content: 'Turn budget spent. Call report_findings now with every finding you have verified; an empty array is valid. Do not start new exploration.',
