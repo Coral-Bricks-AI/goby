@@ -14,14 +14,14 @@ name: Goby cleaners
 #   inside your network, which is the only way a scan can read a private database or an
 #   internal service. Install one runner; everything else is unchanged.
 #
-# Or call it from your own workflow, pinned to a digest so the container cannot change
-# underneath you:
+# Or call it from your own workflow. It runs `:latest` by default, so a client inherits fixes and
+# defaults without editing the file; pin a digest only when you need immutable bytes:
 #
 #   jobs:
 #     scan:
 #       uses: Coral-Bricks-AI/goby/.github/workflows/cleaners-post-merge.yml@<sha>
 #       with:
-#         image: ghcr.io/coral-bricks-ai/goby-cleaners@sha256:...
+#         image: ghcr.io/coral-bricks-ai/goby-cleaners@sha256:...   # optional pin
 #       secrets:
 #         CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
 
@@ -29,11 +29,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    # Mirrors the workflow_call inputs, so a manual run can pin what a caller could pin. The
-    # fallbacks in `env` below are what a push event uses, since it has no inputs at all.
+    # Mirrors the workflow_call inputs, so a manual run can pin what a caller could pin. Empty
+    # inputs fall through to the image defaults in cleaners/defaults.env, which is what a push
+    # event uses since it has no inputs at all.
     inputs:
       image:
-        description: Cleaner image, preferably a @sha256 digest.
+        description: Cleaner image; defaults to :latest, or pin a @sha256 digest.
         type: string
         default: ghcr.io/coral-bricks-ai/goby-cleaners:latest
       runs-on:
@@ -49,17 +50,14 @@ on:
         type: string
         default: coral/deepseek-v4.1-flash-fast
       max-tools:
-        description: Tool calls one scan may make.
+        description: Tool calls one scan may make; empty uses the image default.
         type: number
-        default: 60
       issues-per-day:
-        description: Issues this repo may receive in 24h.
+        description: Issues this repo may receive in 24h; empty uses the image default.
         type: number
-        default: 3
       max-components:
-        description: Components one push may scan.
+        description: Components one push may scan; empty uses the image default.
         type: number
-        default: 4
       tools:
         description: CLEANERS_TOOLS override; empty uses the image's list.
         type: string
@@ -79,7 +77,7 @@ on:
   workflow_call:
     inputs:
       image:
-        description: Cleaner image, preferably a @sha256 digest.
+        description: Cleaner image; defaults to :latest, or pin a @sha256 digest.
         type: string
         default: ghcr.io/coral-bricks-ai/goby-cleaners:latest
       runs-on:
@@ -95,17 +93,14 @@ on:
         type: string
         default: coral/deepseek-v4.1-flash-fast
       max-tools:
-        description: Tool calls one scan may make.
+        description: Tool calls one scan may make; empty uses the image default.
         type: number
-        default: 60
       issues-per-day:
         description: Issues this repo may receive in 24h; a high finding is exempt.
         type: number
-        default: 3
       max-components:
-        description: Components one push may scan.
+        description: Components one push may scan; empty uses the image default.
         type: number
-        default: 4
       tools:
         description: CLEANERS_TOOLS override; empty uses the image's list.
         type: string
@@ -156,9 +151,9 @@ jobs:
       BEFORE: ${{ github.event.before }}
       MODEL: ${{ inputs.model || 'coral/deepseek-v4.1-flash-fast' }}
       FALLBACK_MODEL: ${{ inputs.fallback-model || 'coral/deepseek-v4.1-flash-fast' }}
-      MAX_TOOLS: ${{ inputs.max-tools || 60 }}
-      ISSUES_PER_DAY: ${{ inputs.issues-per-day || 3 }}
-      MAX_COMPONENTS: ${{ inputs.max-components || 4 }}
+      MAX_TOOLS: ${{ inputs.max-tools }}
+      ISSUES_PER_DAY: ${{ inputs.issues-per-day }}
+      MAX_COMPONENTS: ${{ inputs.max-components }}
       CLEANERS_TOOLS: ${{ inputs.tools }}
       CLEANERS_EXTENSIONS: ${{ inputs.extensions }}
       CLEANERS_TOOL_KEY_ENV: ${{ inputs.tool-key-env }}

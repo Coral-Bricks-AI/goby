@@ -3,8 +3,9 @@
 #
 # Started by the post-merge workflow as a container job, or by `docker run`, with these in the
 # environment:
-#   REPO SHA BEFORE MODEL FALLBACK_MODEL MAX_TOOLS ISSUES_PER_DAY MAX_COMPONENTS
-#   CLEANER_INDEX GITHUB_TOKEN CORALBRICKS_API_KEY
+#   REPO SHA BEFORE MODEL FALLBACK_MODEL GITHUB_TOKEN CORALBRICKS_API_KEY
+# Budgets (MAX_TOOLS, ISSUES_PER_DAY, MAX_COMPONENTS) default from /opt/cleaners/defaults.env; a
+# same-named workflow variable overrides one.
 #
 # A component is the directory that contains an INVARIANTS.md. The push decides which ones are
 # scanned: `git diff --name-only BEFORE..SHA`, intersected with those directories. When the
@@ -16,14 +17,13 @@
 # a shell it spawns, and not readable from this process's /proc entry. A non-zero exit is
 # visible as a failed task, and nothing retries it: the next push is the retry.
 set -euo pipefail
+# shellcheck source=/dev/null
+source /opt/cleaners/defaults.env
 
 : "${REPO:?}"; : "${SHA:?}"; : "${GITHUB_TOKEN:?}"
 BEFORE="${BEFORE:-}"
 MODEL="${MODEL:-coral/deepseek-v4.1-flash-fast}"
 FALLBACK_MODEL="${FALLBACK_MODEL:-coral/deepseek-v4.1-flash-fast}"
-MAX_TOOLS="${MAX_TOOLS:-60}"
-ISSUES_PER_DAY="${ISSUES_PER_DAY:-3}"
-MAX_COMPONENTS="${MAX_COMPONENTS:-4}"
 CLEANER_INDEX="${CLEANER_INDEX:-0}"
 
 WORK="${CLEANERS_WORK:-/workspace}"

@@ -127,12 +127,13 @@ def test_two_pushes_over_the_same_paths_can_drop_different_components():
 
 
 def test_the_default_cap_is_four_wherever_it_is_defaulted(tmp_path):
-    """The workflow hands the task the value; the task, the picker and the reusable workflow's
-    input also carry defaults. A half-raised cap scans three on one trigger and four on
-    another, and nobody notices until a component is silently never scanned."""
-    assert 'MAX_COMPONENTS:-4' in (HERE / "entrypoint.sh").read_text()
-    assert 'default: 4' in (HERE.parent / ".github" / "workflows"
-                            / "cleaners-post-merge.yml").read_text()
+    """The image owns the default, the picker carries one for direct use, and the workflow only
+    passes an override. A half-raised cap scans three on one trigger and four on another, and
+    nobody notices until a component is silently never scanned."""
+    assert 'MAX_COMPONENTS:=4' in (HERE / "defaults.env").read_text()
+    workflow = (HERE.parent / ".github" / "workflows"
+                / "cleaners-post-merge.yml").read_text()
+    assert 'MAX_COMPONENTS: ${{ inputs.max-components }}' in workflow
     assert '"--max", type=int, default=4' in (HERE / "plan.py").read_text()
     changed = tmp_path / "changed.txt"
     changed.write_text("".join(f"c{n}/x.py\n" for n in range(5)))
