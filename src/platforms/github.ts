@@ -206,6 +206,12 @@ export class GitHubClient {
       if (!Array.isArray(reviews)) throw new Error('Invalid GitHub review response');
       for (const review of reviews) {
         if (!object(review) || !this.bot_logins.has(review.user?.login)) continue;
+        const body = text(review.body);
+        // Ours means ours: the bot login is shared with every other workflow that posts as the app,
+        // so a review from `github-actions` is only counted when it carries our summary or marker.
+        // Otherwise an unrelated review would suppress this one for the whole pull request.
+        if (!(body.startsWith(SUMMARY_PREFIX) || body.includes(`<!-- ${MARKER} head=`))) continue;
+        if (!['COMMENTED', 'APPROVED', 'CHANGES_REQUESTED'].includes(String(review.state))) continue;
         if (typeof review.commit_id === 'string' && review.commit_id) heads.push(review.commit_id);
       }
       if (reviews.length < 100) break;

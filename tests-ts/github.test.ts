@@ -189,3 +189,16 @@ describe('thread state and completeness', () => {
     expect(await new GitHubClient('owner/repo', 't', { fetch: fetcher, botLogins: [] }).fetch_open_own_threads(1)).toEqual([]);
   });
 });
+
+describe('own review heads', () => {
+  test('a review posted as the bot login but not ours does not count', async () => {
+    // The login is shared with every workflow that posts as the app; counting those would let an
+    // unrelated review suppress a whole pull request's review.
+    const { client } = fake(() => [
+      { user: { login: 'github-actions' }, commit_id: 'foreign', state: 'COMMENTED', body: 'Devin-style summary' },
+      { user: { login: 'github-actions' }, commit_id: 'ours', state: 'COMMENTED', body: '**Goby Review** — sandboxed review\n\n<!-- goby head=ours v=1 -->' },
+      { user: { login: 'a-human' }, commit_id: 'human', state: 'COMMENTED', body: '**Goby Review** copycat' },
+    ]);
+    expect(await client.own_review_heads(1)).toEqual(['ours']);
+  });
+});
