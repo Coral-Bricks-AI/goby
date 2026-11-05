@@ -1,66 +1,6 @@
 import { createHash } from 'node:crypto';
 
-// Kept verbatim from the Python review contract.
-export const SYSTEM_PROMPT = `You are a meticulous code reviewer. You review code changes (diffs) and report
-ONLY actual bugs: logic errors, off-by-one, inverted conditions, wrong
-variable, unhandled error paths, race conditions, resource leaks, security
-issues, data corruption, crashes.
-
-Hard rules:
-- Report bugs introduced or exposed by this diff, not pre-existing issues the
-  diff does not touch.
-- Trace every changed value to where it is assigned and to every place it
-  is consumed: read the surrounding code, not just the changed lines,
-  before concluding.
-- Before dismissing a suspected issue, identify the factual claims your
-  dismissal depends on and verify each by reading the code. If the
-  verification shows a claim false, report the finding rather than dismiss
-  it. If the evidence you need could not be read at all (a read failed or
-  came back truncated), do not report the suspicion either — an unverified
-  guess is not a finding, in either direction.
-- A change that breaks a documented workflow in the repository's AGENTS.md
-  or CLAUDE.md (supplied as repository context below) is a finding — quote
-  the rule it violates.
-- Do NOT report style, naming, formatting, missing tests, documentation,
-  performance micro-optimizations, or refactoring suggestions. Bugs only.
-- If you are not confident something is a real bug, do not report it.
-- Every finding must be concrete: what breaks, under what input or state.
-- Before emitting your findings, re-walk the diff hunk by hunk and confirm
-  every changed line was considered — do not stop at the first finding.
-- Each array entry must be a bug you are affirmatively reporting. NEVER
-  include an entry whose own reasoning retracts it — no "this is actually
-  correct", "no bug", or "not reporting" entries. Finish your analysis
-  first, then emit only the findings that survived it.
-
-Output format — exactly one \`\`\`json fenced block, a JSON array, no prose
-before or after it:
-
-\`\`\`json
-[
-  {
-    "path": "<file path as it appears in the diff>",
-    "line": <1-based line number in the file AFTER the change>,
-    "end_line": <optional: last line of the buggy span, same file, >= line;
-                 the changed lines the bug spans when it covers a block.
-                 Omit it for a single-line finding>,
-    "severity": "high" | "medium" | "low",
-    "title": "<one-line summary>",
-    "detail": "<why this is a bug, what breaks, and the concrete fix>"
-  }
-]
-\`\`\`
-
-Severity scale: "high" = data loss or corruption, security exposure, a
-crash, or user-visible breakage on a common path; "medium" = wrong
-behavior on an edge case or under specific states; "low" = latent
-defect, hard to trigger, or limited blast radius. When unsure between
-two levels, pick the lower one.
-
-If the diff introduces no bugs, output an empty array: []
-`;
-
 export const SEVERITY_RANK: Readonly<Record<string, number>> = { high: 0, medium: 1, low: 2 };
-export const PR_INTENT_MAX_CHARS = 4000;
 export const REPHRASE_RATIO = 0.75;
 export type Severity = 'high' | 'medium' | 'low';
 export type Span = [number, number];
@@ -392,30 +332,4 @@ export function select_findings<T extends { severity: string }>(findings: readon
   const rank = (severity: string): number => Object.hasOwn(SEVERITY_RANK, severity) ? SEVERITY_RANK[severity] : 1;
   const ranked = [...findings].sort((a, b) => rank(a.severity) - rank(b.severity));
   return [ranked.slice(0, max_findings), Math.max(0, ranked.length - max_findings)];
-}
-export interface PrIntent { title?: string | null; body?: string | null }
-export function build_user_prompt(diff: string, repo_context: string, already_raised: readonly string[] | null = null,
-  already_resolved: readonly string[] | null = null, pr_intent: PrIntent | null = null, repo_map: string | null = null): string {
-  const parts = ['Review the following code change for bugs, following the output', 'format from your instructions exactly.'];
-  if (pr_intent && (trim(pr_intent.title || '') || trim(pr_intent.body || ''))) {
-    let body = trim(pr_intent.body || '(no description)');
-    if (Array.from(body).length > PR_INTENT_MAX_CHARS) body = Array.from(body).slice(0, PR_INTENT_MAX_CHARS).join('') + '\n…(description truncated)';
-    parts.push('', "## The author's stated intent for this change", '', `**Title:** ${pr_intent.title || '(none)'}`, '', body, '',
-      '(Intent ends. Use it to tell intended behavior from bugs — do', "NOT report the change's stated purpose as a finding, and do not", 'assume intent the description does not state.)');
-  }
-  if (trim(repo_context)) parts.push('', '## Repository context', '', trim(repo_context), '',
-    '(Context ends. It describes repo conventions — do not report its', 'contents as findings.)');
-  if (repo_map && trim(repo_map)) parts.push('', '## Repository layout (top two levels)', '', trim(repo_map), '',
-    '(Layout ends. Use these real paths to scope searches — a grep', 'scoped to the right directory costs one call instead of a walk.)');
-  if (already_raised?.length) parts.push('', '## Findings already raised on this PR — do NOT re-report them', '', ...already_raised, '',
-    'Each position above already has an open review thread — the', 'line shown, plus its whole span when a range like `12-18` is',
-    'listed. Do not include these in your output, and do not', 're-derive the same bug at an adjacent line to get around it.', 'Report only NEW bugs at other positions.');
-  if (already_resolved?.length) parts.push('', '## Findings previously raised on this PR and already resolved', '', ...already_resolved, '',
-    'Each line above was raised in an earlier review round and the', 'thread was resolved — fixed, or explained as not a bug (the',
-    'resolution says which). Do not re-derive or re-report the same', 'claim without checking the current diff: re-litigating a',
-    'resolved thread is a false positive. If this diff genuinely', 'reintroduces a resolved bug, report it — a finding at the same',
-    'position is listed in the review summary for a human to see,', 'not posted as a new thread. Otherwise report only bugs', 'not in the list above.');
-  parts.push('', '## The diff to review', '', '```diff', diff, '```', '', 'Report only bugs introduced by the diff above. Line numbers are',
-    '1-based in the file AFTER the change. Output the ```json block now.');
-  return parts.join('\n');
 }

@@ -12,7 +12,6 @@ export interface Receipt {
 }
 export const corpus = JSON.parse(readFileSync(new URL('./contract-diff.json', import.meta.url), 'utf8')) as {
   original_tests: number;
-  system_prompt: string;
   calls: Receipt[];
 };
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -38,7 +37,6 @@ export function snapshot(v: unknown): unknown {
 const parameters: Record<string, string[]> = {
   parse_findings: ['text', 'strict'],
   select_findings: ['findings', 'max_findings'],
-  build_user_prompt: ['diff', 'repo_context', 'already_raised', 'already_resolved', 'pr_intent', 'repo_map'],
   split_already_raised: ['findings', 'open_threads'],
   split_resolved_rederivations: ['findings', 'resolved_history'],
 };

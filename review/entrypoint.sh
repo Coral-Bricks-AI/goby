@@ -105,14 +105,6 @@ if [[ "$DIFF_LINES" -gt "$MAX_DIFF_LINES" ]]; then
   exit 0
 fi
 
-# --- context the reviewer is given, taken from the tree it is reviewing -----------------
-CONTEXT="$OUT/context.md"
-{
-  for file in CLAUDE.md AGENTS.md; do
-    [[ -f "$REPO_DIR/$file" ]] && { printf '### %s\n\n' "$file"; head -c 20000 "$REPO_DIR/$file"; printf '\n\n'; }
-  done
-} > "$CONTEXT" || true
-
 # --- secrets, then the agent's world -----------------------------------------------------
 goby_key_to_file "$KEY"
 goby_token_to_file

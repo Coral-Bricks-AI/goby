@@ -42,15 +42,14 @@ the proxy has one upstream.
 ## What the reviewer is given
 
 - The diff, inlined in `prompt.md` after rendering.
-- `CLAUDE.md` and `AGENTS.md` from the head commit (20 000 chars each), when present. These come
-  from the change itself and are therefore a prompt-injection surface — the review may be talked
-  out of a finding, which the gate cannot detect.
-- The PR title and body (4 000 chars), labelled as intent so the stated purpose is not reported as
-  a bug.
-- Every open goby thread on the PR, with its span: a repeat at the same place is suppressed before
-  it reaches the review.
-- The resolved threads, newest 40, with the text that resolved them: a re-derivation at the same
-  span with a similar title is withheld and listed in the summary instead of posted.
+- The repository at the head commit: a writable sandbox copy and a read-only reference, with a
+  shell. It can read `CLAUDE.md`, `AGENTS.md` and any other file itself; nothing is injected on
+  its behalf. Those files come from the change, so they are a prompt-injection surface — the
+  review may be talked out of a finding, which the gate cannot detect.
+- Open goby threads and the resolved thread history are read by the harness, not handed to the
+  reviewer. They are used after it answers: a repeat inside an open thread's span is suppressed,
+  and a re-derivation of a resolved thread with a similar title is withheld. The summary names
+  what was withheld instead of dropping it silently.
 
 ## Repositories that need more than the default image
 
@@ -64,7 +63,7 @@ egress filtering), but a warm image is faster than an install on every review.
 `src/identity.ts` holds the two status contexts (`Goby Review`, `Goby Gate`), the marker, the bot
 logins and the version. Changing a marker orphans existing threads. Receipts in
 `<!-- goby-gate {...} -->` carry the schema version, full head, base ref, SHA-256 diff digest,
-completeness, mode, unthreaded count and expected inline ids; an older schema cannot grant
+completeness, agent flag, unthreaded count and expected inline ids; an older schema cannot grant
 eligibility.
 
 Path filters live in `src/core/contract.ts`; transport and retry logic in

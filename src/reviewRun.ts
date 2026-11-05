@@ -42,9 +42,6 @@ interface Job {
   image_digest: string | null;
   diff_digest: string;
   diff_lines: number;
-  intent: { title?: string | null; body?: string | null } | null;
-  already_raised: string[];
-  already_resolved: string[];
   open_threads: contract.ThreadRecord[];
   resolved_history: ResolvedThread[];
   reuse: boolean;
@@ -135,12 +132,6 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
     }) as Promise<ResolvedThread[]>,
   ]);
   history.sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
-  let intent: Job['intent'] = null;
-  try { intent = await client.fetch_pr_intent(pr); } catch { /* intent is a guard, not evidence */ }
-
-  const raised = opened.filter(t => !t.outdated).map(t => `- \`${contract.format_thread_position(t)}\` — ${t.title}`);
-  const resolved = history.slice(0, 40).map(t => `- \`${contract.format_thread_position(t)}\` — ${t.title}${t.resolution ? ` (resolved: ${t.resolution})` : ''}`);
-  if (history.length > 40) resolved.push(`- (${history.length - 40} older resolved thread(s) omitted — this is the most recent history, not all of it.)`);
 
   // Resolved before the agent runs, so the digest in the review is the image this review used, not
   // whatever the tag points at by the time it finishes.
@@ -150,8 +141,7 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   const job: Job = {
     pr, repo: client.repo, head, base: baseRef, model: env('GOBY_MODEL'), session: `review-pr${pr}-${head.slice(0, 10)}`,
     image, image_digest: imageDigest,
-    diff_digest: digest, diff_lines: lineCount(diff), intent,
-    already_raised: raised, already_resolved: resolved,
+    diff_digest: digest, diff_lines: lineCount(diff),
     open_threads: opened, resolved_history: history, reuse, reuse_reason: reuseReason,
     reuse_kind: sameHead ? 'same-head' : budget.stop ? 'rounds' : null, incomplete,
   };
