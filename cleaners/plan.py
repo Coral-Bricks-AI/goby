@@ -25,10 +25,6 @@ import sys
 from pathlib import Path
 
 SUFFIX = "/INVARIANTS.md"
-# Temporary, for repositories that still carry the name this file had two renames ago. Removing it
-# is a one-line change once www's briefs are renamed; the fallback exists so renaming here cannot
-# silently stop a live cleaner from scanning anything.
-LEGACY_SUFFIX = "/HUNT.md"
 
 
 def components(cleaner_files: list[str]) -> tuple[list[str], list[str]]:
@@ -45,17 +41,12 @@ def components(cleaner_files: list[str]) -> tuple[list[str], list[str]]:
         path = raw.strip()
         if not path:
             continue
-        # A legacy brief is a component, not a note: logging it and then ignoring it would answer
-        # "nothing to scan" for a repository that still uses the old name.
-        if path in ("INVARIANTS.md", "HUNT.md"):
+        if path == "INVARIANTS.md":
             notes.append("ignoring the root-level brief: a component is a directory, "
                          "not the whole repo")
             continue
         if path.endswith(SUFFIX):
             directory = path[: -len(SUFFIX)]
-        elif path.endswith(LEGACY_SUFFIX):
-            notes.append(f"using the legacy component brief {path}: rename it to INVARIANTS.md")
-            directory = path[: -len(LEGACY_SUFFIX)]
         else:
             notes.append(f"ignoring {path}: a component is <directory>{SUFFIX}")
             continue

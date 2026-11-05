@@ -155,9 +155,7 @@ def decide(findings: list[dict], existing: list[dict], *,
 
 
 DEFAULT_BRIEF = "INVARIANTS.md"
-# component -> the brief this scan actually read. A repository can be mid-rename, so each issue
-# names the file its own component has; naming INVARIANTS.md for a legacy component would invite
-# somebody to create it, and the new file then shadows the HUNT.md that was being read.
+# component -> the brief this scan actually read, so an issue names the file its own component has.
 BRIEFS: dict[str, str] = {}
 
 

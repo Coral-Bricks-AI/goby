@@ -244,10 +244,10 @@ def test_the_cli_prints_the_decision():
     assert out.stdout.strip() == "warn"
 
 
-def test_a_legacy_brief_is_still_a_component(tmp_path):
-    """The fallback existed so a repository that had not renamed its briefs yet would keep working.
-    Logging the old name and then rejecting it would have answered "nothing to scan" — the silent
-    failure the fallback was for."""
+def test_a_hunt_brief_is_not_a_component():
+    """After the rename every brief is INVARIANTS.md. A stale HUNT.md must be ignored, not
+    scanned: keeping it alive would let a repository run an old brief the harness no longer
+    supports."""
     found, notes = plan.components(["services/api/HUNT.md", "services/billing/INVARIANTS.md"])
-    assert found == ["services/api", "services/billing"]
-    assert any("legacy component brief" in note for note in notes)
+    assert found == ["services/billing"]
+    assert any("HUNT.md" in note for note in notes)
