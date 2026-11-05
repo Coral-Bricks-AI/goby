@@ -24,6 +24,7 @@ RUN apt-get update \
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.4.0
 
 COPY report_finding.ts /opt/cleaners/report_finding.ts
+COPY defaults.env /opt/cleaners/defaults.env
 COPY prompt.md /opt/cleaners/prompt.md
 COPY models/ /opt/cleaners/models/
 COPY cleaner.sh /opt/cleaners/cleaner.sh

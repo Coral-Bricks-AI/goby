@@ -53,6 +53,17 @@ function keepEnv(name: string): boolean {
 }
 
 const OUT_DIR = process.env.CLEANERS_OUT ?? "/scratch/out";
+// The cap is image-owned (`cleaners/defaults.env`) and exported by the entrypoint; a numeric
+// fallback here would be a second source of truth, so a missing value fails loudly.
+function requiredInt(name: string): number {
+	const raw = process.env[name];
+	if (raw === undefined || raw.trim() === "") {
+		throw new Error(`${name} is required; the cleaners entrypoint sets it from cleaners/defaults.env`);
+	}
+	const value = Number(raw);
+	if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`);
+	return value;
+}
 // One container scans several components; without this the filing step cannot tell which
 // component a finding belongs to, and the dedupe key is component-shaped.
 const COMPONENT = process.env.CLEANERS_COMPONENT ?? "";
@@ -148,7 +159,9 @@ export default function (pi: ExtensionAPI) {
 	// unbudgeted run went to 75 turns and 81 tool calls while the prompt asked for 40.
 	// The cap has to be enforced by the harness, and it must never block the emit
 	// tools, or a run that hits the wall could not report what it already found.
-	const maxTools = Number(process.env.CLEANERS_MAX_TOOLS ?? 60);
+	// The cap is image-owned (`cleaners/defaults.env`) and exported by the entrypoint. A numeric
+	// fallback here would be a second source of truth, so a missing value fails loudly.
+	const maxTools = requiredInt("CLEANERS_MAX_TOOLS");
 	let calls = 0;
 	pi.on("tool_call", (event) => {
 		if (event.toolName === "report_finding") return;

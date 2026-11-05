@@ -41,15 +41,15 @@ jobs:
   scan:
     uses: Coral-Bricks-AI/goby/.github/workflows/cleaners-post-merge.yml@<full sha>
     with:
-      image: ghcr.io/coral-bricks-ai/goby-cleaners@sha256:...
+      image: ghcr.io/coral-bricks-ai/goby-cleaners:latest
       runs-on: ubuntu-latest
     secrets:
       CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
 ```
 
-Pin the image by digest. A tag is a moving handle, and findings are only comparable across
-weeks if the container that produced them is the same one. `cleaners-image.yml` prints the
-digest for every build.
+The workflow runs `:latest` by default, so a client inherits fixes and budget defaults without
+editing the file. `cleaners-image.yml` prints the digest for every build; put that
+`@sha256:...` in `image:` instead when you need bytes that cannot move under you.
 
 ## Components: an `INVARIANTS.md` in the directory
 
@@ -83,10 +83,10 @@ confident false claims, while one stated invariant found a real 4× admission ov
    copy. The clone stays root-owned and read-only — the finding quotes it, the sandbox is where
    reproducers run.
 3. `git diff --name-only before..after` → every `INVARIANTS.md` directory it touches. When more than
-   `MAX_COMPONENTS` (4) changed, the components with the most changed files go first and the
+   `MAX_COMPONENTS` (default 4) changed, the components with the most changed files go first and the
    log names the ones the cap dropped. No predecessor (new branch, forced push) → every
    component.
-4. One pi process per component, with its own context and its own `MAX_TOOLS` budget.
+4. One pi process per component, with its own context and its own `MAX_TOOLS` budget (default 60).
 5. Everything the cleaner reports goes through `report_finding`, then through the filing gates.
    One issue per finding.
 
@@ -182,6 +182,7 @@ A run that reported nothing is a valid result: most components on most pushes ar
 | file | role |
 |---|---|
 | `entrypoint.sh` | clone, sandbox, pick components, one scan each, file |
+| `defaults.env` | image-owned `MAX_TOOLS`, `ISSUES_PER_DAY`, `MAX_COMPONENTS`; a workflow only overrides one |
 | `cleaner.sh` | one component: render the prompt, run pi read-only, collect findings |
 | `prompt.md` | cleaner prompt; `{{INVARIANTS}}` is the component's `INVARIANTS.md` |
 | `report_finding.ts` | emit tool (`outputSchema`, repro **and** flip required) + tool-call cap |

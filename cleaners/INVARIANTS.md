@@ -66,11 +66,16 @@ the *gate* is therefore the most valuable finding this component can produce.
    `mkdir` that creates those directories.
 
 7. **The workflow supplies the trigger and nothing else.** `.github/workflows/cleaners-post-merge.yml`
-   passes `{repo, sha, before}` and the model knobs, and its `permissions:` block is the whole
-   grant: `contents: read` and `issues: write`, nothing wider. There is no receiver, no signature
-   to verify and no token to mint — the job's own `GITHUB_TOKEN` is the token. A defect here
-   looks like a scan of the wrong commit, or a job holding a permission it does not need, and
-   neither is visible from a finding.
+   passes `{repo, sha, before}`, the model choice, and any explicit budget override, and its
+   `permissions:` block is the whole grant: `contents: read` and `issues: write`, nothing wider.
+   There is no receiver, no signature to verify and no token to mint — the job's own
+   `GITHUB_TOKEN` is the token. A defect here looks like a scan of the wrong commit, or a job
+   holding a permission it does not need, and neither is visible from a finding.
+
+The three numeric defaults — `MAX_TOOLS`, `ISSUES_PER_DAY`, `MAX_COMPONENTS` — live in
+`cleaners/defaults.env`. A workflow only overrides one, so a change there reaches every client
+through `:latest`; a numeric fallback in the entrypoint or the workflow is the duplication this
+rule exists to prevent.
 
 ## Known-fragile areas
 
