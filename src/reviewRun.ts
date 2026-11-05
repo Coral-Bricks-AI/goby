@@ -296,8 +296,11 @@ async function gate(client: GitHubClient): Promise<number> {
 async function fail(client: GitHubClient): Promise<number> {
   const reason = env('GOBY_FAIL_REASON');
   await post_status(client, env('GOBY_HEAD'), 'error', `Review failed: ${reason}`);
-  await post_gate_status(client, env('GOBY_HEAD'), 'error', `Review failed: ${reason}`);
-  console.log(JSON.stringify({ phase: 'failed', reason }));
+  // With the gate off nothing posted a pending gate status, so posting an error here leaves a
+  // stale red `Goby Gate` that the successful path never clears. Mirror the review status only
+  // when the gate is actually part of this repository's policy.
+  if (gate_enabled()) await post_gate_status(client, env('GOBY_HEAD'), 'error', `Review failed: ${reason}`);
+  console.log(JSON.stringify({ phase: 'failed', reason, gate: gate_enabled() ? 'error' : 'off' }));
   return 1;
 }
 

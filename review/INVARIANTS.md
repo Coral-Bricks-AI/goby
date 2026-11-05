@@ -5,8 +5,8 @@
 
 1. A review that cannot run says so, and never posts a green status. A missing key, an unreachable
    proxy, a clone that failed, an agent that exited without calling `report_findings` — each one
-   resolves both statuses and exits non-zero. A pending status left behind blocks a pull request
-   with nothing to read.
+   resolves the review status (and the gate status when the gate is on) and exits non-zero. A
+   pending status left behind blocks a pull request with nothing to read.
 2. Nothing reaches the agent except what `review/entrypoint.sh` chooses. The agent runs as uid 10001
    under `env -i`; the GitHub token is a root-only file and the model key is behind the loopback
    proxy. Any variable added to that environment is a credential decision, not a convenience.
