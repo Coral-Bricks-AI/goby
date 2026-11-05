@@ -244,10 +244,9 @@ def test_the_cli_prints_the_decision():
     assert out.stdout.strip() == "warn"
 
 
-def test_a_hunt_brief_is_not_a_component():
-    """After the rename every brief is INVARIANTS.md. A stale HUNT.md must be ignored, not
-    scanned: keeping it alive would let a repository run an old brief the harness no longer
-    supports."""
-    found, notes = plan.components(["services/api/HUNT.md", "services/billing/INVARIANTS.md"])
+def test_a_stale_brief_is_not_a_component():
+    """Every component brief is INVARIANTS.md. A stale filename must be ignored, not scanned:
+    keeping it alive would let a repository run a brief the harness no longer supports."""
+    found, notes = plan.components(["services/api/OLD.md", "services/billing/INVARIANTS.md"])
     assert found == ["services/billing"]
-    assert any("HUNT.md" in note for note in notes)
+    assert any("OLD.md" in note for note in notes)
