@@ -5,15 +5,16 @@
 
 1. A review that cannot run says so, and never posts a green status. A missing key, an unreachable
    proxy, a clone that failed, an agent that exited without calling `report_findings` — each one
-   resolves both statuses and exits non-zero. A pending status left behind blocks a pull request
-   with nothing to read.
+   resolves the review status (and the gate status when the gate is on) and exits non-zero. A
+   pending status left behind blocks a pull request with nothing to read.
 2. Nothing reaches the agent except what `review/entrypoint.sh` chooses. The agent runs as uid 10001
    under `env -i`; the GitHub token is a root-only file and the model key is behind the loopback
    proxy. Any variable added to that environment is a credential decision, not a convenience.
 3. Every shell command has a wall clock and every review has a turn budget. `createBashTool(cwd,
    options)` takes the working directory first, pi's bash timeout is in **seconds**, and pi has no
    turn cap of its own — a mistake in any of the three turns a four-minute review into a fifteen
-   minute hang.
+   minute hang. The numbers live in `review/defaults.env`, so a change there reaches every
+   consumer through the image; a workflow only overrides one.
 4. The diff the reviewer reads is `merge-base..head` for the commits GitHub names, not `base..head`.
    A base branch that moved on would otherwise appear as reversed changes in the review.
 5. The receipt binds what the gate will re-read: GitHub's diff digest, the full head, the base ref.

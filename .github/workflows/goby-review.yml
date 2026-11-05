@@ -60,20 +60,12 @@ jobs:
       GOBY_BASE: ${{ github.event.pull_request.base.sha }}
       GOBY_PROVIDER: coral
       GOBY_MODEL: deepseek-v4.1-flash-fast
-      # Turns, not tool calls: the model decides how much work fits in a turn, so a turn budget is
-      # the one that bounds the run. pi has no cap of its own; the extension counts `turn_start`.
-      # One review per pull request. A later push does not start a second round: fixes after
-      # that are the post-merge cleaner's job, and re-reading the same change costs a model
-      # call per push to say the same thing again.
-      GOBY_MAX_ROUNDS: "1"
-      GOBY_MAX_TURNS: "20"
-      GOBY_MAX_TOOL_CALLS: "80"
-      GOBY_BASH_TIMEOUT_S: "120"
-      GOBY_MAX_DIFF_LINES: "10000"
+      # Budgets — turns, tool calls, the bash timeout, the diff cap, the finding cap and the number
+      # of reviews per pull request — are image defaults in review/defaults.env. Set one here only
+      # to override it for this repository.
       # Alias of `container.image` above — edit the anchor, not this line, or the review would
       # report a digest for an image it did not run.
       GOBY_IMAGE: *goby_image
-      GOBY_MAX_FINDINGS: "30"
       # The gate is the second status ("Goby Gate"), an eligibility verdict recomputed from GitHub
       # state with no model involved. Turn it on when branch protection requires it; off, the review
       # posts its findings and claims nothing about merging.

@@ -116,16 +116,31 @@ test('only the default branch may move the moving tag', () => {
 
 test('the reviewer is bounded by turns, a command timeout and a job timeout', () => {
   // pi has no turn cap of its own, and a shell command with no wall clock can hang until the job
-  // timeout — which is how a four-minute review turned into fifteen minutes.
+  // timeout — which is how a four-minute review turned into fifteen minutes. The numbers are image
+  // defaults, so a change reaches every consumer through `:latest` instead of a workflow edit.
   for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
     const text = read(file);
-    expect(text).toContain('GOBY_MAX_TURNS: "20"');
-    expect(text).toContain('GOBY_BASH_TIMEOUT_S: "120"');
+    expect(text).not.toContain('GOBY_MAX_TURNS:');
+    expect(text).not.toContain('GOBY_BASH_TIMEOUT_S:');
     expect(text).toContain('timeout-minutes: 15');
   }
+  const defaults = read('review/defaults.env');
+  expect(defaults).toContain('GOBY_MAX_TURNS:=50');
+  expect(defaults).toContain('GOBY_BASH_TIMEOUT_S:=120');
+  expect(read('review/entrypoint.sh')).toContain('source /opt/goby/defaults.env');
+  expect(read('review/Dockerfile')).toContain('review/defaults.env');
   const extension = read('review/report_findings.ts');
   expect(extension).toContain("pi.on('turn_start'");
   expect(extension).toContain('turns > MAX_TURNS');
+  // Budget notices and the wrap-up turn are append-only: a custom message is added to the turn
+  // boundary, never a rewrite of the transcript prefix.
+  expect(extension).toContain("pi.on('turn_end'");
+  expect(extension).toContain("customType: 'goby-budget'");
+  expect(extension).toContain('event.entries');
+  // `nextTurn` only flushes on a new agent run, which `pi --print` never starts; the notice has to
+  // go through the boundary entries instead.
+  expect(extension).not.toContain('pi.sendMessage');
+  expect(extension).toContain('continue: true');
   // The bash tool takes cwd first: passing options in that slot silently drops both the env filter
   // and the timeout.
   expect(extension).toContain('createBashTool(process.cwd(), {');
@@ -148,8 +163,9 @@ test('the reviewer\'s own code carries briefs, so a cleaner can debug the review
 });
 
 test('a pull request is reviewed once by default', () => {
+  expect(read('review/defaults.env')).toContain('GOBY_MAX_ROUNDS:=1');
   for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
-    expect(read(file)).toContain('GOBY_MAX_ROUNDS: "1"');
+    expect(read(file)).not.toContain('GOBY_MAX_ROUNDS:');
   }
   expect(read('docs/configuration.md')).toContain('reviews per pull request');
 });

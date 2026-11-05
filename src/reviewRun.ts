@@ -14,7 +14,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolve_gate_target, type GateTarget } from './core/gateEvent.ts';
-import { caveat_for } from './core/caveat.ts';
+import { caveats_for } from './core/caveat.ts';
 import { review_budget } from './core/rounds.ts';
 import { gate_enabled } from './core/flags.ts';
 import { resolve_digest } from './core/image.ts';
@@ -65,9 +65,12 @@ function optionalEnv(name: string): string | undefined {
   const value = process.env[name];
   return value === undefined || value.trim() === '' ? undefined : value.trim();
 }
-function intEnv(name: string, fallback: number): number {
+function intEnv(name: string, fallback?: number): number {
   const raw = optionalEnv(name);
-  if (raw === undefined) return fallback;
+  if (raw === undefined) {
+    if (fallback !== undefined) return fallback;
+    throw new Error(`${name} is required; the entrypoint sets it from review/defaults.env`);
+  }
   if (!/^[0-9]+$/.test(raw)) throw new Error(`${name} must be a non-negative integer`);
   return Number(raw);
 }
@@ -107,7 +110,7 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   // Reviews per pull request, default 1: a later push does not start a second round. Fixes after
   // that are the cleaner's job, and a reviewer that keeps reading the same change costs a model call
   // per push to say the same thing again.
-  const maxRounds = intEnv('GOBY_MAX_ROUNDS', 1);
+  const maxRounds = intEnv('GOBY_MAX_ROUNDS');
   const prior = (await client.own_reviews(pr).catch(() => []))
     .map(review => ({ head: review.head, complete: parseReceipt(review.body, review.head)?.complete === true }));
   const budget = review_budget(maxRounds, prior, head);
@@ -153,7 +156,7 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
 async function finish(out: string, client: GitHubClient, warn: (m: string) => void): Promise<number> {
   const job = JSON.parse(await readFile(join(out, 'job.json'), 'utf8')) as Job;
   const diff = await readFile(join(out, 'diff.patch'), 'utf8');
-  const maxFindings = intEnv('GOBY_MAX_FINDINGS', 30);
+  const maxFindings = intEnv('GOBY_MAX_FINDINGS');
 
   if (job.reuse) {
     await post_status(client, job.head, 'success', job.reuse_reason ?? 'Complete review reused on unchanged head');
@@ -177,12 +180,8 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   // A spent tool budget means the scan was bounded: the reviewer answered, and saying otherwise
   // would block every large pull request on a cap we chose.
   const incomplete: string[] = [...job.incomplete];
-  const caveats: string[] = [];
+  const caveats = caveats_for(records);
   for (const record of records) {
-    // One blocked record per blocked tool call, so the same sentence arrives many times; the reader
-    // needs it once.
-    const caveat = caveat_for(record);
-    if (caveat && !caveats.includes(caveat)) caveats.push(caveat);
     if (record.kind !== 'findings' || !Array.isArray(record.findings)) continue;
     emitted.push(...(record.findings as unknown[]));
   }
@@ -293,8 +292,11 @@ async function gate(client: GitHubClient): Promise<number> {
 async function fail(client: GitHubClient): Promise<number> {
   const reason = env('GOBY_FAIL_REASON');
   await post_status(client, env('GOBY_HEAD'), 'error', `Review failed: ${reason}`);
-  await post_gate_status(client, env('GOBY_HEAD'), 'error', `Review failed: ${reason}`);
-  console.log(JSON.stringify({ phase: 'failed', reason }));
+  // With the gate off nothing posted a pending gate status, so posting an error here leaves a
+  // stale red `Goby Gate` that the successful path never clears. Mirror the review status only
+  // when the gate is actually part of this repository's policy.
+  if (gate_enabled()) await post_gate_status(client, env('GOBY_HEAD'), 'error', `Review failed: ${reason}`);
+  console.log(JSON.stringify({ phase: 'failed', reason, gate: gate_enabled() ? 'error' : 'off' }));
   return 1;
 }
 

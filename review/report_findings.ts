@@ -46,20 +46,34 @@ const keepEnv = (name: string): boolean =>
 // Its own directory: findings are the reviewer's evidence, and it must not be able to rewrite the
 // job description it is judged against.
 const OUT = process.env.GOBY_AGENT_OUT ?? '/workspace/out/agent';
+// The budget numbers are image-owned (`review/defaults.env`) and exported by the entrypoint. A
+// numeric fallback here would be a second source of truth, so a missing value fails loudly.
+function requiredInt(name: string): number {
+	const raw = process.env[name];
+	if (raw === undefined || raw.trim() === '') {
+		throw new Error(`${name} is required; the review entrypoint sets it from review/defaults.env`);
+	}
+	const value = Number(raw);
+	if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`);
+	return value;
+}
 // A shell with no wall clock is how a review runs for half an hour: the model asks for something
 // that waits, and nothing interrupts it until the job's own timeout. Every command gets one.
 // The unit is seconds, because that is what pi's bash operations take and convert themselves —
 // multiplying here produced a "120 second" limit of roughly 33 hours.
-const COMMAND_TIMEOUT_S = Number(process.env.GOBY_BASH_TIMEOUT_S ?? 120);
+const COMMAND_TIMEOUT_S = requiredInt('GOBY_BASH_TIMEOUT_S');
 const FINDINGS = join(OUT, 'findings.jsonl');
 // Caps are a property of the harness, not a suggestion in the prompt. pi has no turn cap of its own
 // — cleaners measured that: an unbudgeted run went to 75 turns against a prompt asking for 40 — so
 // the turn limit is counted here from `turn_start`, and the tool-call cap stays as the backstop.
-const MAX_TURNS = Number(process.env.GOBY_MAX_TURNS ?? 20);
-const MAX_TOOL_CALLS = Number(process.env.GOBY_MAX_TOOL_CALLS ?? 80);
+const MAX_TURNS = requiredInt('GOBY_MAX_TURNS');
+const MAX_TOOL_CALLS = requiredInt('GOBY_MAX_TOOL_CALLS');
 
 let tool_calls = 0;
 let turns = 0;
+let reported = false;
+let wrap_up_requested = false;
+const warned = new Set<number>();
 
 function record(kind: string, payload: unknown) {
 	mkdirSync(OUT, { recursive: true });
@@ -69,6 +83,42 @@ function record(kind: string, payload: unknown) {
 export default function (pi: ExtensionAPI) {
 	pi.on('turn_start', () => {
 		turns += 1;
+	});
+
+	// Budget notices are appended at the turn boundary, never by rewriting the transcript: the
+	// prefix stays byte-identical, so the provider's prompt cache is not thrown away. The boundary
+	// entry is included in the next request within this run; `sendMessage` with
+	// `deliverAs: 'nextTurn'` only flushes when a new agent run starts, which `pi --print` never
+	// does.
+	pi.on('turn_end', event => {
+		const entries = [...event.entries];
+		const remaining = MAX_TURNS - turns;
+		if (!reported && turns < MAX_TURNS) {
+			const threshold = [10, 5, 2].find(value => remaining <= value && !warned.has(value));
+			if (threshold !== undefined) {
+				warned.add(threshold);
+				entries.push({
+					type: 'custom_message' as const,
+					customType: 'goby-budget',
+					content: `Review budget: ${remaining} turn(s) left. Start converging: verify the strongest remaining suspicion and call report_findings before the cap.`,
+					display: false,
+				});
+			}
+		}
+		if (reported || wrap_up_requested || turns < MAX_TURNS) {
+			return entries.length > event.entries.length ? { entries } : undefined;
+		}
+		// One guaranteed wrap-up turn. Without it a run that reaches the cap with no pending tool
+		// call can settle in prose and never report, which the harness treats as a failed review.
+		wrap_up_requested = true;
+		record('blocked', { tool_calls, turns, reason: 'turns' });
+		entries.push({
+			type: 'custom_message' as const,
+			customType: 'goby-wrap-up',
+			content: 'Turn budget spent. Call report_findings now with every finding you have verified; an empty array is valid. Do not start new exploration.',
+			display: false,
+		});
+		return { entries, continue: true };
 	});
 
 	pi.on('tool_call', event => {
@@ -134,6 +184,7 @@ export default function (pi: ExtensionAPI) {
 		// produced a tool the model could call and the runtime could not run.
 		outputSchema: parameters,
 		async execute(_id: string, args: { findings: unknown[] }) {
+			reported = true;
 			record('findings', { findings: args.findings, tool_calls, turns });
 			return {
 				content: [{ type: 'text', text: `recorded ${args.findings.length} finding(s)` }],
