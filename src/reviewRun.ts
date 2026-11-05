@@ -167,8 +167,10 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   const incomplete: string[] = [...job.incomplete];
   const caveats: string[] = [];
   for (const record of records) {
+    // One blocked record per blocked tool call, so the same sentence arrives many times; the reader
+    // needs it once.
     const caveat = caveat_for(record);
-    if (caveat) caveats.push(caveat);
+    if (caveat && !caveats.includes(caveat)) caveats.push(caveat);
     if (record.kind !== 'findings' || !Array.isArray(record.findings)) continue;
     emitted.push(...(record.findings as unknown[]));
   }
