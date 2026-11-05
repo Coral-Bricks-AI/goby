@@ -83,10 +83,10 @@ confident false claims, while one stated invariant found a real 4× admission ov
    copy. The clone stays root-owned and read-only — the finding quotes it, the sandbox is where
    reproducers run.
 3. `git diff --name-only before..after` → every `INVARIANTS.md` directory it touches. When more than
-   `MAX_COMPONENTS` (default 4) changed, the components with the most changed files go first and the
+   `MAX_COMPONENTS` (see `cleaners/defaults.env`) changed, the components with the most changed files go first and the
    log names the ones the cap dropped. No predecessor (new branch, forced push) → every
    component.
-4. One pi process per component, with its own context and its own `MAX_TOOLS` budget (default 60).
+4. One pi process per component, with its own context and its own `MAX_TOOLS` budget (see `cleaners/defaults.env`).
 5. Everything the cleaner reports goes through `report_finding`, then through the filing gates.
    One issue per finding.
 
@@ -165,7 +165,8 @@ A single component, without the container, from a worktree you own:
 export PI_CODING_AGENT_DIR=/tmp/pi-cleaners-agent
 cp cleaners/models/coral.json "$PI_CODING_AGENT_DIR/models.json"
 export PI_EXTENSION=$PWD/cleaners/report_finding.ts
-export CLEANERS_JSON=1 CLEANERS_MAX_TOOLS=60 CLEANERS_SANDBOX=/tmp/sandbox
+# any budget; the image default lives in cleaners/defaults.env
+export CLEANERS_JSON=1 CLEANERS_MAX_TOOLS=100 CLEANERS_SANDBOX=/tmp/sandbox
 cp -a . /tmp/sandbox && rm -rf /tmp/sandbox/.git
 bash cleaners/cleaner.sh --repo-dir $PWD --component <component dir> \
   --sha $(git rev-parse --short HEAD) --before $(git rev-parse --short HEAD~1) \

@@ -12,12 +12,12 @@ ROOT = HERE.parent
 
 def test_the_numeric_defaults_live_in_the_image():
     defaults = (HERE / "defaults.env").read_text()
-    assert ': "${MAX_TOOLS:=60}"' in defaults
+    assert ': "${MAX_TOOLS:=200}"' in defaults
     assert ': "${ISSUES_PER_DAY:=3}"' in defaults
     assert ': "${MAX_COMPONENTS:=4}"' in defaults
     entrypoint = (HERE / "entrypoint.sh").read_text()
     assert "source /opt/cleaners/defaults.env" in entrypoint
-    for fallback in ('MAX_TOOLS="${MAX_TOOLS:-60}"', 'ISSUES_PER_DAY="${ISSUES_PER_DAY:-3}"',
+    for fallback in ('MAX_TOOLS="${MAX_TOOLS:-200}"', 'ISSUES_PER_DAY="${ISSUES_PER_DAY:-3}"',
                      'MAX_COMPONENTS="${MAX_COMPONENTS:-4}"'):
         assert fallback not in entrypoint
     assert "COPY defaults.env /opt/cleaners/defaults.env" in (HERE / "Dockerfile").read_text()
