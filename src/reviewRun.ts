@@ -50,6 +50,12 @@ interface Job {
   reuse: boolean;
   /** Why the reviewer did not run, when it did not. */
   reuse_reason: string | null;
+  /**
+   * `same-head` means a receipt exists for this exact commit, so the gate can be recomputed.
+   * `rounds` means this commit was never reviewed: there is no evidence to gate, and asking for it
+   * would fail closed forever.
+   */
+  reuse_kind: 'same-head' | 'rounds' | null;
   incomplete: string[];
 }
 
@@ -146,7 +152,8 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
     image, image_digest: imageDigest,
     diff_digest: digest, diff_lines: lineCount(diff), intent,
     already_raised: raised, already_resolved: resolved,
-    open_threads: opened, resolved_history: history, reuse, reuse_reason: reuseReason, incomplete,
+    open_threads: opened, resolved_history: history, reuse, reuse_reason: reuseReason,
+    reuse_kind: sameHead ? 'same-head' : budget.stop ? 'rounds' : null, incomplete,
   };
   await writeFile(join(out, 'job.json'), JSON.stringify(job, null, 2) + '\n');
   console.log(JSON.stringify({ phase: 'prepared', reuse, open_threads: opened.length, resolved_history: history.length, diff_lines: job.diff_lines, diff_digest: digest }));
@@ -160,7 +167,9 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
 
   if (job.reuse) {
     await post_status(client, job.head, 'success', job.reuse_reason ?? 'Complete review reused on unchanged head');
-    if (!gate_enabled()) {
+    // A commit that was never reviewed has no receipt, so a gate check for it can only fail closed
+    // and stay failed: every later push would repeat it. The review status alone carries the answer.
+    if (!gate_enabled() || job.reuse_kind !== 'same-head') {
       console.log(JSON.stringify({ phase: 'reused', gate: 'off' }));
       return 0;
     }
