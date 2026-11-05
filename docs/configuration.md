@@ -29,18 +29,19 @@ the proxy has one upstream.
 
 ## Bounds
 
-The numbers live in `review/defaults.env` inside the image, so changing one there reaches every
-consumer through the image tag; a workflow sets a variable only to override it for that repository.
+The six `GOBY_*` bounds below default from `review/defaults.env` inside the image, so changing one
+there reaches every consumer through the image tag; a workflow sets a variable only to override it
+for that repository.
 
-| variable | default | meaning |
-|---|---|---|
-| `GOBY_MAX_ROUNDS` | 1 | reviews per pull request; a later push reuses the first one and says so in the status. Incompatible with requiring the gate: a push after the only review has no receipt to gate, so the gate is not recomputed for it |
-| `GOBY_MAX_TURNS` | 50 | model turns one review may take; pi has no cap, so the emit extension counts `turn_start` and gives the reviewer budget notices at 10, 5 and 2 turns left |
-| `GOBY_MAX_TOOL_CALLS` | 80 | tool calls, the backstop when a single turn does a lot of work |
-| `GOBY_BASH_TIMEOUT_S` | 120 | wall clock for one shell command; a command with none can run until the job timeout |
-| `GOBY_MAX_DIFF_LINES` | 10000 | larger diffs are skipped: the review says so and the gate fails closed |
-| `GOBY_MAX_FINDINGS` | 30 | findings posted, highest severity first; the rest are counted in the summary |
-| job `timeout-minutes` | 15 | the outer backstop |
+| variable | meaning |
+|---|---|
+| `GOBY_MAX_ROUNDS` | reviews per pull request; a later push reuses the first one and says so in the status. Incompatible with requiring the gate: a push after the only review has no receipt to gate, so the gate is not recomputed for it |
+| `GOBY_MAX_TURNS` | model turns one review may take; pi has no cap, so the emit extension counts `turn_start` and gives the reviewer budget notices at 10, 5 and 2 turns left |
+| `GOBY_MAX_TOOL_CALLS` | tool calls, the backstop when a single turn does a lot of work |
+| `GOBY_BASH_TIMEOUT_S` | wall clock for one shell command; a command with none can run until the job timeout |
+| `GOBY_MAX_DIFF_LINES` | larger diffs are skipped: the review says so and the gate fails closed |
+| `GOBY_MAX_FINDINGS` | findings posted, highest severity first; the rest are counted in the summary |
+| job `timeout-minutes` | the outer backstop, set in the workflow |
 
 ## What the reviewer is given
 
