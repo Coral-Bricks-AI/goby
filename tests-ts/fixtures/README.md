@@ -1,8 +1,8 @@
 # Contract and diff corpus
 
-`contract-diff.json` is a checked-in fixture corpus: 453 recorded calls plus the
-exact system prompt, covering the pure contract and diff behavior. `bun test`
-loads it as JSON; nothing else is involved at test time.
+`contract-diff.json` is a checked-in fixture corpus: 437 recorded calls covering
+the pure contract and diff behavior. `bun test` loads it as JSON; nothing else is
+involved at test time.
 
 The corpus was captured while porting Goby from its Python prototype, and that
 prototype is gone. It is a **fixture now, not a generated artifact**: there is no
@@ -39,8 +39,6 @@ it: most of them cost someone a wrong comment.
   order, so the corpus and the call sites read the same. `Hunks` is a path-keyed
   object; `parse_hunks` uses a null prototype so all file names are safe. `Hunk`
   accepts `{new_start, new_count}`.
-- `build_user_prompt` keeps a positional argument order, including nullable
-  optional lists, PR intent, and repository map.
 
 ## Boundaries
 

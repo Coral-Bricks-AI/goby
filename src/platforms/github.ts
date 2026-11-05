@@ -1,10 +1,6 @@
 import { BOT_LOGINS, MARKER, SUMMARY_PREFIX } from '../identity.ts';
 
 const API = 'https://api.github.com';
-/** Same per-file limit the contents API applies, so a read cannot depend on the transport. */
-export const BLOB_TEXT_MAX = 1024 * 1024;
-export const CONTEXT_PATHS = ['CLAUDE.md', 'AGENTS.md'] as const;
-const CONTEXT_MAX_CHARS = 20_000;
 // JSON at the transport boundary is intentionally dynamic; exported records
 // below have structural types so the pure review contract need not import I/O.
 type JsonObject = Record<string, any>;
@@ -34,13 +30,6 @@ export type ThreadRecord = {
   resolution?: string;
   resolved?: boolean;
 };
-
-export interface SummaryRecord {
-  node_id: string;
-  sha: string;
-  minimized: boolean;
-  agent?: boolean;
-}
 
 export class GitHubError extends Error {
   constructor(public readonly code: number, path: string, body: string) {
@@ -162,23 +151,8 @@ export class GitHubClient {
     return sha;
   }
 
-  async fetch_pr_intent(pr: number): Promise<{ title: string; body: string }> {
-    const data = JSON.parse(await this.get(`/repos/${this.repo}/pulls/${pr}`));
-    return { title: text(data.title), body: text(data.body) };
-  }
-
   async fetch_diff(pr: number): Promise<string> {
     return this.get(`/repos/${this.repo}/pulls/${pr}`, 'application/vnd.github.v3.diff');
-  }
-
-
-  async fetch_path_history(path: string, at_ref: string, limit = 10): Promise<{ sha: string; date: string; message: string }[]> {
-    const query = new URLSearchParams({ path, sha: at_ref, per_page: String(limit) });
-    const data = JSON.parse(await this.get(`/repos/${this.repo}/commits?${query}`));
-    if (!Array.isArray(data)) return [];
-    return data.filter(object).map(c => ({
-      sha: text(c.sha), date: text(c.commit?.author?.date), message: text(c.commit?.message),
-    }));
   }
 
   /** Like Python, examines the first 100 statuses and selects by updated_at. */
@@ -192,7 +166,6 @@ export class GitHubClient {
     return latest ? (latest.state ?? null) : null;
   }
 
-  /** Legacy reviewed-head guard; gate receipt validation belongs to the caller. */
   /**
    * The reviews this project has posted on a pull request: the commit each was for, and its body.
    *
@@ -218,21 +191,6 @@ export class GitHubClient {
       if (rows.length < 100) break;
     }
     return reviews;
-  }
-
-  async head_already_reviewed(pr: number, head: string, require_agent = false): Promise<boolean> {
-    const marker = `head=${head.slice(0, 10)}`;
-    for (let page = 1; page <= 20; page++) {
-      const reviews = JSON.parse(await this.get(`/repos/${this.repo}/pulls/${pr}/reviews?per_page=100&page=${page}`));
-      for (const review of reviews) {
-        if (!object(review) || !this.bot_logins.has(review.user?.login)) continue;
-        const body = text(review.body);
-        if (!(body.includes(`${marker} -->`) || body.includes(`${marker} v=`) || review.commit_id === head)) continue;
-        if (!require_agent || body.startsWith(`${SUMMARY_PREFIX} — agentic review`)) return true;
-      }
-      if (reviews.length < 100) return false;
-    }
-    return false;
   }
 
   private own_thread_record(node: JsonObject, resolved: boolean): ThreadRecord | null {
@@ -313,13 +271,4 @@ export class GitHubClient {
     return [threads.filter(t => !t.resolved), threads.filter(t => t.resolved), complete];
   }
 
-}
-
-/** Use only after both summary and thread traversals reported complete. */
-export function summaries_to_minimize<T extends SummaryRecord>(
-  summaries: T[], open_threads: { sha?: string }[], resolved_threads: { sha?: string }[],
-): T[] {
-  const open = new Set(open_threads.map(t => t.sha).filter(Boolean));
-  const raised = new Set([...open, ...resolved_threads.map(t => t.sha).filter(Boolean)]);
-  return summaries.filter(s => !s.minimized && s.sha && !s.agent && raised.has(s.sha) && !open.has(s.sha));
 }

@@ -26,8 +26,9 @@ not proof that code is correct. Missing facts fail closed. An oversized diff
 has no complete receipt and cannot pass. Receipt fields are written by code,
 not parsed from model claims about safety.
 
-`src/core/rules.ts` defines the gate, turn budget, and review lifecycle with
-`gdp-wired`. Production executes these compiled rules directly.
+`src/core/rules.ts` defines the gate and the review lifecycle with `gdp-wired`.
+Production executes the compiled gate rule directly; the lifecycle rule is kernel-checked in CI
+but has no production consumer yet.
 `tests-ts/prove.ts` kernel-checks the gate and lifecycle laws, and tests exercise all 1024 Boolean
 gate inputs plus an unsafe completion-only mutant. This proves the rules,
 **not** GitHub authorization, model accuracy, or external API freshness.

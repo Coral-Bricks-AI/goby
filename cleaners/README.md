@@ -4,7 +4,7 @@ The post-merge half of goby. A push to `main` starts one cleaner task; it reads 
 every component that push touched, and files one GitHub issue per defect it could reproduce —
 and prove goes away when the blamed line is changed.
 
-Pre-merge review is the rest of this repo (`action.yml`): goby reads the pull request before it
+Pre-merge review is the rest of this repo (`review/`): goby reads the pull request before it
 merges, cleaners reads the default branch after. Same crew, different shift.
 
 ## Install

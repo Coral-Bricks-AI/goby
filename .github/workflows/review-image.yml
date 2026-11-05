@@ -3,8 +3,8 @@ name: review image
 # Publishes the two images the reviewer runs from, and prints the digests to pin.
 #
 # Two tags, two digests: `goby-base` is what `cleaners/` and `review/` build on, and
-# `goby-review` is what the workflow points at. Pin the review digest in the workflow — a tag is
-# a movable handle, and the bytes a review runs are the product.
+# `goby-review` is what the workflow points at. The workflow runs `:latest` and reports the digest
+# it resolved; a consumer who wants immutable bytes can pin the printed digest instead.
 
 on:
   push:
