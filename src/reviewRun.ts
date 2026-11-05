@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolve_gate_target, type GateTarget } from './core/gateEvent.ts';
 import { caveat_for } from './core/caveat.ts';
+import { review_budget } from './core/rounds.ts';
 import { gate_enabled } from './core/flags.ts';
 import { resolve_digest } from './core/image.ts';
 import { check_target } from './core/target.ts';
@@ -22,7 +23,7 @@ import * as contract from './core/contract.ts';
 import { select } from './core/selection.ts';
 import { build_summary } from './core/summary.ts';
 import { assertHead, HeadChanged, loadReceipt, refreshGate } from './core/gate.ts';
-import { diffDigest, receiptMarker, type ReviewReceipt } from './core/verdict.ts';
+import { diffDigest, parseReceipt, receiptMarker, type ReviewReceipt } from './core/verdict.ts';
 import { REVIEW_VERSION } from './identity.ts';
 import { GitHubClient } from './platforms/github.ts';
 import { post_gate_status, post_review, post_status, reply_in_thread, resolve_thread } from './platforms/publish.ts';
@@ -100,16 +101,15 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   // The receipt names the base *ref*, so that is what a reuse decision compares.
   const sameHead = Boolean(previous?.complete && previous.base_ref === baseRef && previous.diff_sha256 === digest);
 
-  // One review per pull request, by default: a later push does not start a second round. Fixes after
+  // Reviews per pull request, default 1: a later push does not start a second round. Fixes after
   // that are the cleaner's job, and a reviewer that keeps reading the same change costs a model call
   // per push to say the same thing again.
   const maxRounds = intEnv('GOBY_MAX_ROUNDS', 1);
-  const reviewedHeads = maxRounds <= 1 ? await client.own_review_heads(pr).catch(() => []) : [];
-  const alreadyReviewed = reviewedHeads.length > 0 && !reviewedHeads.includes(head);
-  const reuse = sameHead || alreadyReviewed;
-  const reuseReason = sameHead ? 'this commit was already reviewed'
-    : alreadyReviewed ? `this pull request was already reviewed at ${reviewedHeads[0].slice(0, 10)}; it is reviewed once, and the post-merge cleaner takes it from there`
-    : null;
+  const prior = (await client.own_reviews(pr).catch(() => []))
+    .map(review => ({ head: review.head, complete: parseReceipt(review.body, review.head)?.complete === true }));
+  const budget = review_budget(maxRounds, prior, head);
+  const reuse = sameHead || budget.stop;
+  const reuseReason = sameHead ? 'this commit was already reviewed' : budget.reason;
   if (!reuse) {
     if (gate_enabled()) await post_gate_status(client, head, 'pending', 'Review in progress');
     await post_status(client, head, 'pending', 'Review in progress');

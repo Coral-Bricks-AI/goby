@@ -194,17 +194,18 @@ export class GitHubClient {
 
   /** Legacy reviewed-head guard; gate receipt validation belongs to the caller. */
   /**
-   * The commits this project has already reviewed on a pull request.
+   * The reviews this project has posted on a pull request: the commit each was for, and its body.
    *
-   * A project that reviews a pull request once needs to know whether it already did, independent of
-   * which commit is current: a push after the review must not start a second round.
+   * Returned as records rather than heads because the caller has to tell a completed review from an
+   * incomplete one: only a completed review spends the round, or a failed review on the first commit
+   * would suppress every later push.
    */
-  async own_review_heads(pr: number): Promise<string[]> {
-    const heads: string[] = [];
+  async own_reviews(pr: number): Promise<{ head: string; body: string }[]> {
+    const reviews: { head: string; body: string }[] = [];
     for (let page = 1; page <= 20; page++) {
-      const reviews = JSON.parse(await this.get(`/repos/${this.repo}/pulls/${pr}/reviews?per_page=100&page=${page}`));
-      if (!Array.isArray(reviews)) throw new Error('Invalid GitHub review response');
-      for (const review of reviews) {
+      const rows = JSON.parse(await this.get(`/repos/${this.repo}/pulls/${pr}/reviews?per_page=100&page=${page}`));
+      if (!Array.isArray(rows)) throw new Error('Invalid GitHub review response');
+      for (const review of rows) {
         if (!object(review) || !this.bot_logins.has(review.user?.login)) continue;
         const body = text(review.body);
         // Ours means ours: the bot login is shared with every other workflow that posts as the app,
@@ -212,11 +213,11 @@ export class GitHubClient {
         // Otherwise an unrelated review would suppress this one for the whole pull request.
         if (!(body.startsWith(SUMMARY_PREFIX) || body.includes(`<!-- ${MARKER} head=`))) continue;
         if (!['COMMENTED', 'APPROVED', 'CHANGES_REQUESTED'].includes(String(review.state))) continue;
-        if (typeof review.commit_id === 'string' && review.commit_id) heads.push(review.commit_id);
+        if (typeof review.commit_id === 'string' && review.commit_id) reviews.push({ head: review.commit_id, body });
       }
-      if (reviews.length < 100) break;
+      if (rows.length < 100) break;
     }
-    return [...new Set(heads)];
+    return reviews;
   }
 
   async head_already_reviewed(pr: number, head: string, require_agent = false): Promise<boolean> {
