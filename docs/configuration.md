@@ -31,10 +31,12 @@ the proxy has one upstream.
 
 | variable | default | meaning |
 |---|---|---|
-| `GOBY_MAX_TOOL_CALLS` | 80 | tool calls one review may make; enforced in the emit extension, not the prompt |
+| `GOBY_MAX_TURNS` | 20 | model turns one review may take; pi has no cap, so the emit extension counts `turn_start` |
+| `GOBY_MAX_TOOL_CALLS` | 80 | tool calls, the backstop when a single turn does a lot of work |
+| `GOBY_BASH_TIMEOUT_S` | 120 | wall clock for one shell command; a command with none can run until the job timeout |
 | `GOBY_MAX_DIFF_LINES` | 10000 | larger diffs are skipped: the review says so and the gate fails closed |
 | `GOBY_MAX_FINDINGS` | 30 | findings posted, highest severity first; the rest are counted in the summary |
-| job `timeout-minutes` | 30 | the outer backstop |
+| job `timeout-minutes` | 15 | the outer backstop |
 
 ## What the reviewer is given
 

@@ -43,9 +43,9 @@ Licensed under [Apache-2.0](LICENSE).
 ## Install
 
 Copy [`review/workflow.yml`](review/workflow.yml) and
-[`examples/workflows/goby-gate.yml`](examples/workflows/goby-gate.yml) into `.github/workflows/`,
-pin the image digest, add the model key as a secret, and require **Goby Gate** plus CI in branch
-protection. Details: [`docs/quickstart.md`](docs/quickstart.md).
+[`examples/workflows/goby-gate.yml`](examples/workflows/goby-gate.yml) into `.github/workflows/`, add
+the model key as a secret, and pick what branch protection requires. The image runs `:latest`, and
+each review names the digest it resolved. Details: [`docs/quickstart.md`](docs/quickstart.md).
 
 Never use `pull_request_target` for the reviewer: it runs from the base branch with secrets
 present, and then executes the pull request.

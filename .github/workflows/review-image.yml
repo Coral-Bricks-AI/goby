@@ -56,9 +56,13 @@ jobs:
             local local_image="$1" name="$2"
             local image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${name}"
             docker tag "$local_image" "$image:$SHA"
-            docker tag "$local_image" "$image:latest"
             docker push --quiet "$image:$SHA"
-            docker push --quiet "$image:latest"
+            # `:latest` is the runtime now, so only the default branch may move it. A release tag or
+            # a dispatch against an older commit pushes its own sha and leaves `latest` alone.
+            if [[ "$GITHUB_REF" == "refs/heads/${GITHUB_DEFAULT_BRANCH:-main}" ]]; then
+              docker tag "$local_image" "$image:latest"
+              docker push --quiet "$image:latest"
+            fi
             local digest
             digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$SHA")"
             # The digest, not the tag: it is the only thing a consumer can pin that cannot move.
@@ -68,13 +72,11 @@ jobs:
           publish base:local goby-base
           publish review:local goby-review
 
-      # Pinning stays manual, and this comment is the reason: the pin lives in a workflow file, and
-      # `GITHUB_TOKEN` cannot be granted the scope that updates one. A repo variable would be
-      # writable, but `container.image` is evaluated before any step runs, so it cannot read one.
-      # The alternative is a personal token or a GitHub App installed for this purpose — more
-      # machinery than a one-line commit per publish is worth.
-      - name: Tell the reader which digest to pin
+      # Nothing else to update: the reviewer runs `:latest` and reports the digest it resolved, so
+      # publishing is the whole rollout. This line is still worth printing — it is the digest a
+      # consumer would pin if they wanted immutable bytes.
+      - name: Print the digest, for anyone who wants to pin it
         run: |
-          echo "Pin this in .github/workflows/goby-review.yml:"
+          echo "Published digest for pinning:"
           docker inspect --format '{{index .RepoDigests 0}}' \
             "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/goby-review:$(git rev-parse --short=12 HEAD)"

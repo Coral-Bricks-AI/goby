@@ -54,9 +54,9 @@ Events generated with `GITHUB_TOKEN`, including commit statuses, generally
 do not launch another Actions workflow. **Do not rely on a `status` trigger
 for Goby's default token.**
 
-Copy [the example gate workflow](../examples/workflows/goby-gate.yml), replace the
-image digest with the same one the review workflow pins, and commit it to the default
-branch. It uses:
+Copy [the example gate workflow](../examples/workflows/goby-gate.yml) and commit it to the default
+branch. It runs the same `:latest` image the reviewer does, so the check is made by the code that
+wrote the evidence. It uses:
 
 - `workflow_run` after **Goby review** completes, whether the job passes or
   is blocked;

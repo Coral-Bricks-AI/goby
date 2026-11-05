@@ -11,8 +11,9 @@ cp goby/review/workflow.yml .github/workflows/goby-review.yml
 cp goby/examples/workflows/goby-gate.yml .github/workflows/goby-gate.yml
 ```
 
-In both files, replace the image digest with the one you reviewed — `ghcr.io/coral-bricks-ai/goby-review@sha256:…`,
-printed by the image build. A tag would be a movable handle over executable code.
+Neither file needs the image edited: both run `ghcr.io/coral-bricks-ai/goby-review:latest`, and every
+review names the digest that tag resolved to. Pin a digest instead if you want bytes that cannot
+change under you.
 
 Then:
 

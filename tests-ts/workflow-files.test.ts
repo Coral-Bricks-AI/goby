@@ -13,11 +13,19 @@ test('neither workflow uses pull_request_target', () => {
   }
 });
 
-test('every workflow pins its image by digest', () => {
-  for (const file of ['review/workflow.yml', 'examples/workflows/goby-gate.yml']) {
-    for (const match of read(file).matchAll(/^\s+image:\s*(\S+)/gm)) {
-      expect(match[1]).toMatch(/@sha256:[0-9a-f]{64}$/);
-    }
+test('every workflow runs the moving tag, and passes it through for attribution', () => {
+  // Pinning meant a one-line commit per change and GitHub tokens cannot edit workflow files, so the
+  // tag is under this repository's control and the digest is recorded in the review instead.
+  for (const file of ['review/workflow.yml', 'examples/workflows/goby-gate.yml', '.github/workflows/goby-review.yml']) {
+    const text = read(file);
+    expect(text).toContain('goby-review:latest');
+    expect(text).not.toMatch(/goby-review@sha256/);
+  }
+  // Only the reviewer writes a body, so only it needs the reference handed to the publisher for
+  // digest resolution; the gate makes no model call and writes nothing but a status. The reviewer
+  // aliases it so a pin cannot move one without the other.
+  for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
+    expect(read(file)).toContain('GOBY_IMAGE: *goby_image');
   }
 });
 
@@ -58,12 +66,9 @@ test('CI stays one job on one Node version', () => {
   expect(text).toContain('bun run check');
 });
 
-test('the publish workflow tells the reader which digest to pin', () => {
-  // Automating this was tried and is not possible with `GITHUB_TOKEN`: the pin lives in a workflow
-  // file, and no permission on that token allows updating one. So the publish job prints the digest
-  // and a human makes the one-line change.
+test('the publish workflow still prints the digest, for anyone who wants to pin it', () => {
   const publish = read('.github/workflows/review-image.yml');
-  expect(publish).toContain('Tell the reader which digest to pin');
+  expect(publish).toContain('Print the digest');
   expect(publish).not.toContain('git push origin main');
   expect(publish).not.toContain('workflows:');
 });
@@ -86,4 +91,44 @@ test('every workflow parses under actionlint rules we rely on', () => {
       expect(allowed.has(match[1])).toBe(true);
     }
   }
+});
+
+
+test('the image is named once, so a pin cannot change the label without the runtime', () => {
+  // Reporting a digest for an image the job did not run is worse than reporting nothing.
+  for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
+    const text = read(file);
+    expect(text).toContain('image: &goby_image ghcr.io/coral-bricks-ai/goby-review:latest');
+    expect(text).toContain('GOBY_IMAGE: *goby_image');
+    expect(text).not.toMatch(/GOBY_IMAGE: ghcr\.io/);
+  }
+});
+
+test('only the default branch may move the moving tag', () => {
+  // `:latest` is the runtime now, so a release tag or a dispatch on an older commit must not
+  // re-publish that older image as the one everything runs.
+  const publish = read('.github/workflows/review-image.yml');
+  expect(publish).toContain('refs/heads/${GITHUB_DEFAULT_BRANCH:-main}');
+  const latestPush = publish.slice(publish.indexOf('if [[ "$GITHUB_REF"'));
+  expect(latestPush.indexOf('docker push --quiet "$image:latest"'))
+    .toBeLessThan(latestPush.indexOf('fi'));
+});
+
+test('the reviewer is bounded by turns, a command timeout and a job timeout', () => {
+  // pi has no turn cap of its own, and a shell command with no wall clock can hang until the job
+  // timeout — which is how a four-minute review turned into fifteen minutes.
+  for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
+    const text = read(file);
+    expect(text).toContain('GOBY_MAX_TURNS: "20"');
+    expect(text).toContain('GOBY_BASH_TIMEOUT_S: "120"');
+    expect(text).toContain('timeout-minutes: 15');
+  }
+  const extension = read('review/report_findings.ts');
+  expect(extension).toContain("pi.on('turn_start'");
+  expect(extension).toContain('turns > MAX_TURNS');
+  // The bash tool takes cwd first: passing options in that slot silently drops both the env filter
+  // and the timeout.
+  expect(extension).toContain('createBashTool(process.cwd(), {');
+  // pi's exec takes seconds and converts them itself; multiplying here made "120 s" ~33 hours.
+  expect(extension).not.toContain('COMMAND_TIMEOUT_S * 1000');
 });

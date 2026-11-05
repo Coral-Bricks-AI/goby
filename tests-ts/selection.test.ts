@@ -82,7 +82,7 @@ test('the cap keeps the highest severity and reports the rest as dropped', () =>
 
 test('the summary states what it withheld instead of silently shrinking', () => {
   const text = build_summary([], [], {dupes: [], resolved: []}, {
-    model: 'coral/x', head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 7,
+    model: 'coral/x', image: null, imageDigest: null, head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 7,
     elapsedS: 1.5, toolCalls: 3, droppedPaths: 1, droppedCap: 2, droppedDupe: 0,
     droppedResolved: 0, droppedRetracted: 1, incomplete: null,
   }, '9.9.9');
@@ -95,7 +95,7 @@ test('the summary states what it withheld instead of silently shrinking', () => 
 
 test('an incomplete run says so in the review body', () => {
   const text = build_summary([], [], {dupes: [], resolved: []}, {
-    model: 'm', head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 1, elapsedS: 0,
+    model: 'm', image: null, imageDigest: null, head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 1, elapsedS: 0,
     toolCalls: 0, droppedPaths: 0, droppedCap: 0, droppedDupe: 0, droppedResolved: 0,
     droppedRetracted: 0, incomplete: 'open review threads could not be read.',
   }, '9.9.9');
@@ -106,7 +106,7 @@ test('a bounded scan is a caveat, not an incomplete review', () => {
   // A spent tool budget means the reviewer stopped looking early, not that its evidence is
   // unusable. Treating it as incomplete blocked a large pull request on a cap we chose.
   const text = build_summary([], [], {dupes: [], resolved: []}, {
-    model: 'm', head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 2307, elapsedS: 146,
+    model: 'm', image: null, imageDigest: null, head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 2307, elapsedS: 146,
     toolCalls: 80, droppedPaths: 0, droppedCap: 0, droppedDupe: 0, droppedResolved: 0,
     droppedRetracted: 0, incomplete: null, caveat: 'the reviewer reached its tool-call budget.',
   }, '9.9.9');
@@ -116,9 +116,31 @@ test('a bounded scan is a caveat, not an incomplete review', () => {
 
 test('the summary reports how long the scan took, not zero', () => {
   const text = build_summary([], [], {dupes: [], resolved: []}, {
-    model: 'm', head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 13, elapsedS: 146,
+    model: 'm', image: null, imageDigest: null, head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 13, elapsedS: 146,
     toolCalls: 72, droppedPaths: 0, droppedCap: 0, droppedDupe: 0, droppedResolved: 0,
     droppedRetracted: 0, incomplete: null,
   }, '9.9.9');
   expect(text).toContain('72 tool call(s), 146.0s');
+});
+
+
+test('the review names the image it ran and the digest the tag meant', () => {
+  // `:latest` is the pinned-to-nothing case: without the digest, a finding cannot be reproduced
+  // once the tag moves on.
+  const text = build_summary([], [], {dupes: [], resolved: []}, {
+    model: 'm', head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 13, elapsedS: 146,
+    toolCalls: 72, droppedPaths: 0, droppedCap: 0, droppedDupe: 0, droppedResolved: 0,
+    droppedRetracted: 0, incomplete: null,
+    image: 'ghcr.io/coral-bricks-ai/goby-review:latest', imageDigest: 'sha256:' + 'c'.repeat(64),
+  }, '9.9.9');
+  expect(text).toContain('Image: `ghcr.io/coral-bricks-ai/goby-review:latest` (`sha256:cccc');
+});
+
+test('an unresolved digest says so rather than pretending the tag identifies the bytes', () => {
+  const text = build_summary([], [], {dupes: [], resolved: []}, {
+    model: 'm', head: 'a'.repeat(40), base: 'b'.repeat(40), diffLines: 1, elapsedS: 0,
+    toolCalls: 0, droppedPaths: 0, droppedCap: 0, droppedDupe: 0, droppedResolved: 0,
+    droppedRetracted: 0, incomplete: null, image: 'ghcr.io/x/y:latest', imageDigest: null,
+  }, '9.9.9');
+  expect(text).toContain('(digest unresolved)');
 });
