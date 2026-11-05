@@ -21,6 +21,7 @@ RUN bun build src/reviewRun.ts --target=node --outfile=/opt/goby/reviewRun.js \
  && rm -rf /build
 
 COPY review/entrypoint.sh /opt/goby/entrypoint.sh
+COPY review/defaults.env /opt/goby/defaults.env
 COPY review/prompt.md /opt/goby/prompt.md
 COPY review/report_findings.ts /opt/goby/report_findings.ts
 RUN chmod 0755 /opt/goby/entrypoint.sh

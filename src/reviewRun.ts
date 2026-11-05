@@ -65,9 +65,12 @@ function optionalEnv(name: string): string | undefined {
   const value = process.env[name];
   return value === undefined || value.trim() === '' ? undefined : value.trim();
 }
-function intEnv(name: string, fallback: number): number {
+function intEnv(name: string, fallback?: number): number {
   const raw = optionalEnv(name);
-  if (raw === undefined) return fallback;
+  if (raw === undefined) {
+    if (fallback !== undefined) return fallback;
+    throw new Error(`${name} is required; the entrypoint sets it from review/defaults.env`);
+  }
   if (!/^[0-9]+$/.test(raw)) throw new Error(`${name} must be a non-negative integer`);
   return Number(raw);
 }
@@ -107,7 +110,7 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   // Reviews per pull request, default 1: a later push does not start a second round. Fixes after
   // that are the cleaner's job, and a reviewer that keeps reading the same change costs a model call
   // per push to say the same thing again.
-  const maxRounds = intEnv('GOBY_MAX_ROUNDS', 1);
+  const maxRounds = intEnv('GOBY_MAX_ROUNDS');
   const prior = (await client.own_reviews(pr).catch(() => []))
     .map(review => ({ head: review.head, complete: parseReceipt(review.body, review.head)?.complete === true }));
   const budget = review_budget(maxRounds, prior, head);
@@ -153,7 +156,7 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
 async function finish(out: string, client: GitHubClient, warn: (m: string) => void): Promise<number> {
   const job = JSON.parse(await readFile(join(out, 'job.json'), 'utf8')) as Job;
   const diff = await readFile(join(out, 'diff.patch'), 'utf8');
-  const maxFindings = intEnv('GOBY_MAX_FINDINGS', 30);
+  const maxFindings = intEnv('GOBY_MAX_FINDINGS');
 
   if (job.reuse) {
     await post_status(client, job.head, 'success', job.reuse_reason ?? 'Complete review reused on unchanged head');

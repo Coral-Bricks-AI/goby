@@ -13,7 +13,8 @@
 3. Every shell command has a wall clock and every review has a turn budget. `createBashTool(cwd,
    options)` takes the working directory first, pi's bash timeout is in **seconds**, and pi has no
    turn cap of its own — a mistake in any of the three turns a four-minute review into a fifteen
-   minute hang.
+   minute hang. The numbers live in `review/defaults.env`, so a change there reaches every
+   consumer through the image; a workflow only overrides one.
 4. The diff the reviewer reads is `merge-base..head` for the commits GitHub names, not `base..head`.
    A base branch that moved on would otherwise appear as reversed changes in the review.
 5. The receipt binds what the gate will re-read: GitHub's diff digest, the full head, the base ref.

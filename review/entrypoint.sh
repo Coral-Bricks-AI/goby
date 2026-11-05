@@ -7,11 +7,14 @@
 #
 # Inputs (environment, from the workflow):
 #   GOBY_REPO GOBY_PR GOBY_HEAD GOBY_BASE GITHUB_TOKEN
-#   GOBY_PROVIDER GOBY_MODEL GOBY_MAX_TOOL_CALLS GOBY_MAX_DIFF_LINES GOBY_MAX_FINDINGS
+#   GOBY_PROVIDER GOBY_MODEL (optional; the image has a default)
 #   CORALBRICKS_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
+# Budgets default from /opt/goby/defaults.env; a same-named workflow variable overrides one.
 set -euo pipefail
 # shellcheck source=/dev/null
 source /opt/goby/lib.sh
+# shellcheck source=/dev/null
+source /opt/goby/defaults.env
 
 # Gate mode rechecks eligibility only: no clone, no model, no key. It answers "is the evidence on
 # this pull request still sufficient", which is what a workflow_run handoff needs.
@@ -39,7 +42,7 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 PROVIDER="${GOBY_PROVIDER:-coral}"
 MODEL="${GOBY_MODEL:-deepseek-v4.1-flash-fast}"
-MAX_DIFF_LINES="${GOBY_MAX_DIFF_LINES:-10000}"
+MAX_DIFF_LINES="$GOBY_MAX_DIFF_LINES"
 WORK="${GOBY_WORK:-/workspace}"
 REPO_DIR="$WORK/repo"
 SANDBOX="$WORK/sandbox"
@@ -114,8 +117,8 @@ trap 'goby_proxy_stop' EXIT
 
 # Prepare talks to GitHub, so it runs before the drop and while the token is in this process.
 GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
-GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" GOBY_MAX_FINDINGS="${GOBY_MAX_FINDINGS:-30}" \
-GOBY_GATE="${GOBY_GATE:-off}" GOBY_MAX_ROUNDS="${GOBY_MAX_ROUNDS:-1}" \
+GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" \
+GOBY_GATE="${GOBY_GATE:-off}" \
   node /opt/goby/reviewRun.js prepare | tee "$OUT/prepare.json"
 
 if grep -q '"reuse":true' "$OUT/prepare.json"; then
@@ -176,7 +179,7 @@ exec pi --print --model "$PROVIDER/$MODEL" --no-session --no-extensions \
 RUN
 chmod 755 "$OUT/run-agent.sh"
 
-goby_log "review $GOBY_REPO#$GOBY_PR model=$MODEL max_tool_calls=${GOBY_MAX_TOOL_CALLS:-80}"
+goby_log "review $GOBY_REPO#$GOBY_PR model=$MODEL max_tool_calls=$GOBY_MAX_TOOL_CALLS"
 AGENT_STARTED=$SECONDS
 set +e
 goby_run_as_agent \
@@ -186,9 +189,9 @@ goby_run_as_agent \
   GOBY_SESSION_ID="review-pr${GOBY_PR}-${GOBY_HEAD:0:10}" \
   GOBY_AGENT_OUT="$AGENT_OUT" GOBY_OUT="$OUT" GOBY_SCRATCH="$AGENT_OUT/scratch" \
   GOBY_SANDBOX="$SANDBOX" GOBY_REPO="$GOBY_REPO" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
-  GOBY_MAX_TOOL_CALLS="${GOBY_MAX_TOOL_CALLS:-80}" \
-  GOBY_MAX_TURNS="${GOBY_MAX_TURNS:-20}" \
-  GOBY_BASH_TIMEOUT_S="${GOBY_BASH_TIMEOUT_S:-120}" \
+  GOBY_MAX_TOOL_CALLS="$GOBY_MAX_TOOL_CALLS" \
+  GOBY_MAX_TURNS="$GOBY_MAX_TURNS" \
+  GOBY_BASH_TIMEOUT_S="$GOBY_BASH_TIMEOUT_S" \
   bash "$OUT/run-agent.sh" > "$OUT/agent.log" 2>&1
 AGENT_STATUS=$?
 AGENT_ELAPSED=$((SECONDS - AGENT_STARTED))
@@ -211,6 +214,5 @@ fi
 goby_proxy_stop
 GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
 GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" GOBY_AGENT_OUT="$AGENT_OUT" \
-GOBY_ELAPSED_S="$AGENT_ELAPSED" GOBY_MAX_FINDINGS="${GOBY_MAX_FINDINGS:-30}" GOBY_GATE="${GOBY_GATE:-off}" \
-GOBY_MAX_ROUNDS="${GOBY_MAX_ROUNDS:-1}" \
+GOBY_ELAPSED_S="$AGENT_ELAPSED" GOBY_GATE="${GOBY_GATE:-off}" \
   node /opt/goby/reviewRun.js finish
