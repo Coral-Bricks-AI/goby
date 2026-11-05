@@ -1,6 +1,6 @@
 # goby-cleaners scanner image.
 #
-# One job per container: clone the pushed sha, hunt every component it touched, file the
+# One job per container: clone the pushed sha, scan every component it touched, file the
 # issues, exit. Started by the post-merge workflow as a container job (see
 # .github/workflows/cleaners-post-merge.yml), or by `docker run` locally.
 #
@@ -36,7 +36,7 @@ COPY summarize_run.py /opt/cleaners/summarize_run.py
 COPY usage.py /opt/cleaners/usage.py
 RUN chmod +x /opt/cleaners/*.sh /opt/cleaners/*.py
 
-# The one provider file a hunt needs is copied into the agent's own dir at run time, so the
+# The one provider file a scan needs is copied into the agent's own dir at run time, so the
 # image's copy stays read-only and a missing key fails loudly instead of half-working.
 ENV PI_CODING_AGENT_DIR=/opt/cleaners \
     PI_OFFLINE=1 \

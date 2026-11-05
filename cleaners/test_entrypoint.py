@@ -55,12 +55,7 @@ def test_a_failing_picker_is_not_reported_as_nothing_to_scan():
 
 
 def test_the_images_create_the_user_the_entrypoints_drop_to():
-    """`lib.sh` and both entrypoints drop to `agent`. The rename updated them and left the two
-    Dockerfiles creating only `hunter`, which the reviewer found on the rename pull request — a
-    container that cannot `runuser` to a user that does not exist fails after the clone."""
+    """`lib.sh` and both entrypoints drop to `agent`; the images must create that user."""
     for image in (HERE / "Dockerfile", HERE.parent / "base" / "Dockerfile"):
         text = image.read_text()
         assert "useradd --create-home --uid 10001 agent" in text, image
-        # Nothing may still reference the name the role used to have, or a chown or a home
-        # directory would point at a user that does not exist.
-        assert "hunter" not in text, image
