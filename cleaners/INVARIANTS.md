@@ -39,8 +39,8 @@ the *gate* is therefore the most valuable finding this component can produce.
    skipped by the cap must not mark the batch as filed, or the `high` finding that follows it
    with the same fingerprint is suppressed by something no human ever saw.
 
-4. **A component is a directory that holds a `CLEANER.md`.** `plan.py:components` strips the
-   suffix, drops a root-level `CLEANER.md` (that would mean "scan the whole repo") and reports
+4. **A component is a directory that holds an `INVARIANTS.md`.** `plan.py:components` strips the
+   suffix, drops a root-level `INVARIANTS.md` (that would mean "scan the whole repo") and reports
    anything shaped otherwise; `picked` matches changed paths with a separator-aware prefix
    (`a/b` does not contain `a/bc/x`) and orders what it found by how many changed files landed
    in each component, ties broken by a hash of the commit and that change set — so the cap drops

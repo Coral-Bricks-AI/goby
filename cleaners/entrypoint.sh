@@ -6,7 +6,7 @@
 #   REPO SHA BEFORE MODEL FALLBACK_MODEL MAX_TOOLS ISSUES_PER_DAY MAX_COMPONENTS
 #   CLEANER_INDEX GITHUB_TOKEN CORALBRICKS_API_KEY
 #
-# A component is the directory that contains a CLEANER.md. The push decides which ones are
+# A component is the directory that contains an INVARIANTS.md. The push decides which ones are
 # scanned: `git diff --name-only BEFORE..SHA`, intersected with those directories. When the
 # push payload could not name its predecessor, the diff is unknown and every component is
 # scanned (capped by MAX_COMPONENTS) — "we do not know what changed" is not "nothing did".
@@ -111,7 +111,7 @@ unset GITHUB_TOKEN
 umask 022
 
 # --- which components ----------------------------------------------------------------
-# The file is the opt-in: a directory with a CLEANER.md is scanned, a directory without one is
+# The file is the opt-in: a directory with an INVARIANTS.md is scanned, a directory without one is
 # not. There is no registry to drift from this, and moving a directory cannot orphan it.
 # The selection itself lives in plan.py, because it decides whether a push is scanned at all
 # and shell cannot be tested for that.
@@ -132,7 +132,7 @@ PICKED_OUT="$OUT/picked.txt"
 BRIEFS_FILE="$OUT/briefs.tsv"
 : > "$BRIEFS_FILE"
 set +e
-git -C "$REPO_DIR" ls-files -- '*CLEANER.md' '*HUNT.md' \
+git -C "$REPO_DIR" ls-files -- '*INVARIANTS.md' '*HUNT.md' \
   | python3 /opt/cleaners/plan.py picked "${PLAN_ARGS[@]}" > "$PICKED_OUT"
 PICK_STATUS=${PIPESTATUS[1]}
 set -e
@@ -282,7 +282,7 @@ for dir in "${PICKED[@]}"; do
   SLUG="$(echo "$dir" | tr '/' '_')"
   log "scan $dir (model=$MODEL max_tools=$MAX_TOOLS)"
   # The brief may still carry its old name; the scan gets whichever file exists.
-  charter="$REPO_DIR/$dir/CLEANER.md"
+  charter="$REPO_DIR/$dir/INVARIANTS.md"
   [[ -f "$charter" ]] || charter="$REPO_DIR/$dir/HUNT.md"
   # Recorded per component, because a repository can be half-renamed and each issue has to name
   # the brief its own component actually has.

@@ -15,27 +15,27 @@ spec.loader.exec_module(plan)
 
 
 def test_a_component_is_the_directory_holding_the_file():
-    found, notes = plan.components(["services/api/CLEANER.md",
-                                    "cleaners/CLEANER.md"])
+    found, notes = plan.components(["services/api/INVARIANTS.md",
+                                    "cleaners/INVARIANTS.md"])
     assert found == ["cleaners", "services/api"]
     assert notes == []
 
 
 def test_the_root_cleaner_md_is_named_and_dropped():
-    """A root-level CLEANER.md means "scan the whole repo", the one scope this design exists to
-    avoid — and `sed 's|/CLEANER.md$||'` used to leave it as a component called `CLEANER.md`."""
-    found, notes = plan.components(["CLEANER.md", "a/CLEANER.md"])
+    """A root-level INVARIANTS.md means "scan the whole repo", the one scope this design exists to
+    avoid — and `sed 's|/INVARIANTS.md$||'` used to leave it as a component called `INVARIANTS.md`."""
+    found, notes = plan.components(["INVARIANTS.md", "a/INVARIANTS.md"])
     assert found == ["a"]
     assert notes and "root-level" in notes[0]
 
 
 def test_a_duplicate_path_yields_one_component():
-    found, _ = plan.components(["a/CLEANER.md", "a/CLEANER.md"])
+    found, _ = plan.components(["a/INVARIANTS.md", "a/INVARIANTS.md"])
     assert found == ["a"]
 
 
 def test_a_file_that_is_not_cleaner_md_is_reported_not_guessed():
-    found, notes = plan.components(["a/CLEANER.md", "a/README.md", ""])
+    found, notes = plan.components(["a/INVARIANTS.md", "a/README.md", ""])
     assert found == ["a"]
     assert any("a/README.md" in n for n in notes)
 
@@ -138,7 +138,7 @@ def test_the_default_cap_is_four_wherever_it_is_defaulted(tmp_path):
     changed.write_text("".join(f"c{n}/x.py\n" for n in range(5)))
     out = subprocess.run(
         [sys.executable, str(HERE / "plan.py"), "picked", "--changed", str(changed)],
-        input="".join(f"c{n}/CLEANER.md\n" for n in range(5)),
+        input="".join(f"c{n}/INVARIANTS.md\n" for n in range(5)),
         capture_output=True, text=True)
     assert len(out.stdout.split()) == 4, out.stdout
 
@@ -188,7 +188,7 @@ def test_the_cli_prints_the_picked_components_one_per_line(tmp_path):
     changed.write_text("services/api/registry.py\n")
     out = subprocess.run(
         [sys.executable, str(HERE / "plan.py"), "picked", "--changed", str(changed), "--max", "3"],
-        input="services/api/CLEANER.md\nservices/billing/CLEANER.md\n",
+        input="services/api/INVARIANTS.md\nservices/billing/INVARIANTS.md\n",
         capture_output=True, text=True)
     assert out.returncode == 0
     assert out.stdout.split() == ["services/api"]
@@ -247,6 +247,6 @@ def test_a_legacy_brief_is_still_a_component(tmp_path):
     """The fallback existed so a repository that had not renamed its briefs yet would keep working.
     Logging the old name and then rejecting it would have answered "nothing to scan" — the silent
     failure the fallback was for."""
-    found, notes = plan.components(["services/api/HUNT.md", "services/billing/CLEANER.md"])
+    found, notes = plan.components(["services/api/HUNT.md", "services/billing/INVARIANTS.md"])
     assert found == ["services/api", "services/billing"]
     assert any("legacy component brief" in note for note in notes)

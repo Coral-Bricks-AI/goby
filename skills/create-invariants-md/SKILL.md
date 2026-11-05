@@ -1,11 +1,11 @@
 ---
-name: create-cleaner-md
-description: Write CLEANER.md briefs for a repo so goby cleaners can scan it — one file per component directory, each stating observable invariants. Use when adopting goby cleaners, or when a directory has no brief yet.
+name: create-invariants-md
+description: Write INVARIANTS.md briefs for a repo so goby cleaners can scan it — one file per component directory, each stating observable invariants. Use when adopting goby cleaners, or when a directory has no brief yet.
 ---
 
-# Create CLEANER.md briefs
+# Create INVARIANTS.md briefs
 
-A component is a directory containing a `CLEANER.md`. That file is the cleaner's entire brief: it
+A component is a directory containing an `INVARIANTS.md`. That file is the cleaner's entire brief: it
 is what makes it find your bugs instead of reporting style.
 
 ## What to do
@@ -13,7 +13,7 @@ is what makes it find your bugs instead of reporting style.
 1. Find components: directories with a coherent runtime property — a service, a dispatcher, a
    scheduler, a money path. Not every directory. Ten good briefs beat forty shallow ones.
 2. For each, read the code enough to state **3-6 invariants** that must hold.
-3. Write `<dir>/CLEANER.md` using the shape below.
+3. Write `<dir>/INVARIANTS.md` using the shape below.
 4. Open one PR with all the files. They are reviewed by humans, and that review is the point.
 
 ## The shape

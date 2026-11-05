@@ -38,8 +38,8 @@ jobs:
 
 ## 3. The model key and the briefs
 
-Identical to the hosted tier: the key as a repository secret, and `/create-cleaner-md` to write
-the `CLEANER.md` files.
+Identical to the hosted tier: the key as a repository secret, and `/create-invariants-md` to write
+the `INVARIANTS.md` files.
 
 ## What you now have
 

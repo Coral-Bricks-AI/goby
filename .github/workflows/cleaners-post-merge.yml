@@ -2,7 +2,7 @@ name: Goby cleaners
 
 # Post-merge scanning: a push to main reads every component that push touched and files one
 # issue per defect the cleaner could reproduce *and* prove gone after changing the blamed line.
-# A component is a directory with a `CLEANER.md`; there is no registry to keep in sync.
+# A component is a directory with an `INVARIANTS.md`; there is no registry to keep in sync.
 #
 # Two ways to run it, same code:
 #

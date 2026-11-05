@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The two decisions the entrypoint used to make in shell.
 
-    git ls-files -- '*CLEANER.md' | plan.py picked --changed FILE --max 4 [--before-unknown]
+    git ls-files -- '*INVARIANTS.md' | plan.py picked --changed FILE --max 4 [--before-unknown]
     plan.py collect --agent-dir DIR --out FILE
 
-`picked` turns "which files carry a `CLEANER.md`" plus "which files this push changed" into the
+`picked` turns "which files carry an `INVARIANTS.md`" plus "which files this push changed" into the
 directories to scan, printed one per line. What it ignored goes to stderr, where the task log
 keeps it. When more components changed than the cap allows, the ones with the most changed
 files win: the push moved them the furthest, so a defect is likeliest there.
@@ -13,7 +13,7 @@ files win: the push moved them the furthest, so a defect is likeliest there.
 is, so the number in the log is the number that will be filed.
 
 Both used to be shell — a `sed`/`awk` pair and a glob — and both were wrong in review: a
-root-level `CLEANER.md` was read as a component that could never match anything, and the glob's
+root-level `INVARIANTS.md` was read as a component that could never match anything, and the glob's
 depth was questioned. Shell cannot be tested here, and this decides whether a push is scanned
 at all.
 """
@@ -24,17 +24,17 @@ import hashlib
 import sys
 from pathlib import Path
 
-SUFFIX = "/CLEANER.md"
-# Temporary: repositories that still carry the old name. Removing this is a one-line change once
-# their files are renamed — the fallback exists so a rename here cannot silently stop a live
-# cleaner from scanning anything.
+SUFFIX = "/INVARIANTS.md"
+# Temporary, for repositories that still carry the name this file had two renames ago. Removing it
+# is a one-line change once www's briefs are renamed; the fallback exists so renaming here cannot
+# silently stop a live cleaner from scanning anything.
 LEGACY_SUFFIX = "/HUNT.md"
 
 
 def components(cleaner_files: list[str]) -> tuple[list[str], list[str]]:
     """(component directories, notes about what was ignored), both sorted/stable.
 
-    A component is a *directory* that contains a `CLEANER.md`. A `CLEANER.md` at the repository
+    A component is a *directory* that contains an `INVARIANTS.md`. One at the repository
     root would mean "scan everything", which is the one scope this design exists to avoid,
     so it is named and dropped rather than turned into a component.
     """
@@ -47,14 +47,14 @@ def components(cleaner_files: list[str]) -> tuple[list[str], list[str]]:
             continue
         # A legacy brief is a component, not a note: logging it and then ignoring it would answer
         # "nothing to scan" for a repository that still uses the old name.
-        if path in ("CLEANER.md", "HUNT.md"):
+        if path in ("INVARIANTS.md", "HUNT.md"):
             notes.append("ignoring the root-level brief: a component is a directory, "
                          "not the whole repo")
             continue
         if path.endswith(SUFFIX):
             directory = path[: -len(SUFFIX)]
         elif path.endswith(LEGACY_SUFFIX):
-            notes.append(f"using the legacy component brief {path}: rename it to CLEANER.md")
+            notes.append(f"using the legacy component brief {path}: rename it to INVARIANTS.md")
             directory = path[: -len(LEGACY_SUFFIX)]
         else:
             notes.append(f"ignoring {path}: a component is <directory>{SUFFIX}")
@@ -158,7 +158,7 @@ def read_changed(path: Path) -> list[str]:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="mode", required=True)
-    pick = sub.add_parser("picked", help="read CLEANER.md paths on stdin")
+    pick = sub.add_parser("picked", help="read INVARIANTS.md paths on stdin")
     pick.add_argument("--changed", type=Path, required=True)
     pick.add_argument("--max", type=int, default=4)
     pick.add_argument("--sha", default="", help="the commit being scanned; breaks ties so two "
@@ -185,7 +185,7 @@ def main(argv: list[str]) -> int:
     for note in notes:
         print(note, file=sys.stderr)
     if not found:
-        print("no component carries a CLEANER.md", file=sys.stderr)
+        print("no component carries an INVARIANTS.md", file=sys.stderr)
         return 0
     chosen, note = picked(found, read_changed(args.changed), args.max,
                           before_known=not args.before_unknown, sha=args.sha)
