@@ -25,14 +25,17 @@ import re
 import sys
 from pathlib import Path
 
-VAR = re.compile(r"\$([A-Z_][A-Z0-9_]*)")
+# pi's models.json interpolates `$NAME` **and** `${NAME}`. Matching only the bare form read a
+# file that used braces as one with no credentials: a provider whose key was unset looked usable,
+# so the required fallback never ran and the scan failed after the clone instead of before it.
+VAR = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}|\$([A-Z_][A-Z0-9_]*)")
 # Names the harness sets for the scan itself. A models file may interpolate them; they are
 # config, not credentials.
 HARNESS_PREFIXES = ("CLEANERS_", "PI_")
 
 
 def interpolated(models_file: Path) -> set[str]:
-    return set(VAR.findall(models_file.read_text()))
+    return {braced or bare for braced, bare in VAR.findall(models_file.read_text())}
 
 
 def credential_vars(models_file: Path) -> set[str]:
