@@ -155,7 +155,8 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   return 0;
 }
 
-async function finish(out: string, client: GitHubClient, warn: (m: string) => void): Promise<number> {
+async function finish(out: string, client: GitHubClient, warn: (m: string) => void,
+                      state: { published: boolean }): Promise<number> {
   const job = JSON.parse(await readFile(join(out, 'job.json'), 'utf8')) as Job;
   const diff = await readFile(join(out, 'diff.patch'), 'utf8');
   const maxFindings = intEnv('GOBY_MAX_FINDINGS');
@@ -214,6 +215,9 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
 
   await assertHead(client, job.pr, job.head);
   await post_review(client, job.pr, job.head, summary, picked.inline);
+  // Everything that can refuse the review happened above. From here the posted review is the
+  // verdict: a later failure must not rewrite its status to `error`.
+  state.published = true;
   const found = picked.inline.length + picked.overflow.length;
   const description = found ? `${found} new bug(s) found` : 'no bugs found';
   await post_status(client, job.head, 'success', description);
@@ -318,13 +322,14 @@ async function main(): Promise<number> {
   if (mode === 'gate') return gate(client);
   if (mode === 'fail') return fail(client, env('GOBY_FAIL_REASON'));
   if (mode === 'prepare') return prepare(out, client);
+  const state = { published: false };
   try {
-    return await finish(out, client, message => console.error(message));
+    return await finish(out, client, message => console.error(message), state);
   } catch (error) {
-    // `finish` runs after the agent has reported, so a throw here leaves the `pending` statuses
-    // `prepare` posted with no review behind them — the one state review/INVARIANTS.md forbids.
-    // A moved head is the exception: the run that superseded this one owns those statuses.
-    if (finish_failure_should_report(error)) {
+    // A throw before the review is published leaves the `pending` statuses `prepare` posted with
+    // no review behind them — the one state review/INVARIANTS.md forbids. Afterwards the review
+    // is the verdict, and the gate path owns what happens next.
+    if (finish_failure_should_report(error, state.published)) {
       await fail(client, error instanceof Error ? error.message : String(error)).catch(() => {});
     }
     throw error;

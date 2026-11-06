@@ -27,6 +27,20 @@ from pathlib import Path
 SUFFIX = "/INVARIANTS.md"
 
 
+def decode_lines(data: bytes) -> list[str]:
+    """Split a NUL-free, newline-separated path list without losing undecodable bytes.
+
+    A path is bytes on disk, and `surrogateescape` keeps them instead of raising: one filename
+    that is not valid UTF-8 must not turn off the scan for the whole push.
+    """
+    return data.decode("utf-8", "surrogateescape").splitlines()
+
+
+def decodable(path: str) -> bool:
+    """False when `decode_lines` had to escape this path's bytes as lone surrogates."""
+    return not any("\ud800" <= char <= "\udfff" for char in path)
+
+
 def components(cleaner_files: list[str]) -> tuple[list[str], list[str]]:
     """(component directories, notes about what was ignored), both sorted/stable.
 
@@ -40,6 +54,11 @@ def components(cleaner_files: list[str]) -> tuple[list[str], list[str]]:
     for raw in cleaner_files:
         path = raw.strip()
         if not path:
+            continue
+        if not decodable(path):
+            # The scanner, the prompt and the issue marker are all UTF-8 text; a name that is
+            # not is reported and skipped, never handed on.
+            notes.append(f"ignoring {path!r}: the path is not valid UTF-8")
             continue
         if path == "INVARIANTS.md":
             notes.append("ignoring the root-level brief: a component is a directory, "
@@ -80,7 +99,9 @@ def rank(directory: str, changed: list[str], sha: str = "") -> tuple[int, str]:
     prefix = directory + "/"
     inside = sorted(p for p in changed if p == directory or p.startswith(prefix))
     key = "\n".join((sha, directory, *inside))
-    tie = hashlib.blake2b(key.encode(), digest_size=8).hexdigest()
+    # A changed path may carry a byte that is not valid UTF-8 (see `read_changed`), and the
+    # default codec refuses it: the tie-break would crash the picker for the whole push.
+    tie = hashlib.blake2b(key.encode("utf-8", "surrogateescape"), digest_size=8).hexdigest()
     return (-len(inside), tie)
 
 
@@ -143,7 +164,7 @@ def collect(agent_dir: Path, out: Path) -> int:
 
 
 def read_changed(path: Path) -> list[str]:
-    return [line.strip() for line in path.read_text().splitlines() if line.strip()]
+    return [line.strip() for line in decode_lines(path.read_bytes()) if line.strip()]
 
 
 def main(argv: list[str]) -> int:
@@ -172,7 +193,7 @@ def main(argv: list[str]) -> int:
         print(collect(args.agent_dir, args.out))
         return 0
 
-    found, notes = components(sys.stdin.read().splitlines())
+    found, notes = components(decode_lines(sys.stdin.buffer.read()))
     for note in notes:
         print(note, file=sys.stderr)
     if not found:

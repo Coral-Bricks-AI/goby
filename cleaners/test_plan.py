@@ -250,3 +250,46 @@ def test_a_stale_brief_is_not_a_component():
     found, notes = plan.components(["services/api/OLD.md", "services/billing/INVARIANTS.md"])
     assert found == ["services/billing"]
     assert any("OLD.md" in note for note in notes)
+
+
+def test_a_path_that_is_not_valid_utf8_is_ignored_not_fatal(tmp_path):
+    """`-c core.quotePath=false` puts the raw bytes in `changed.txt`, and a filename that is not
+    UTF-8 then raised UnicodeDecodeError out of `picked`: the whole push went unscanned, ordinary
+    components included, because of one file name. Skip and report it instead."""
+    changed = tmp_path / "changed.txt"
+    changed.write_bytes(b"bad/\xff\xfe.py\ngood/x.py\n")
+    assert plan.read_changed(changed) == ["bad/\udcff\udcfe.py", "good/x.py"]
+
+    listed = [b"bad/\xff\xfe/INVARIANTS.md".decode("utf-8", "surrogateescape"),
+              "good/INVARIANTS.md"]
+    found, notes = plan.components(listed)
+    assert found == ["good"]
+    assert any("not valid UTF-8" in note for note in notes)
+
+
+def test_the_picker_reads_stdin_as_bytes(monkeypatch, capsys, tmp_path):
+    """The list arrives from `git ls-files` on a pipe; decoding it as strict text is the crash."""
+    changed = tmp_path / "changed.txt"
+    changed.write_text("good/x.py\n")
+    import io
+
+    class Stdin:
+        buffer = io.BytesIO(b"bad/\xff\xfe/INVARIANTS.md\ngood/INVARIANTS.md\n")
+
+    monkeypatch.setattr(plan.sys, "stdin", Stdin())
+    assert plan.main(["picked", "--changed", str(changed), "--max", "4"]) == 0
+    out = capsys.readouterr()
+    assert "good" in out.out.split()
+    assert "not valid UTF-8" in out.err
+
+
+def test_a_changed_path_that_is_not_valid_utf8_still_ranks_a_real_component(tmp_path):
+    """The changed list and the component list are separate reads: filtering the component list
+    left a `surrogateescape`d *changed* path flowing into `rank()`, where the default codec
+    raised `UnicodeEncodeError` and the push went unscanned. Rank the raw bytes instead."""
+    changed = tmp_path / "changed.txt"
+    changed.write_bytes(b"services/billing/bad\xff.py\nservices/billing/fine.py\n")
+    found, _ = plan.components(["services/billing/INVARIANTS.md"])
+    chosen, _ = plan.picked(found, plan.read_changed(changed), 4,
+                            before_known=True, sha="abc")
+    assert chosen == ["services/billing"]
