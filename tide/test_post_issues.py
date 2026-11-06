@@ -410,7 +410,9 @@ def test_a_close_as_not_planned_mutes_the_check_on_that_path():
     again every sweep is exactly the noise this product exists to avoid."""
     p = proposal()
     closed = issue(p["fingerprint"], state="closed")
-    closed["state_reason"] = "NOT_PLANNED"
+    # The REST spelling, which is what `common.list_labelled` actually reads. Comparing against
+    # GraphQL's `NOT_PLANNED` made the mute never fire, and looked like the old behaviour.
+    closed["state_reason"] = "not_planned"
     muted = pi.muted_issues([closed])
     filed, skipped = pi.decide([p], [], muted=muted, issues_per_day=5, now=NOW)
     assert filed == []
@@ -460,3 +462,16 @@ def test_a_muted_suppression_is_reported_in_the_plan(monkeypatch, tmp_path, caps
                     str(tmp_path / "c.jsonl"), "--repo", "o/r", "--sha", "a" * 40,
                     "--issues-per-day", "5"]) == 0
     assert json.loads(capsys.readouterr().out)["muted"] == [1]
+
+
+def test_the_close_reason_is_read_in_the_spelling_the_api_uses():
+    """The REST issues endpoint spells it `not_planned`; GraphQL spells it `NOT_PLANNED`. A fixture
+    that only carries the upper-case form hid a mute that could never fire."""
+    for spelling in ("not_planned", "NOT_PLANNED", " Not_Planned "):
+        closed = issue("aaaaaaaaaaaa", state="closed")
+        closed["state_reason"] = spelling
+        assert pi.is_not_planned(closed), spelling
+    for other in ("completed", "COMPLETED", "reopened", None, ""):
+        closed = issue("aaaaaaaaaaaa", state="closed")
+        closed["state_reason"] = other
+        assert not pi.is_not_planned(closed), other

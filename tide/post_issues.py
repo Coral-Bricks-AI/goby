@@ -93,6 +93,17 @@ def _parse_ts(value: str) -> datetime | None:
         return None
 
 
+# REST spells it `not_planned`; GraphQL spells it `NOT_PLANNED`, and a fixture or a future
+# transport may carry either. Comparing against one spelling made the mute never fire at all —
+# silently, because "not muted" is the old behaviour and the old behaviour looks correct.
+NOT_PLANNED = {"not_planned", "notplanned"}
+
+
+def is_not_planned(issue: dict) -> bool:
+    reason = str(issue.get("state_reason") or "").strip().lower()
+    return reason in NOT_PLANNED
+
+
 def muted_issues(listed: list[dict]) -> dict[str, dict]:
     """fingerprint -> the issue that closed it as `not planned`.
 
@@ -102,7 +113,7 @@ def muted_issues(listed: list[dict]) -> dict[str, dict]:
     avoid — so that close mutes the check on that path.
     """
     return {fp: issue for fp, issue in common.marker_index(listed, MARKER).items()
-            if issue.get("state") != "open" and issue.get("state_reason") == "NOT_PLANNED"}
+            if issue.get("state") != "open" and is_not_planned(issue)}
 
 
 def decide(proposals: list[dict], open_issues: list[dict], *,
