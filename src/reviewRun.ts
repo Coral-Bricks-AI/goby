@@ -215,12 +215,13 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
 
   await assertHead(client, job.pr, job.head);
   await post_review(client, job.pr, job.head, summary, picked.inline);
-  // Everything that can refuse the review happened above. From here the posted review is the
-  // verdict: a later failure must not rewrite its status to `error`.
-  state.published = true;
   const found = picked.inline.length + picked.overflow.length;
   const description = found ? `${found} new bug(s) found` : 'no bugs found';
   await post_status(client, job.head, 'success', description);
+  // Publication is the review *and* the status. Until that write succeeds the `pending` one
+  // prepare posted is all anyone can see, so the failure path still has to resolve it; after it,
+  // a later failure must not rewrite the verdict to `error`.
+  state.published = true;
   await cleanup(client, job.pr, job.open_threads, warn);
   if (!gate_enabled()) {
     // No gate: the review posts its findings and says nothing about merge eligibility, so a policy
