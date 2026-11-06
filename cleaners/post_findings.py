@@ -71,7 +71,7 @@ def issue_label() -> str:
 
 
 def _norm(text) -> str:
-    """Case, punctuation and spacing beaten out of a title — in any script.
+    r"""Case, punctuation and spacing beaten out of a title — in any script.
 
     `[^a-z0-9 ]` erased every non-Latin letter, so a title with no ASCII at all normalised to ""
     and a mixed one to its ASCII remnant alone: two different defects in one file shared a

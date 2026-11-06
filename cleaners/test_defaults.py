@@ -34,3 +34,16 @@ def test_the_workflow_passes_overrides_and_does_not_restate_the_numbers():
     for fallback in ("inputs.max-tools || 60", "inputs.issues-per-day || 25",
                      "inputs.max-components || 4", "default: 60", "default: 25", "default: 4"):
         assert fallback not in workflow
+
+
+def test_every_shipped_module_compiles_without_escape_warnings():
+    """A docstring that quotes `\\W` is a regular string: Python 3.12 warns and later versions
+    will not read it as intended. The image's Python must compile every file it ships."""
+    import subprocess
+    import sys
+
+    for path in sorted(HERE.glob("*.py")):
+        done = subprocess.run([sys.executable, "-W", "error::SyntaxWarning", "-B",
+                               "-m", "py_compile", str(path)],
+                              capture_output=True, text=True)
+        assert done.returncode == 0, (path.name, done.stderr)
