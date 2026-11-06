@@ -223,7 +223,7 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
     // A review POST has no compare-and-swap either: it can be stored and answered with an error.
     // If a complete review for this head is now on the pull request, it landed — carrying on
     // writes the verdict status instead of posting `error` over a review that exists.
-    if (!review_landed(await client.own_reviews(job.pr).catch(() => []), job.head)) throw error;
+    if (!review_landed(await client.own_reviews(job.pr).catch(() => []), receipt)) throw error;
     warn(`the review POST failed but the review landed: ${error instanceof Error ? error.message : String(error)}`);
   }
   const found = picked.inline.length + picked.overflow.length;
