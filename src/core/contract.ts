@@ -347,3 +347,22 @@ export function select_findings<T extends { severity: string }>(findings: readon
   const ranked = [...findings].sort((a, b) => rank(a.severity) - rank(b.severity));
   return [ranked.slice(0, max_findings), Math.max(0, ranked.length - max_findings)];
 }
+
+/**
+ * The findings a run emitted, and whether any record was unusable.
+ *
+ * A `findings` record whose payload is not an array is an off-contract answer, not an empty one:
+ * skipping it makes the caller ask `parse_findings('[]')`, the one input that legitimately means
+ * "no findings", and an unreadable reply becomes a green review. The caller turns `invalid` into
+ * an incomplete review — the same answer an off-contract reply gets.
+ */
+export function emitted_findings(records: readonly Record<string, unknown>[]): [unknown[], boolean] {
+  const out: unknown[] = [];
+  let invalid = false;
+  for (const record of records) {
+    if (record.kind !== 'findings') continue;
+    if (!Array.isArray(record.findings)) { invalid = true; continue; }
+    out.push(...record.findings as unknown[]);
+  }
+  return [out, invalid];
+}
