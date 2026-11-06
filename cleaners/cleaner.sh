@@ -117,8 +117,12 @@ render = (body.replace("{{REPO}}", os.environ.get("REPO") or pathlib.Path(repo_d
               .replace("{{COMPONENT}}", component)
               .replace("{{CHANGED}}", files or "(unknown; the push did not name its files)")
               .replace("{{SANDBOX}}", sandbox)
-              .replace("{{INVARIANTS}}", pathlib.Path(charter).read_text().strip())
-              .replace("{{RULE_FILES}}", pathlib.Path(rules).read_text().strip()
+# Every one of these is prompt context. `replace` for the same reason as the changed list: a
+# byte the scanner cannot decode must not abort the render for the whole push.
+              .replace("{{INVARIANTS}}",
+                       pathlib.Path(charter).read_bytes().decode("utf-8", "replace").strip())
+              .replace("{{RULE_FILES}}", pathlib.Path(rules).read_bytes()
+                       .decode("utf-8", "replace").strip()
                        if pathlib.Path(rules).is_file() else "(none provided)"))
 print(render)
 PY
