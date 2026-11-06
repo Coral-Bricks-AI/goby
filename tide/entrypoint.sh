@@ -101,7 +101,20 @@ if [[ $DETECT_STATUS -ne 0 ]]; then
   log "error: detect.py failed (exit $DETECT_STATUS); the sweep made no measurement"
   exit 2
 fi
-log "measured $(python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print(p["candidates"], "candidate(s),", len(p["picked"]), "picked")' "$OUT/plan.json")"
+# The plan is the only place a repository's `known` decisions show up, and a silence nobody can
+# read is what the list is supposed to avoid: the issues tell a reader to add an entry here, so
+# the log says which entries were used and which have gone stale.
+python3 - "$OUT/plan.json" > "$OUT/plan.txt" <<'PY'
+import json, sys
+plan = json.load(open(sys.argv[1]))
+print(f'measured {plan["candidates"]} candidate(s), {len(plan["picked"])} picked, '
+      f'{len(plan["suppressed"])} suppressed by .goby/tide.json')
+for candidate in plan["suppressed"]:
+    print(f'  known: {candidate["check"]} {candidate["path"]} — {candidate["known_reason"]}')
+for entry in plan["stale_known"]:
+    print(f'  stale known entry, safe to delete: {entry["check"]} {entry["path"]}')
+PY
+while IFS= read -r line; do log "$line"; done < "$OUT/plan.txt"
 
 # One facts file per picked candidate, and a TSV so bash can loop without parsing JSON.
 python3 - "$OUT/picked.jsonl" "$OUT/candidates.jsonl" "$OUT/facts" "$OUT/picked.tsv" <<'PY'
