@@ -111,7 +111,11 @@ facts_dir.mkdir(parents=True, exist_ok=True)
 rows = [json.loads(line) for line in picked_path.read_text().splitlines() if line.strip()]
 lines = []
 for row in rows:
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", f"{row['check']}--{row['path']}").strip("_")[:120]
+    # The fingerprint is on the end because it is the one part that cannot collide: two paths can
+    # sanitise to the same slug (`a b/c` and `a_b/c`), and two runs sharing a run directory would
+    # seal each other out mid-scan.
+    slug = (re.sub(r"[^A-Za-z0-9._-]+", "_", f"{row['check']}--{row['path']}").strip("_")[:100]
+            + "--" + row["fingerprint"])
     (facts_dir / f"{slug}.json").write_text(json.dumps(row) + "\n")
     lines.append(f"{row['check']}\t{row['path']}\t{slug}")
 tsv_path.write_text("".join(line + "\n" for line in lines))
