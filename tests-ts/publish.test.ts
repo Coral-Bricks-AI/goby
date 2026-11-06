@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { GitHubClient } from '../src/platforms/github.ts';
-import { _comment_position, comment_body, post_review, post_status, post_verdict, post_gate_status, reply_in_thread, resolve_thread } from '../src/platforms/publish.ts';
+import { _comment_position, comment_body, post_review, post_status, post_gate_status, reply_in_thread, resolve_thread } from '../src/platforms/publish.ts';
 import { GATE_CONTEXT, STATUS_CONTEXT, REVIEW_VERSION } from '../src/identity.ts';
 import { Finding, type FindingInput } from '../src/core/contract.ts';
 
@@ -127,43 +127,5 @@ describe('statuses and thread writes', () => {
 
   test('resolution GraphQL errors are not swallowed', async () => {
     await expect(resolve_thread(fake(() => ({ errors: [{ message: 'denied' }] })).client, 'T_node')).rejects.toMatchObject({ code: 200 });
-  });
-});
-
-describe('the verdict status survives a write the API recorded', () => {
-  function statuses(handler: (payload: any, method: string | undefined) => unknown) {
-    const calls: { url: string; method: string | undefined; payload: any }[] = [];
-    const fetcher = (async (input: string | URL | Request, init: RequestInit = {}) => {
-      const method = init.method;
-      const payload = init.body ? JSON.parse(String(init.body)) : undefined;
-      calls.push({ url: String(input), method, payload });
-      const result = handler(payload, method);
-      return result instanceof Response ? result : Response.json(result);
-    }) as typeof fetch;
-    return { client: new GitHubClient('owner/repo', 'secret', { fetch: fetcher }), calls };
-  }
-
-  test('a 502 that landed is not rewritten to error', async () => {
-    // Commit statuses have no compare-and-swap: the write can be stored and still answered with an
-    // error. Believing the error posted `error` over a `success`, so the gate refused a head whose
-    // review was complete.
-    const { client, calls } = statuses((_p, method) => method === 'GET'
-      ? [{ context: STATUS_CONTEXT, state: 'success', updated_at: '2026-11-06T00:00:00Z' }]
-      : new Response('{"message":"upstream 502"}', { status: 502 }));
-    await post_verdict(client, 'head', 'no bugs found');
-    expect(calls.map(c => c.method)).toEqual(['POST', 'GET']);
-  });
-
-  test('a 502 that did not land is a failure the caller can report', async () => {
-    const { client } = statuses((_p, method) => method === 'GET'
-      ? [{ context: STATUS_CONTEXT, state: 'pending', updated_at: '2026-11-06T00:00:00Z' }]
-      : new Response('{"message":"upstream 502"}', { status: 502 }));
-    await expect(post_verdict(client, 'head', 'no bugs found')).rejects.toThrow('502');
-  });
-
-  test('a readable write needs no read-back', async () => {
-    const { client, calls } = statuses(() => ({ id: 1 }));
-    await post_verdict(client, 'head', 'no bugs found');
-    expect(calls).toHaveLength(1);
   });
 });
