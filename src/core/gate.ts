@@ -8,13 +8,15 @@ export class HeadChanged extends Error {}
 /**
  * Whether a throw out of `finish` leaves statuses that have to be resolved.
  *
- * `prepare` posts `pending`, so a failure after it must end in `error` on both statuses — a
- * pending check with no review behind it blocks the pull request with nothing to read
- * (review/INVARIANTS.md 1). A head that moved is the one exception: the run that superseded this
- * one owns the statuses, and posting `error` here would race a newer review.
+ * `prepare` posts `pending`, so a failure before the review is published must end in `error` on
+ * both statuses — a pending check with no review behind it blocks the pull request with nothing
+ * to read (review/INVARIANTS.md 1). Two failures are not ours to report: a head that moved (the
+ * run that superseded this one owns the statuses), and anything after `post_review` (the posted
+ * review is the verdict, and rewriting its status to `error` would lose it and leave the gate
+ * refusing a head that was reviewed).
  */
-export function finish_failure_should_report(error: unknown): boolean {
-  return !(error instanceof HeadChanged);
+export function finish_failure_should_report(error: unknown, published: boolean): boolean {
+  return !published && !(error instanceof HeadChanged);
 }
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid GitHub review response');
