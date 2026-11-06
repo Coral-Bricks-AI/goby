@@ -56,3 +56,19 @@ test('resolution plan preserves caller records and does not resolve unverified f
   expect(plan[1][0]).toBe(newer);
   expect(threads).toEqual([newer, stale, unrelated, older]);
 });
+
+test('a fence inside a finding detail does not hide the payload from the strict parser', () => {
+  // `finish` serialises the emitted findings with JSON.stringify and parses them strictly. A
+  // detail that quotes the probe it ran contains a fence, and the fence scan yielded that block
+  // before the array holding the finding, so the strict abort fired on text the harness itself
+  // had produced and every finding was lost.
+  const payload = JSON.stringify([{
+    path: 'src/a.ts', line: 2, severity: 'high', title: 'off-by-one in the writer',
+    detail: 'ran:\n```js\nfor (let i = 0; i <= n; i++) {}\n```\nstill fails',
+  }]);
+  const parsed = F.parse_findings(payload, true);
+  expect(parsed).toHaveLength(1);
+  expect(parsed![0]!.path).toBe('src/a.ts');
+  // A genuinely off-contract payload is still refused.
+  expect(F.parse_findings('[{"path":"a.ts","line":2,"title":"T"', true)).toBeNull();
+});
