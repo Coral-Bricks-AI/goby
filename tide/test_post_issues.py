@@ -316,3 +316,15 @@ def test_a_plan_only_run_posts_nothing(monkeypatch, tmp_path, capsys):
                     str(tmp_path / "c.jsonl"), "--repo", "o/r", "--sha", "a" * 40,
                     "--issues-per-day", "5", "--out", str(out)]) == 0
     assert called == [] and json.loads(out.read_text())["filed"]
+
+
+def test_the_footer_says_that_closing_alone_does_not_stop_it_coming_back():
+    """The sweep re-measures the whole tree, so a closed issue for a smell that is still over its
+    threshold is filed again on the next run. "Close it" without "add a `known` line" is half an
+    instruction, and the half it leaves out is the one that works."""
+    _, body = pi.render_issue(proposal(), "a" * 40)
+    footer = body.split("**What must not change**")[1]
+    assert "closing it does not stop it coming back" in footer
+    assert "`.goby/tide.json`" in footer
+    assert '"check": "max_file_lines", "path": "src/cli/entry.ts"' in footer
+    assert "`known` entry is measured and then skipped" in footer

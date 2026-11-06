@@ -76,3 +76,14 @@ def test_the_sweep_can_be_run_by_hand_and_from_another_workflow():
     # and smaller set of knobs.
     assert workflow.count("max-file-lines:") == 2
     assert "issues:" in workflow and "packages:" in workflow
+
+
+def test_the_log_names_the_known_entries_it_used_and_the_stale_ones():
+    """The issue sends a reader to `.goby/tide.json`; a `known` decision that is invisible in the
+    log is the unexplained silence the list exists to avoid, and a stale entry is a smell hidden
+    behind a reason nobody remembers writing."""
+    entrypoint = (HERE / "entrypoint.sh").read_text()
+    assert "suppressed by .goby/tide.json" in entrypoint
+    assert "known: {candidate[\"check\"]}" in entrypoint
+    assert "stale known entry, safe to delete" in entrypoint
+    assert 'done < "$OUT/plan.txt"' in entrypoint

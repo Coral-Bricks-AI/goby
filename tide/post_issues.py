@@ -210,14 +210,22 @@ def render_issue(proposal: dict, sha: str) -> tuple[str, str]:
         "",
         _block(proposal.get("risk"), 4000),
         "",
-        f"_A refactor, not a fix: behaviour and tests are expected to be identical. If this is "
-        f"not worth acting on, close it and add a line to `known` in `.goby/tide.json` —_",
+        "---",
+        "",
+        "A refactor, not a fix: behaviour and the tests are expected to be identical afterwards.",
+        "",
+        "**If this is not worth doing, closing it does not stop it coming back.** Every sweep "
+        "re-measures the whole tree, so the same file is filed again on the next run. Close it "
+        "*and* add this to `.goby/tide.json`:",
         "",
         "```json",
-        f'{{ "check": "{check}", "path": "{path}", "reason": "why not" }}',
+        f'{{ "check": "{check}", "path": "{path}", "reason": "why this is fine as it is" }}',
         "```",
         "",
-        "_The next sweep treats a known entry as measured-and-decided, so it stops being filed._",
+        "`reason` is required — it is what the next reader of that file finds beside the path. A "
+        "`known` entry is measured and then skipped, so it stops being filed; when it stops "
+        "firing, because the file was finally split, the sweep logs that the entry can be "
+        "deleted.",
         "",
     ]
     return title, "\n".join(body)
