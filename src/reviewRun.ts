@@ -22,7 +22,7 @@ import { check_target } from './core/target.ts';
 import * as contract from './core/contract.ts';
 import { select } from './core/selection.ts';
 import { build_summary } from './core/summary.ts';
-import { assertHead, HeadChanged, loadReceipt, refreshGate } from './core/gate.ts';
+import { assertHead, finish_failure_should_report, HeadChanged, loadReceipt, refreshGate } from './core/gate.ts';
 import { diffDigest, parseReceipt, receiptMarker, type ReviewReceipt } from './core/verdict.ts';
 import { REVIEW_VERSION } from './identity.ts';
 import { GitHubClient } from './platforms/github.ts';
@@ -288,11 +288,11 @@ async function gate(client: GitHubClient): Promise<number> {
 }
 
 /**
- * The reviewer never answered. Say so on both statuses: leaving them "pending" blocks the pull
- * request forever with nothing to read, which is worse than a visible failure.
+ * Say so on both statuses: leaving them "pending" blocks the pull request forever with nothing to
+ * read, which is worse than a visible failure. Reached when the reviewer never answered, and when
+ * `finish` throws after it did (an off-contract payload, a failed read).
  */
-async function fail(client: GitHubClient): Promise<number> {
-  const reason = env('GOBY_FAIL_REASON');
+async function fail(client: GitHubClient, reason: string): Promise<number> {
   await post_status(client, env('GOBY_HEAD'), 'error', `Review failed: ${reason}`);
   // With the gate off nothing posted a pending gate status, so posting an error here leaves a
   // stale red `Goby Gate` that the successful path never clears. Mirror the review status only
@@ -316,8 +316,19 @@ async function main(): Promise<number> {
   const client = new GitHubClient(env('GOBY_REPO'), env('GITHUB_TOKEN'));
   if (mode === 'skip') return skip(client);
   if (mode === 'gate') return gate(client);
-  if (mode === 'fail') return fail(client);
-  return mode === 'prepare' ? prepare(out, client) : finish(out, client, message => console.error(message));
+  if (mode === 'fail') return fail(client, env('GOBY_FAIL_REASON'));
+  if (mode === 'prepare') return prepare(out, client);
+  try {
+    return await finish(out, client, message => console.error(message));
+  } catch (error) {
+    // `finish` runs after the agent has reported, so a throw here leaves the `pending` statuses
+    // `prepare` posted with no review behind them — the one state review/INVARIANTS.md forbids.
+    // A moved head is the exception: the run that superseded this one owns those statuses.
+    if (finish_failure_should_report(error)) {
+      await fail(client, error instanceof Error ? error.message : String(error)).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 main().then(code => { process.exitCode = code; }, (error: unknown) => {

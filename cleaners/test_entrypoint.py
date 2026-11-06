@@ -59,3 +59,14 @@ def test_the_images_create_the_user_the_entrypoints_drop_to():
     for image in (HERE / "Dockerfile", HERE.parent / "base" / "Dockerfile"):
         text = image.read_text()
         assert "useradd --create-home --uid 10001 agent" in text, image
+
+
+def test_paths_reach_the_picker_unquoted():
+    """A non-ASCII filename is C-quoted by git (`"\\303\\251.md"`), and `plan.py` compares the
+    changed list against the directories it read from `ls-files`. Both reads must disable
+    `core.quotePath`, or a push that only touched such a file matches no component and the job
+    logs "nothing to scan" and exits 0."""
+    text = entrypoint()
+    for command in ("ls-files -- '*INVARIANTS.md'", 'diff --name-only "$BEFORE" "$HEAD_SHA"'):
+        start = text.index(command)
+        assert "-c core.quotePath=false" in text[start - 40:start], command

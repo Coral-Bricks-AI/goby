@@ -117,7 +117,11 @@ umask 022
 # and shell cannot be tested for that.
 CHANGED_FILE="$OUT/changed.txt"
 if [[ $BEFORE_OK -eq 1 ]]; then
-  git -C "$REPO_DIR" diff --name-only "$BEFORE" "$HEAD_SHA" > "$CHANGED_FILE"
+  # `core.quotePath=false` because git otherwise C-quotes a non-ASCII path as "\303\251.md":
+  # plan.py compares this list against the component directories it found with `ls-files`, so a
+  # quoted name matches nothing and a push that only touched such a file picks zero components.
+  git -C "$REPO_DIR" -c core.quotePath=false diff --name-only "$BEFORE" "$HEAD_SHA" \
+    > "$CHANGED_FILE"
 else
   # No predecessor: the prompt is told there is no diff rather than handed a file list it
   # cannot trust, and plan.py scans every component instead of assuming nothing changed.
@@ -132,7 +136,7 @@ PICKED_OUT="$OUT/picked.txt"
 BRIEFS_FILE="$OUT/briefs.tsv"
 : > "$BRIEFS_FILE"
 set +e
-git -C "$REPO_DIR" ls-files -- '*INVARIANTS.md' \
+git -C "$REPO_DIR" -c core.quotePath=false ls-files -- '*INVARIANTS.md' \
   | python3 /opt/cleaners/plan.py picked "${PLAN_ARGS[@]}" > "$PICKED_OUT"
 PICK_STATUS=${PIPESTATUS[1]}
 set -e

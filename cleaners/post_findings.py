@@ -3,7 +3,7 @@
 
     python3 post_findings.py --findings /workspace/out/findings.jsonl \
         --repo <owner>/<repo> --sha <sha> \
-        --issues-per-day 3 [--out FILE | --dry-run]
+        --issues-per-day 10 [--out FILE | --dry-run]
 
 One issue per confirmed finding. Three gates, in order:
 
@@ -251,8 +251,8 @@ def _http(method: str, path: str, token: str, payload=None):
 # loses precisely the oldest verdicts. The bound is therefore on **pages walked**, not on
 # issues returned: a page count has no boundary to get wrong, where an issue count creates a
 # cliff — with a 2000-issue bound, 2099 issues read cleanly and 2100 refused, although both
-# lists are complete (#1298, and #1296 before it). 100 pages is 10 000 issues, about nine
-# years at `issues_per_day` 3.
+# lists are complete (#1298, and #1296 before it). 100 pages is 10 000 issues, about three
+# years at the shipped `issues_per_day` 10.
 MAX_LABELLED_PAGES = 100
 
 
@@ -331,7 +331,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--findings", type=Path, required=True)
     ap.add_argument("--repo", required=True)
     ap.add_argument("--sha", required=True)
-    ap.add_argument("--issues-per-day", type=int, default=3)
+    ap.add_argument("--issues-per-day", type=int, default=10)
     ap.add_argument("--brief-map", default=None, type=Path,
                     help='JSON {component: brief file} written by the scan')
     ap.add_argument("--out", type=Path, default=None, help="write the plan instead of posting")
