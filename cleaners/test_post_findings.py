@@ -4,6 +4,7 @@ No network: `_http` is stubbed, and `decide()` is pure.
 """
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -625,3 +626,38 @@ def test_a_marker_quoted_inside_a_body_is_not_a_filing():
 
     filed, _ = pf.decide([finding(title="brand new")], [quoted], issues_per_day=1, now=NOW)
     assert filed, "the quoted medium must not count against the day's allowance"
+
+
+def test_a_title_in_another_script_keeps_its_own_fingerprint():
+    """`[^a-z0-9 ]` erased every non-Latin title to "", so two different defects in one file
+    shared a fingerprint and the second was filed as "already filed" forever."""
+    first = finding(title="缓存没有失效")
+    second = finding(title="异常被吞掉")
+    assert pf._norm(first["title"]) != pf._norm(second["title"])
+    assert pf.fingerprint(COMPONENT, first) != pf.fingerprint(COMPONENT, second)
+
+    filed, skipped = pf.decide([second], [issue(pf.fingerprint(COMPONENT, first))],
+                               issues_per_day=25, now=NOW)
+    assert filed and not skipped
+
+
+def test_ascii_normalisation_still_collides_where_it_should():
+    """The fingerprint's job is unchanged: case, punctuation and spacing do not make a new claim."""
+    assert pf.fingerprint(COMPONENT, finding(title="Slot over-admitted")) == \
+        pf.fingerprint(COMPONENT, finding(title="slot over admitted"))
+    assert pf.fingerprint(COMPONENT, finding(title="100% broken_loop!")) == \
+        pf.fingerprint(COMPONENT, finding(title="100 broken loop"))
+
+
+def test_an_accented_title_keeps_the_fingerprint_it_was_filed_under():
+    """Dedupe history *is* the fingerprint. The Unicode form must only be a fallback for a title
+    with no ASCII letters at all, or every issue filed under an accented title is re-filed."""
+    import hashlib
+
+    title = "Falha na validação do cache"
+    legacy = " ".join(re.sub(r"[^a-z0-9 ]+", " ", title.lower()).split())
+    assert pf._norm(title) == legacy
+
+    fp_old = hashlib.sha256("|".join([COMPONENT, "registry.py", legacy]).encode()).hexdigest()[:12]
+    filed, skipped = pf.decide([finding(title=title)], [issue(fp_old)], issues_per_day=25, now=NOW)
+    assert not filed and skipped[0]["reason"] == "already filed"
