@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "goby's own answer to its own sweep. Everything here is a measurement the detector makes",
+    "correctly, on a file where the measurement is not the problem — the list exists so a real",
+    "smell in the same file is still reported, while this one decision does not have to be",
+    "re-made every day.",
+    "",
+    "An entry here is not an ignore: the file is still measured and still counted, and this run",
+    "logs it as suppressed. When a `known` entry stops firing, the sweep says so, so this list",
+    "cannot quietly outlive its reasons."
+  ],
+  "known": [
+    {
+      "check": "max_file_lines",
+      "path": "tests-ts/fixtures/contract-diff.json",
+      "reason": "a frozen corpus of diff cases, one object per case: it is data the tests read, not code anyone maintains. Splitting it makes a case harder to find, cut a change harder to review, and moves no logic."
+    }
+  ]
+}
