@@ -649,15 +649,32 @@ def test_ascii_normalisation_still_collides_where_it_should():
         pf.fingerprint(COMPONENT, finding(title="100 broken loop"))
 
 
-def test_an_accented_title_keeps_the_fingerprint_it_was_filed_under():
-    """Dedupe history *is* the fingerprint. The Unicode form must only be a fallback for a title
-    with no ASCII letters at all, or every issue filed under an accented title is re-filed."""
+def test_a_title_that_names_a_file_is_its_own_finding():
+    """A mixed-script title keeps an ASCII remnant. Normalising to that alone made every such title
+    in one file the same finding, and the second was hidden after the first was filed."""
+    first = finding(title="缓存 cache invalidation is missing")
+    second = finding(title="异常 cache invalidation is missing")
+    assert pf.fingerprint(COMPONENT, first) != pf.fingerprint(COMPONENT, second)
+
+    filed, skipped = pf.decide([second], [issue(pf.fingerprint(COMPONENT, first))],
+                               issues_per_day=25, now=NOW)
+    assert filed and not skipped
+
+    # The same claim still collides: the script is part of the title, punctuation is not.
+    filed, skipped = pf.decide([finding(title="缓存  cache invalidation is missing!")],
+                               [issue(pf.fingerprint(COMPONENT, first))],
+                               issues_per_day=25, now=NOW)
+    assert not filed and skipped[0]["reason"] == "already filed"
+
+
+def test_the_script_change_costs_one_re_file_and_no_hidden_finding():
+    """The trade-off, pinned: a title with a non-ASCII letter was fingerprinted under the old
+    ASCII form, so it is filed once more. Hiding a different defect that shares the ASCII remnant
+    is the failure the fingerprint exists to prevent, so the duplicate is the one to accept."""
     import hashlib
 
     title = "Falha na validação do cache"
     legacy = " ".join(re.sub(r"[^a-z0-9 ]+", " ", title.lower()).split())
-    assert pf._norm(title) == legacy
-
     fp_old = hashlib.sha256("|".join([COMPONENT, "registry.py", legacy]).encode()).hexdigest()[:12]
-    filed, skipped = pf.decide([finding(title=title)], [issue(fp_old)], issues_per_day=25, now=NOW)
-    assert not filed and skipped[0]["reason"] == "already filed"
+    filed, _ = pf.decide([finding(title=title)], [issue(fp_old)], issues_per_day=25, now=NOW)
+    assert len(filed) == 1, "one re-file, bounded by the cap"
