@@ -17,10 +17,13 @@ COPY package.json bun.lock tsconfig.json ./
 RUN bun install --frozen-lockfile --ignore-scripts
 COPY src/ ./src/
 RUN bun build src/reviewRun.ts --target=node --outfile=/build/reviewRun.js
+# The progress note is a separate bundle on purpose: it shares no code with the review.
+RUN bun build src/progressCli.ts --target=node --outfile=/build/progress.js
 
 FROM ${BASE_IMAGE}
 
 COPY --from=harness /build/reviewRun.js /opt/goby/reviewRun.js
+COPY --from=harness /build/progress.js /opt/goby/progress.js
 
 COPY review/entrypoint.sh /opt/goby/entrypoint.sh
 COPY review/defaults.env /opt/goby/defaults.env
