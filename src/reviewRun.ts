@@ -26,7 +26,7 @@ import { assertHead, finish_failure_should_report, HeadChanged, loadReceipt, ref
 import { diffDigest, parseReceipt, receiptMarker, type ReviewReceipt } from './core/verdict.ts';
 import { REVIEW_VERSION } from './identity.ts';
 import { GitHubClient } from './platforms/github.ts';
-import { post_gate_status, post_review, post_status, reply_in_thread, resolve_thread } from './platforms/publish.ts';
+import { post_gate_status, post_review, post_status, post_verdict, reply_in_thread, resolve_thread } from './platforms/publish.ts';
 
 /** A resolved thread carries the text that resolved it; the model needs it to judge a re-report. */
 type ResolvedThread = contract.ThreadRecord & { resolution?: string };
@@ -162,7 +162,10 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   const maxFindings = intEnv('GOBY_MAX_FINDINGS');
 
   if (job.reuse) {
-    await post_status(client, job.head, 'success', job.reuse_reason ?? 'Complete review reused on unchanged head');
+    await post_verdict(client, job.head, job.reuse_reason ?? 'Complete review reused on unchanged head');
+    // This branch publishes a verdict too, so a later failure must not rewrite it: the gate
+    // refresh below owns the gate status, not the review's.
+    state.published = true;
     // A commit that was never reviewed has no receipt, so a gate check for it can only fail closed
     // and stay failed: every later push would repeat it. The review status alone carries the answer.
     if (!gate_enabled() || job.reuse_kind !== 'same-head') {
@@ -217,7 +220,7 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   await post_review(client, job.pr, job.head, summary, picked.inline);
   const found = picked.inline.length + picked.overflow.length;
   const description = found ? `${found} new bug(s) found` : 'no bugs found';
-  await post_status(client, job.head, 'success', description);
+  await post_verdict(client, job.head, description);
   // Publication is the review *and* the status. Until that write succeeds the `pending` one
   // prepare posted is all anyone can see, so the failure path still has to resolve it; after it,
   // a later failure must not rewrite the verdict to `error`.

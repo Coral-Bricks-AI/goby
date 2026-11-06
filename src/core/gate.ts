@@ -8,12 +8,12 @@ export class HeadChanged extends Error {}
 /**
  * Whether a throw out of `finish` leaves statuses that have to be resolved.
  *
- * `prepare` posts `pending`, so a failure before the review is published must end in `error` on
- * both statuses — a pending check with no review behind it blocks the pull request with nothing
- * to read (review/INVARIANTS.md 1). Two failures are not ours to report: a head that moved (the
- * run that superseded this one owns the statuses), and anything after `post_review` (the posted
- * review is the verdict, and rewriting its status to `error` would lose it and leave the gate
- * refusing a head that was reviewed).
+ * `prepare` posts `pending`, so a failure before the verdict is published must end in `error` on
+ * both statuses — a pending check with nothing behind it blocks the pull request with nothing to
+ * read (review/INVARIANTS.md 1). Two failures are not ours to report: a head that moved (the run
+ * that superseded this one owns the statuses), and anything after the verdict status is written
+ * (`post_verdict` reads a failed write back first, so a success the API recorded counts), where
+ * rewriting a written success to `error` would leave the gate refusing a reviewed head.
  */
 export function finish_failure_should_report(error: unknown, published: boolean): boolean {
   return !published && !(error instanceof HeadChanged);
