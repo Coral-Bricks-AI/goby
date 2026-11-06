@@ -14,13 +14,13 @@ const API = 'https://api.github.com';
 const REQUEST_TIMEOUT_MS = 10_000;
 const PREFIX = '<!-- goby-progress';
 
-// Plain strings, not String.raw: bun's transpiler escapes non-ASCII inside a raw template, so the
-// comment would show `\u00B0` instead of the degree sign.
-const ART = [
-  '        o    °',
-  '     °     .',
-  '   ><((((°>    . o O',
-].join('\n') + '\n';
+// The pictures live in goby's own public repository, at `main`: a merged change to an SVG reaches
+// every note, existing ones included, with no code change or image rebuild. GitHub proxies the image
+// and plays an SVG's own animation, but runs no script and loads nothing else it references.
+const ASSETS = 'https://raw.githubusercontent.com/Coral-Bricks-AI/goby/main/review/assets';
+
+const picture = (state: State): string =>
+  `<img src="${ASSETS}/${state}.svg" alt="${state === 'done' ? 'Goby is done' : 'Goby is reviewing'}" width="400">`;
 
 export type Comment = { id: number; body?: string | null; user?: { type?: string } | null };
 
@@ -34,13 +34,12 @@ export function marker(run: string, state: State): string {
 }
 
 export function body(run: string, state: State, head: string): string {
-  if (state === 'done') {
-    // Also reached when the reviewer failed: no review is posted then, and the check says why.
-    return `${marker(run, state)}\n**Goby is done with \`${head.slice(0, 10)}\`.** Its review is further ` +
-      'down; if there is none, the Goby Review check says why.';
-  }
-  return `${marker(run, state)}\n\`\`\`text\n${ART}\`\`\`\n\n` +
-    `**Goby is reviewing \`${head.slice(0, 10)}\`.** This note updates when the review is posted.`;
+  const sha = `\`${head.slice(0, 10)}\``;
+  // "done" is also reached when the reviewer failed: no review is posted then, and the check says why.
+  const text = state === 'done'
+    ? `**Goby is done with ${sha}.** Its review is further down; if there is none, the Goby Review check says why.`
+    : `**Goby is reviewing ${sha}.** This note updates when the review is posted.`;
+  return `${marker(run, state)}\n${picture(state)}\n\n${text}`;
 }
 
 /** Ours means: posted by a bot, and the body leads with the progress marker (of `run`, if given). */

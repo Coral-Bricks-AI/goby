@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 80" width="400" height="80" role="img" aria-label="Goby is done">
+  <!-- Placeholder: the goby has eaten every bug and is full. -->
+  <g transform="translate(170 0)">
+    <path d="M12 40 L-6 28 L-2 40 L-6 52 Z" fill="#c8915a"/>
+    <ellipse cx="34" cy="42" rx="28" ry="22" fill="#d9a066"/>
+    <ellipse cx="34" cy="50" rx="18" ry="11" fill="#ecc596"/>
+    <circle cx="48" cy="33" r="4" fill="#ffffff"/>
+    <path d="M45 33 Q48 30 51 33" stroke="#1f2328" stroke-width="1.5" fill="none"/>
+    <path d="M55 44 Q58 46 55 48" stroke="#8a5a2b" stroke-width="1.5" fill="none"/>
+  </g>
+</svg>

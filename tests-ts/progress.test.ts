@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { body, is_ours, main, marker, start, stop, type Comment } from '../src/progress.ts';
 
 type Call = { method: string; url: string; payload: any };
@@ -23,16 +25,22 @@ function fake(comments: Comment[], fail: (c: Call) => number | null = () => null
 const bot = (id: number, text: string): Comment => ({ id, body: text, user: { type: 'Bot' } });
 
 describe('progress note', () => {
-  test('reviewing carries the art and the head; done is one line naming the head', () => {
+  test('each state shows its own picture from the repository, then text naming the head', () => {
+    const assets = 'https://raw.githubusercontent.com/Coral-Bricks-AI/goby/main/review/assets';
     const reviewing = body('42.1', 'reviewing', HEAD);
-    expect(reviewing.startsWith(marker('42.1', 'reviewing'))).toBe(true);
-    expect(reviewing).toContain('```text\n');
-    expect(reviewing).toContain('><((((°>');
-    expect(reviewing).toContain('`0123456789`');
+    expect(reviewing).toBe(`${marker('42.1', 'reviewing')}\n<img src="${assets}/reviewing.svg" alt="Goby is reviewing" width="400">\n\n` +
+      '**Goby is reviewing `0123456789`.** This note updates when the review is posted.');
     const done = body('42.1', 'done', HEAD);
-    expect(done.startsWith(marker('42.1', 'done'))).toBe(true);
-    expect(done).toContain('`0123456789`');
-    expect(done).not.toContain('```');
+    expect(done.startsWith(`${marker('42.1', 'done')}\n<img src="${assets}/done.svg" alt="Goby is done" width="400">`)).toBe(true);
+    expect(done).toContain('**Goby is done with `0123456789`.**');
+  });
+
+  test('every picture the note names is in the repository', () => {
+    for (const state of ['reviewing', 'done'] as const) {
+      const svg = readFileSync(join(import.meta.dir, '..', 'review', 'assets', `${state}.svg`), 'utf8');
+      expect(svg).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
+      expect(svg).not.toContain('<script');
+    }
   });
 
   test('ours means a bot comment leading with the marker, of the given run when named', () => {
