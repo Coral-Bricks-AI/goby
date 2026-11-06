@@ -71,14 +71,22 @@ def issue_label() -> str:
 
 
 def _norm(text) -> str:
-    """Case, punctuation and spacing beaten out of a title — in any script.
+    """Case, punctuation and spacing beaten out of a title — without losing a title's script.
 
-    `[^a-z0-9 ]` erased every non-Latin title to "", so two different defects in one file shared
-    a fingerprint and the second was filed as "already filed" forever — and a title in another
-    script is exactly what a component whose brief is written in that script produces. `\W` is
-    Unicode-aware, so letters survive and punctuation still becomes a space.
+    The ASCII form is the fingerprint history: every issue already filed carries it, and changing
+    it re-files a defect a human already answered. It therefore still wins whenever it says
+    anything, which is every title with an ASCII letter or digit in it.
+
+    `[^a-z0-9 ]` erased a title with no ASCII at all to "", so two different defects in one file
+    shared the fingerprint "" and the second was filed as "already filed" forever — exactly what
+    a component whose brief is in another script produces. `\W` is Unicode-aware, so the fallback
+    keeps those letters and still turns punctuation into a space.
     """
-    return " ".join(re.sub(r"[\W_]+", " ", str(text or "").casefold()).split())
+    raw = str(text or "")
+    ascii_form = " ".join(re.sub(r"[^a-z0-9 ]+", " ", raw.lower()).split())
+    if ascii_form:
+        return ascii_form
+    return " ".join(re.sub(r"[\W_]+", " ", raw.casefold()).split())
 
 
 def fingerprint(component: str, finding: dict) -> str:

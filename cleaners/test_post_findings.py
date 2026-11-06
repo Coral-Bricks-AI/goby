@@ -4,6 +4,7 @@ No network: `_http` is stubbed, and `decide()` is pure.
 """
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -646,3 +647,17 @@ def test_ascii_normalisation_still_collides_where_it_should():
         pf.fingerprint(COMPONENT, finding(title="slot over admitted"))
     assert pf.fingerprint(COMPONENT, finding(title="100% broken_loop!")) == \
         pf.fingerprint(COMPONENT, finding(title="100 broken loop"))
+
+
+def test_an_accented_title_keeps_the_fingerprint_it_was_filed_under():
+    """Dedupe history *is* the fingerprint. The Unicode form must only be a fallback for a title
+    with no ASCII letters at all, or every issue filed under an accented title is re-filed."""
+    import hashlib
+
+    title = "Falha na validação do cache"
+    legacy = " ".join(re.sub(r"[^a-z0-9 ]+", " ", title.lower()).split())
+    assert pf._norm(title) == legacy
+
+    fp_old = hashlib.sha256("|".join([COMPONENT, "registry.py", legacy]).encode()).hexdigest()[:12]
+    filed, skipped = pf.decide([finding(title=title)], [issue(fp_old)], issues_per_day=25, now=NOW)
+    assert not filed and skipped[0]["reason"] == "already filed"
