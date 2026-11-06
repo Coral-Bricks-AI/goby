@@ -106,7 +106,10 @@ if not tpl_path.is_file():
     tpl_path = pathlib.Path(os.environ["CLEANERS_PROMPT_DIR"]) / "prompt.md"
 tpl = tpl_path.read_text()
 body = tpl.split("<!-- BODY -->", 1)[1].strip() if "<!-- BODY -->" in tpl else tpl
-files = pathlib.Path(changed).read_text().strip() if pathlib.Path(changed).is_file() else ""
+# `replace` because the listed paths are raw bytes since `core.quotePath=false`: the list is
+# advisory prompt context, and a name the scanner cannot decode must not abort the render —
+# that failed the scan for every component of the push.
+files = pathlib.Path(changed).read_bytes().decode("utf-8", "replace").strip() if pathlib.Path(changed).is_file() else ""
 sandbox = os.environ.get("CLEANERS_SANDBOX") or "(no sandbox: this tree is read-only)"
 render = (body.replace("{{REPO}}", os.environ.get("REPO") or pathlib.Path(repo_dir).name)
               .replace("{{SHA}}", sha)
