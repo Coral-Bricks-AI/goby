@@ -17,10 +17,12 @@ const PREFIX = '<!-- goby-progress';
 // The pictures live in goby's own public repository, at `main`: a merged change to an SVG reaches
 // every note, existing ones included, with no code change or image rebuild. GitHub proxies the image
 // and plays an SVG's own animation, but runs no script and loads nothing else it references.
+// No width here: each SVG's own width/height is its display size, wider than a comment, so GitHub
+// scales it down to fill the comment and size stays an SVG-only change too.
 const ASSETS = 'https://raw.githubusercontent.com/Coral-Bricks-AI/goby/main/review/assets';
 
 const picture = (state: State): string =>
-  `<img src="${ASSETS}/${state}.svg" alt="${state === 'done' ? 'Goby is done' : 'Goby is reviewing'}" width="400">`;
+  `<img src="${ASSETS}/${state}.svg" alt="${state === 'done' ? 'Goby is done' : 'Goby is reviewing'}">`;
 
 export type Comment = { id: number; body?: string | null; user?: { type?: string } | null };
 
