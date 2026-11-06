@@ -72,3 +72,15 @@ test('a fence inside a finding detail does not hide the payload from the strict 
   // A genuinely off-contract payload is still refused.
   expect(F.parse_findings('[{"path":"a.ts","line":2,"title":"T"', true)).toBeNull();
 });
+
+test('a findings record that is not an array is unreadable, not empty', () => {
+  // Skipping it left `emitted` empty, so the strict parse was asked about `'[]'` — the one input
+  // that means "no findings" — and an off-contract reply became a green review.
+  const bad = F.emitted_findings([{kind: 'findings', findings: {path: 'a.ts', line: 2, title: 'T'}}]);
+  expect(bad).toEqual([[], true]);
+  expect(F.emitted_findings([{kind: 'findings'}, {kind: 'progress'}])).toEqual([[], true]);
+
+  const good = [{path: 'a.ts', line: 2, severity: 'high', title: 'T'}, {path: 'b.ts', line: 3, severity: 'low', title: 'U'}];
+  expect(F.emitted_findings([{kind: 'findings', findings: good}])).toEqual([good, false]);
+  expect(F.emitted_findings([])).toEqual([[], false]);
+});
