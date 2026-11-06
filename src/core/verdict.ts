@@ -57,3 +57,25 @@ export function evaluateGate(receipt: ReviewReceipt | null, head: string, opened
   const key = (Object.keys(facts) as (keyof GateFacts)[]).find(key => facts[key] !== true)!;
   return {head_sha: head, state: 'failure', description: reasons[key]};
 }
+
+const same_receipt = (a: ReviewReceipt, b: ReviewReceipt): boolean =>
+  a.schema === b.schema && a.head_sha === b.head_sha && a.base_ref === b.base_ref &&
+  a.diff_sha256 === b.diff_sha256 && a.complete === b.complete && a.agent === b.agent &&
+  a.unthreaded === b.unthreaded && a.finding_ids.join(',') === b.finding_ids.join(',');
+
+/**
+ * Whether the review this run posted is on the pull request.
+ *
+ * A review POST has no compare-and-swap: GitHub can store the review and still answer with an
+ * error, so it is read back before the failure is believed. The comparison is against *this*
+ * run's receipt, not against any complete review for the head: a retargeted pull request keeps a
+ * complete receipt for an older diff, and accepting that one would swallow a POST that really
+ * failed and report a review whose findings were never published.
+ */
+export function review_landed(reviews: readonly {head: string; body: string}[], want: ReviewReceipt): boolean {
+  return reviews.some(review => {
+    if (review.head !== want.head_sha) return false;
+    const got = parseReceipt(review.body, want.head_sha);
+    return got !== null && same_receipt(got, want);
+  });
+}
