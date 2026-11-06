@@ -28,10 +28,10 @@ describe('progress note', () => {
   test('each state shows its own picture from the repository, then text naming the head', () => {
     const assets = 'https://raw.githubusercontent.com/Coral-Bricks-AI/goby/main/review/assets';
     const reviewing = body('42.1', 'reviewing', HEAD);
-    expect(reviewing).toBe(`${marker('42.1', 'reviewing')}\n<img src="${assets}/reviewing.svg" alt="Goby is reviewing" width="400">\n\n` +
+    expect(reviewing).toBe(`${marker('42.1', 'reviewing')}\n<img src="${assets}/reviewing.svg" alt="Goby is reviewing">\n\n` +
       '**Goby is reviewing `0123456789`.** This note updates when the review is posted.');
     const done = body('42.1', 'done', HEAD);
-    expect(done.startsWith(`${marker('42.1', 'done')}\n<img src="${assets}/done.svg" alt="Goby is done" width="400">`)).toBe(true);
+    expect(done.startsWith(`${marker('42.1', 'done')}\n<img src="${assets}/done.svg" alt="Goby is done">`)).toBe(true);
     expect(done).toContain('**Goby is done with `0123456789`.**');
   });
 
@@ -40,6 +40,8 @@ describe('progress note', () => {
       const svg = readFileSync(join(import.meta.dir, '..', 'review', 'assets', `${state}.svg`), 'utf8');
       expect(svg).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
       expect(svg).not.toContain('<script');
+      // The note sets no width, so this is the display size: wide enough to fill a comment.
+      expect(Number(svg.match(/<svg[^>]* width="(\d+)"/)![1])).toBeGreaterThanOrEqual(900);
     }
   });
 
