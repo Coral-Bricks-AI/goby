@@ -25,3 +25,7 @@ and the image publish reach every consumer automatically.
 
 Push before replying: resolving releases the merge. A resolved thread is not re-reported, so resolve
 only what you fixed, or reply why it is out of scope.
+
+When there is no pull request to review, `gh issue list --label goby-cleaners --state open` is the next
+best backlog: those are defects goby cleaners reproduced in this repository, and each one has a
+repro and a flip to start from.
