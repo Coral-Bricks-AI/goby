@@ -191,3 +191,22 @@ describe('own reviews', () => {
     expect((await client.own_reviews(1)).map(review => review.head)).toEqual(['ours']);
   });
 });
+
+describe('a truncated thread list is not an empty one', () => {
+  test('the single-list readers throw instead of returning a prefix', async () => {
+    // `[threads, false]` means the pages walked are not all of them. Taking element 0 turned
+    // "I could not read the thread list" into "there are no threads", and repeat suppression
+    // ran on a list the harness knew was short.
+    for (const method of ['fetch_open_own_threads', 'fetch_resolved_own_threads'] as const) {
+      const { client } = fake((_c, i) => i === 0
+        ? envelope('reviewThreads', connection([thread()], true, 'c1'))
+        : {});
+      await expect(client[method](1)).rejects.toThrow('could not be read in full');
+    }
+  });
+
+  test('a complete traversal still returns its records', async () => {
+    const { client } = fake(() => envelope('reviewThreads', connection([thread()])));
+    expect(await client.fetch_open_own_threads(1)).toHaveLength(1);
+  });
+});

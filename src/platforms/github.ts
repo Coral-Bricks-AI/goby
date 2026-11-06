@@ -257,12 +257,22 @@ export class GitHubClient {
     return [out, false];
   }
 
+  /**
+   * A truncated traversal is not an empty list. `fetch_own_threads` reports whether the pages it
+   * walked are all of them; dropping that boolean turned "I could not read the thread list" into
+   * "there are no threads", which disables repeat suppression silently. Throwing lets `prepare`
+   * record the reason, which is what its `.catch()` was always for.
+   */
   async fetch_open_own_threads(pr: number): Promise<ThreadRecord[]> {
-    return (await this.fetch_own_threads(pr, false))[0];
+    const [threads, complete] = await this.fetch_own_threads(pr, false);
+    if (!complete) throw new Error('open review threads could not be read in full');
+    return threads;
   }
 
   async fetch_resolved_own_threads(pr: number): Promise<ThreadRecord[]> {
-    return (await this.fetch_own_threads(pr, true))[0];
+    const [threads, complete] = await this.fetch_own_threads(pr, true);
+    if (!complete) throw new Error('resolved review threads could not be read in full');
+    return threads;
   }
 
   /** Single traversal, so reopened threads cannot fall between two queries. */

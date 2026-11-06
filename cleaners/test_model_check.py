@@ -114,3 +114,24 @@ def test_every_shipped_provider_is_one_the_shell_can_run():
             text = (HERE / script).read_text()
             assert f"{provider})" in text, f"{script} does not know provider {provider}"
             assert credential in text, f"{script} never mentions {credential}"
+
+
+BRACED = {"providers": {"openai": {"apiKey": "${OPENAI_API_KEY}",
+                                   "headers": {"x-session-id": "${CLEANERS_SESSION_ID}"}}}}
+
+
+def test_braced_interpolation_is_a_credential(tmp_path):
+    """#44: pi's models.json interpolates `${NAME}` as well as `$NAME`. Reading only the bare form
+    saw a provider with an unset key as usable, so the required fallback never ran and the scan
+    failed after the clone instead of before it."""
+    d = models_dir(tmp_path, {"openai": BRACED, "coral": CORAL})
+    assert mc.credential_vars(d / "openai.json") == {"OPENAI_API_KEY"}
+    model, why = mc.choose(d, "openai/x", "coral/x", {"CORALBRICKS_API_KEY": "k"})
+    assert model == "coral/x", why
+    assert mc.missing(d, "openai/x", {}) == ["OPENAI_API_KEY"]
+
+
+def test_a_braced_and_a_bare_name_are_the_same_credential(tmp_path):
+    d = models_dir(tmp_path, {"mixed": {"providers": {"m": {
+        "apiKey": "${MIXED_KEY}", "headers": {"x-other": "$MIXED_OTHER"}}}}})
+    assert mc.credential_vars(d / "mixed.json") == {"MIXED_KEY", "MIXED_OTHER"}

@@ -27,3 +27,22 @@ export function review_budget(maxRounds: number, prior: readonly PriorReview[], 
       `it gets ${maxRounds}, and the post-merge cleaner takes it from there`,
   };
 }
+
+/** What a reused round leaves the gate, when anything is left at all. */
+export type ReusedEvidence = 'same-head' | 'rounds' | null;
+
+/**
+ * Which evidence a reused round leaves the gate, given whether a *completed* receipt exists for
+ * this head.
+ *
+ * `same-head` is not "the receipt still matches": a retargeted pull request keeps the head and
+ * loses the base, and comparing the receipt's base_ref and diff digest against the current pull
+ * request is the gate's job. Reporting `rounds` whenever `sameHead` was false skipped that
+ * comparison and left a green check standing on a diff nobody had reviewed.
+ *
+ * `rounds` therefore means only "this head has no receipt at all", where a gate refresh can
+ * never succeed and asking for it would fail closed forever.
+ */
+export function reuse_evidence(has_completed_receipt: boolean, stopped: boolean): ReusedEvidence {
+  return has_completed_receipt ? 'same-head' : stopped ? 'rounds' : null;
+}

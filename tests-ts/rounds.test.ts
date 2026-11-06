@@ -1,5 +1,5 @@
 import {test, expect} from 'bun:test';
-import {review_budget} from '../src/core/rounds.ts';
+import {review_budget, reuse_evidence} from '../src/core/rounds.ts';
 
 const completed = (head: string) => ({head, complete: true});
 const incomplete = (head: string) => ({head, complete: false});
@@ -29,4 +29,16 @@ test('a higher cap allows exactly that many reviews', () => {
 
 test('zero means no cap', () => {
   expect(review_budget(0, [completed('a'.repeat(40))], 'b'.repeat(40)).stop).toBe(false);
+});
+
+test('a retargeted head still hands the gate its receipt', () => {
+  // The head is unchanged and the base moved. A receipt exists, so the gate must re-read it and
+  // refuse the base/digest mismatch; `rounds` skipped that refresh and left the old green.
+  expect(reuse_evidence(true, true)).toBe('same-head');
+});
+
+test('a head with no receipt leaves the gate alone', () => {
+  // No evidence exists, so a gate refresh can only fail closed and stay failed.
+  expect(reuse_evidence(false, true)).toBe('rounds');
+  expect(reuse_evidence(false, false)).toBeNull();
 });

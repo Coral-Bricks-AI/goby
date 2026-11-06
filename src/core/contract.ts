@@ -251,6 +251,20 @@ function rawDecode(text: string, start = 0): [unknown, number] {
   return [value, i];
 }
 export function* _candidate_arrays(text: string): Generator<string | null> {
+  // The whole text first, when it opens an array. A caller that serialised the findings itself
+  // (`finish` passes `JSON.stringify(emitted)`) must not be shadowed by a fence that appears
+  // inside a string value: a finding's `detail` quoting the probe it ran is normal, and the
+  // fence in it is not a second payload. Scraping fences first made that detail decide whether
+  // the whole review parsed.
+  const whole = trim(text);
+  if (whole.startsWith('[')) {
+    try {
+      const [value, end] = rawDecode(whole);
+      // The same shape the array scan below accepts: a non-empty array of records. `[1]` is not
+      // a findings payload in either mode, and yielding it here would turn `null` into `[]`.
+      if (end === whole.length && Array.isArray(value) && value.length && value.every(isRecord)) yield whole;
+    } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+  }
   const fenced = Array.from(text.matchAll(new RegExp('```(?:json)?' + SPACE + '*(.*?)```', 'gsu')), m => m[1]);
   yield* fenced.reverse();
   let best: string | null = null;

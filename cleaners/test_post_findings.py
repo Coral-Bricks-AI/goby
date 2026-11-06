@@ -542,3 +542,58 @@ def test_the_close_instruction_names_the_brief_that_component_really_has(monkeyp
     monkeypatch.setattr(pf, "BRIEFS", {"services/api": "INVARIANTS.md"}, raising=False)
     _, body = pf.render_issue("services/api", item, "a" * 40)
     assert "`services/api/INVARIANTS.md`" in body
+
+
+def test_a_component_with_a_space_round_trips_through_the_marker():
+    """#43/#40: a component directory may contain a space. The marker is the only record of what
+    is filed, so a marker the grammar cannot read re-files the same defect on every scan."""
+    component = "services/api v2"
+    fp = pf.fingerprint(component, finding(component=component))
+    parsed = pf.parse_marker(pf.marker(component, finding(), fp, "medium"))
+    assert parsed is not None, pf.marker(component, finding(), fp, "medium")
+    assert parsed.group("component") == component
+    assert parsed.group("fp") == fp
+
+
+def test_a_component_with_a_space_dedupes_against_its_own_issue():
+    component = "services/api v2"
+    f = finding(component=component)
+    fp = pf.fingerprint(component, f)
+    filed, skipped = pf.decide([f], [issue(fp, component=component)], issues_per_day=5, now=NOW)
+    assert not filed and skipped[0]["reason"] == "already filed"
+
+
+def test_a_label_with_a_space_is_encoded_into_the_dedupe_read(monkeypatch):
+    """#42/#47: `?labels=team cleaners` is not a request line, so the read failed and nothing at
+    all was filed under that label."""
+    from urllib.parse import parse_qs, urlparse
+
+    seen: list[str] = []
+
+    def fake(method, path, token, payload=None):
+        seen.append(path)
+        return 200, []
+
+    monkeypatch.setattr(pf, "_http", fake)
+    monkeypatch.setenv("CLEANERS_LABEL", "team cleaners")
+    assert pf.list_labelled("o/r", "tok") == []
+    assert " " not in seen[0]
+    assert parse_qs(urlparse(seen[0]).query)["labels"] == ["team cleaners"]
+
+
+def test_the_page_probe_encodes_the_label_too(monkeypatch):
+    """The read past the page bound builds its own URL; an unencoded label there fails the read
+    that proves a long history is complete."""
+    from urllib.parse import parse_qs, urlparse
+
+    seen: list[str] = []
+
+    def fake(method, path, token, payload=None):
+        seen.append(path)
+        page = int(parse_qs(urlparse(path).query)["page"][0])
+        return 200, labelled_issues(200)[(page - 1) * 100: page * 100]
+
+    monkeypatch.setattr(pf, "_http", fake)
+    monkeypatch.setenv("CLEANERS_LABEL", "team cleaners")
+    assert len(pf.list_labelled("o/r", "tok", max_pages=2) or []) == 200
+    assert all(" " not in path for path in seen)

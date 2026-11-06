@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolve_gate_target, type GateTarget } from './core/gateEvent.ts';
 import { caveats_for } from './core/caveat.ts';
-import { review_budget } from './core/rounds.ts';
+import { review_budget, reuse_evidence, type ReusedEvidence } from './core/rounds.ts';
 import { gate_enabled } from './core/flags.ts';
 import { resolve_digest } from './core/image.ts';
 import { check_target } from './core/target.ts';
@@ -48,11 +48,13 @@ interface Job {
   /** Why the reviewer did not run, when it did not. */
   reuse_reason: string | null;
   /**
-   * `same-head` means a receipt exists for this exact commit, so the gate can be recomputed.
-   * `rounds` means this commit was never reviewed: there is no evidence to gate, and asking for it
-   * would fail closed forever.
+   * Which evidence a reused round leaves the gate. `same-head` means a completed receipt exists
+   * for this exact commit — including when the base ref or the diff digest has moved since, where
+   * the gate is the thing that compares them and refuses the stale evidence. `rounds` means this
+   * commit has no receipt at all: there is no evidence to gate, and asking for it would fail
+   * closed forever.
    */
-  reuse_kind: 'same-head' | 'rounds' | null;
+  reuse_kind: ReusedEvidence;
   incomplete: string[];
 }
 
@@ -146,7 +148,7 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
     image, image_digest: imageDigest,
     diff_digest: digest, diff_lines: lineCount(diff),
     open_threads: opened, resolved_history: history, reuse, reuse_reason: reuseReason,
-    reuse_kind: sameHead ? 'same-head' : budget.stop ? 'rounds' : null, incomplete,
+    reuse_kind: reuse_evidence(previous?.complete === true, budget.stop), incomplete,
   };
   await writeFile(join(out, 'job.json'), JSON.stringify(job, null, 2) + '\n');
   console.log(JSON.stringify({ phase: 'prepared', reuse, open_threads: opened.length, resolved_history: history.length, diff_lines: job.diff_lines, diff_digest: digest }));
