@@ -508,8 +508,9 @@ def test_a_failed_listing_still_returns_none(monkeypatch):
 
 
 def test_the_page_bound_covers_years_of_filings():
-    """3 issues a day: the bound must not be the thing that stops dedupe working."""
-    assert pf.MAX_LABELLED_PAGES * 100 >= 3 * 365, "less than a year of filings would be unsafe"
+    """At the shipped cap: the bound must not be the thing that stops dedupe working. 10/day is
+    the image default in `defaults.env`, so that is the rate the read has to outlive."""
+    assert pf.MAX_LABELLED_PAGES * 100 >= 10 * 365, "less than a year of filings would be unsafe"
 
 
 def test_the_label_can_be_overridden_for_a_transition(monkeypatch):
