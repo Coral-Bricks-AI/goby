@@ -31,9 +31,6 @@ and closed by a human. **An empty result is a normal, expected answer** — most
    five-line probe, or exercise the code path directly.
 4. Report what survived step 3. In `detail`, say what you ran.
 
-`file_history` is worth a look when behaviour seems deliberate: a line that has meant the same
-thing for two years is rarely the bug.
-
 ## The diff
 
 ```diff
