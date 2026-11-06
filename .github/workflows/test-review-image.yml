@@ -1,0 +1,67 @@
+name: test review image
+
+# The reviewer's Dockerfile is otherwise only built by the push to main that publishes it, so a
+# broken build — a bad `COPY --from`, a base that no longer has the file it copies — would first
+# fail on the branch everyone already runs, and `goby-base:latest` would move while
+# `goby-review:latest` did not. Build it on the pull request that changes it instead, the way
+# `test-cleaners.yml` does for the cleaners.
+#
+# Not on push to main: `review-image.yml` already builds these two images on that push, and a
+# second build there would only repeat the work.
+
+on:
+  pull_request:
+    paths:
+      - "base/**"
+      - "review/**"
+      - "src/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/test-review-image.yml"
+      - ".github/workflows/review-image.yml"
+
+concurrency:
+  group: test-review-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dockerfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same two builds `review-image.yml` publishes, so a change that breaks publishing breaks
+      # here first. Plain `docker build`, not buildx: the reviewer is built `FROM` the base image
+      # just built, and a container driver cannot see an image that only exists in the daemon.
+      - name: Build goby-base
+        run: docker build --platform linux/amd64 -t goby-base:test base
+
+      - name: Build the reviewer
+        run: >-
+          docker build --platform linux/amd64 --build-arg BASE_IMAGE=goby-base:test
+          -f review/Dockerfile -t goby-review:test .
+
+      # A build that succeeds but cannot start is the failure mode that only shows up on the first
+      # real review. These are the tools the harness runs on, not a toolchain for the repo under
+      # review: if one of them leaves the image, the reviewer cannot start.
+      - name: The image can start
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint bash goby-review:test -lc \
+            'pi --version && node --version && python3 --version && git --version && jq --version && rg --version | head -1'
+
+      # The image carries the harness, not a toolchain the reviewed repo may need: bun and git-lfs
+      # cost every pull and are fetched in the sandbox by the repos that want them (see
+      # base/Dockerfile). Bringing either back is a decision a review would take on size, so it
+      # should fail with this message and a reason in the pull request, not slip in silently.
+      - name: The image is still the harness, not a toolchain
+        run: |
+          set -euo pipefail
+          if found="$(docker run --rm --entrypoint bash goby-review:test -lc 'command -v bun || command -v git-lfs')"; then
+            echo "the reviewer image ships $found; a repo that needs it installs it in the sandbox" >&2
+            exit 1
+          fi
