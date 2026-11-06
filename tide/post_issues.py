@@ -152,9 +152,14 @@ def _clip(text: str, limit: int, what: str, *, follows_from_plan: bool = False) 
         return body
     cut = body[:limit]
     head = cut.rsplit("\n", 1)[0] if "\n" in cut else cut
-    shown = head.count("\n") + 1
-    total = body.count("\n") + 1
-    note = (f"…{what} truncated: showing {shown:,} of {total:,} lines.")
+    if "\n" in head:
+        shown, total, unit = head.count("\n") + 1, body.count("\n") + 1, "lines"
+    else:
+        # Nothing survived the cut but part of one line — a one-paragraph summary, a one-line
+        # command, a minified diff. Counting lines there says "showing 1 of 1 lines", which claims
+        # nothing was omitted while characters were dropped, so characters are what get counted.
+        shown, total, unit = len(head), len(body), "characters"
+    note = f"…{what} truncated: showing {shown:,} of {total:,} {unit}."
     if follows_from_plan:
         note += " The full change is reproducible by following the plan above."
     return f"{head}\n\n{note}"

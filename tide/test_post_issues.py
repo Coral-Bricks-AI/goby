@@ -373,3 +373,14 @@ def test_every_block_that_can_be_cut_uses_the_same_marker():
     _, rendered = pi.render_issue(proposal(summary=long, plan=long, risk=long), "a" * 40)
     for what in ("summary truncated", "plan truncated", "risk truncated"):
         assert f"…{what}" in rendered, what
+
+
+def test_a_single_line_block_cut_mid_line_counts_characters_not_lines():
+    """A one-paragraph summary or a one-line test command has no line boundary to cut on. Counting
+    lines made the note read "showing 1 of 1 lines" — a claim that nothing was omitted, printed
+    directly under text that had been cut mid-sentence."""
+    paragraph = "one long paragraph about the file " * 300
+    _, rendered = pi.render_issue(proposal(summary=paragraph), "a" * 40)
+    assert "…summary truncated: showing 4,000 of" in rendered
+    assert "characters" in rendered
+    assert "1 of 1 lines" not in rendered
