@@ -96,3 +96,29 @@ def test_the_prompt_renders_when_a_changed_path_is_not_utf8(tmp_path):
     assert out.returncode == 0, out.stderr
     assert "svc/a.py" in out.stdout
     assert "caf\ufffd.md" in out.stdout
+
+
+def test_the_prompt_renders_a_brief_or_rules_file_that_is_not_utf8(tmp_path):
+    """The brief and the repo rules are prompt context too, and both were still read with
+    `read_text()`. A Latin-1 `AGENTS.md` is one committed file that makes every scan of every
+    component fail at the render — `harness` in the log, nothing filed, forever."""
+    import os
+    import subprocess
+    import sys
+
+    text = (HERE / "cleaner.sh").read_text()
+    block = text.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    changed = tmp_path / "changed.txt"
+    changed.write_text("svc/a.py\n")
+    charter = tmp_path / "INVARIANTS.md"
+    charter.write_bytes(b"Caf\xe9: invariant one\n")
+    rules = tmp_path / "AGENTS.md"
+    rules.write_bytes(b"r\xe9gle\n")
+    env = {**os.environ, "CLEANERS_PROMPT_DIR": str(HERE), "REPO": "owner/repo"}
+    out = subprocess.run(
+        [sys.executable, "-c", block, "svc", "deadbeef", "", str(charter), str(rules),
+         str(changed), str(tmp_path)],
+        capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    assert "Caf\ufffd: invariant one" in out.stdout
+    assert "r\ufffdgle" in out.stdout

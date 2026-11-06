@@ -73,3 +73,21 @@ export async function post_status(client: GitHubClient, sha: string, state: stri
     ...(target_url ? { target_url } : {}),
   });
 }
+
+/**
+ * The review's verdict, written so a failure the API actually recorded is not believed.
+ *
+ * A commit status has no compare-and-swap, so a 502 can arrive after GitHub stored the write.
+ * Reporting that as a failed review would post `error` over a `success` and leave the gate
+ * refusing a head whose review is posted and complete, so read the status back before deciding
+ * the verdict is missing.
+ */
+export async function post_verdict(client: GitHubClient, sha: string, description: string): Promise<void> {
+  try {
+    await post_status(client, sha, 'success', description);
+  } catch (error) {
+    let latest: string | null = null;
+    try { latest = await client.latest_status_state(sha, STATUS_CONTEXT); } catch { latest = null; }
+    if (latest !== 'success') throw error;
+  }
+}
