@@ -128,10 +128,15 @@ cleaner's:
 
 - the fingerprint is `check + path` — the detector's own identity, with no sentence a model wrote
   in it, so the same 1,432-line file is the same fingerprint in March and in October;
-- **only open issues are read.** A file that was split and later grew back past the threshold
-  gets a new issue, and the closed one stands as the record that it was fixed once. The cleaner
-  reads closed issues too, because a defect someone closed as "not a defect" should not come
-  back — a smell genuinely can.
+- **an open issue, or one closed as `not planned`, suppresses the same check on the same path.**
+  The two close reasons mean opposite things: `completed` says the smell was dealt with, so a file
+  that later grows back past the threshold is a new finding with the closed issue as the record
+  that it was fixed once; `not planned` says a human decided not to act, and asking every sweep is
+  noise. The cleaner reads closed issues too, for the same reason — a decision should not be
+  re-asked — but it cannot tell the two reasons apart, which this can.
+- **`known` beats a close.** A `not planned` close cannot be taken back (the issue has to be
+  deleted to un-mute the path), while a `known` entry carries a reason, lives in the config, and
+  can be removed when the measurement starts to matter again. The footer of every issue says so.
 - when a sweep can measure the whole repository and finds the smell gone, it closes the open
   issue with the measurement that replaced it. A partial sweep never closes anything.
 

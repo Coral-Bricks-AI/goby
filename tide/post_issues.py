@@ -7,11 +7,13 @@
 
 One issue per over-threshold smell the agent wrote a plan for. Four decisions, in order:
 
-1. **Already open** — the fingerprint (`check|path`) is on an *open* `goby-tide` issue. Open
-   only, unlike the cleaner: a code smell can come back. A file that was split and then grew
-   past the threshold again is a new issue, and the closed one is the record that it was fixed
-   once. The fingerprint contains no model wording, so a re-titled report of the same 1,432-line
-   file is still the same fingerprint.
+1. **Already asked** — the fingerprint (`check|path`) is on an *open* `goby-tide` issue, or on
+   one **closed as `not planned`**. The two close reasons mean opposite things: `completed` says
+   the smell was dealt with, so a file that grew past the threshold again is a new finding; `not
+   planned` says a human decided not to act, and asking every sweep is the noise this product
+   exists to avoid. Unlike the cleaner, `completed` does not suppress — code grows back. The
+   fingerprint contains no model wording, so a re-titled report of the same 1,432-line file is
+   still the same fingerprint.
 2. **Gone** — with `--close-gone`, an open issue whose smell this sweep no longer measures is
    closed with the measurement that replaced it. That flag is passed only by a sweep that
    measured the whole repository: a partial or failed detection must not close anything.
@@ -91,13 +93,38 @@ def _parse_ts(value: str) -> datetime | None:
         return None
 
 
-def decide(proposals: list[dict], open_issues: list[dict], *,
-           issues_per_day: int, now: datetime | None = None) -> tuple[list[dict], list[dict]]:
-    """Split proposals into (file, skip). `open_issues` is the repository's open tide issues.
+# REST spells it `not_planned`; GraphQL spells it `NOT_PLANNED`, and a fixture or a future
+# transport may carry either. Comparing against one spelling made the mute never fire at all —
+# silently, because "not muted" is the old behaviour and the old behaviour looks correct.
+NOT_PLANNED = {"not_planned", "notplanned"}
 
-    Closed issues are deliberately not passed in: a closed smell is one a human dealt with, and
-    code grows back.
+
+def is_not_planned(issue: dict) -> bool:
+    reason = str(issue.get("state_reason") or "").strip().lower()
+    return reason in NOT_PLANNED
+
+
+def muted_issues(listed: list[dict]) -> dict[str, dict]:
+    """fingerprint -> the issue that closed it as `not planned`.
+
+    Two close reasons mean opposite things. `completed` says the smell was dealt with, so a
+    fingerprint that fires again is new growth and deserves a new issue. `not planned` says a
+    human decided not to, and asking again every sweep is the noise this product is supposed to
+    avoid — so that close mutes the check on that path.
     """
+    return {fp: issue for fp, issue in common.marker_index(listed, MARKER).items()
+            if issue.get("state") != "open" and is_not_planned(issue)}
+
+
+def decide(proposals: list[dict], open_issues: list[dict], *,
+           muted: dict[str, dict] | None = None,
+           issues_per_day: int, now: datetime | None = None) -> tuple[list[dict], list[dict]]:
+    """Split proposals into (file, skip).
+
+    `open_issues` is what dedupe reads for "already asked"; `muted` is the `not planned` closures.
+    A `completed` closure is passed in neither: the smell was fixed, and code grows back.
+    """
+    muted = muted or {}
     now = now or datetime.now(timezone.utc)
     day_floor = now - timedelta(days=1)
 
@@ -115,6 +142,11 @@ def decide(proposals: list[dict], open_issues: list[dict], *,
         title = proposal.get("summary") or proposal.get("path")
         if fp in open_fp:
             skipped.append({"fingerprint": fp, "reason": "already open", "title": title})
+            continue
+        if fp in muted:
+            skipped.append({"fingerprint": fp,
+                            "reason": f"closed as not planned in #{muted[fp].get('number')}",
+                            "title": title})
             continue
         if fp in batch:
             skipped.append({"fingerprint": fp, "reason": "duplicate in this run", "title": title})
@@ -250,10 +282,9 @@ def render_issue(proposal: dict, sha: str) -> tuple[str, str]:
         "",
         "A refactor, not a fix: behaviour and the tests are expected to be identical afterwards.",
         "",
-        "**If this is not worth doing, closing it does not stop it coming back.** Every sweep "
-        "re-measures the whole tree, so the same file is filed again on the next run. Close it "
-        "*and* add this to `.goby/tide.json`, as the whole document if that file does not exist "
-        "yet and as an entry in its `known` array if it does:",
+        "**If this is not worth doing**, the durable way to say so is an entry in `.goby/tide.json` "
+        "— the whole document if that file does not exist yet, an entry in its `known` array if it "
+        "does:",
         "",
         "```json",
         f'{{ "known": [ {{ "check": "{check}", "path": "{path}", '
@@ -265,6 +296,13 @@ def render_issue(proposal: dict, sha: str) -> tuple[str, str]:
         "firing, because the file was finally split, the sweep logs that the entry can be "
         "deleted. A key the sweep does not recognise is an error rather than a silence, so an "
         "entry added in the wrong shape fails the run instead of doing nothing.",
+        "",
+        "Closing this issue as **not planned** also stops it: the sweep reads that close reason as "
+        "a decision and stops filing this check on this path. Prefer the `known` entry anyway — a "
+        "close carries no reason and cannot be taken back, while a `known` entry is reviewable in "
+        "the config and can be deleted when the measurement starts to matter again. Closing as "
+        "*completed* does not stop it: that means the smell was dealt with, and a file that grows "
+        "back is a new finding.",
         "",
     ]
     return title, "\n".join(body)
@@ -307,17 +345,22 @@ def main(argv: list[str]) -> int:
 
     if plan_only:
         opened: list[dict] = []
+        muted: dict[str, dict] = {}
     else:
-        listed = common.list_labelled(repo, token, issue_label(), state="open", http=_http)
+        # Every state: an open issue is "already asked", a `not planned` close is "asked and
+        # answered", and a `completed` close is neither — it frees the fingerprint.
+        listed = common.list_labelled(repo, token, issue_label(), state="all", http=_http)
         if listed is None:
-            # Croak rather than file: without the open issues, dedupe and the cap are both blind.
-            print("error: cannot read the open tide issues; nothing filed", file=sys.stderr)
+            # Croak rather than file: without the history, dedupe and the cap are both blind.
+            print("error: cannot read the tide issue history; nothing filed", file=sys.stderr)
             return 1
-        opened = listed
+        opened = [issue for issue in listed if issue.get("state") == "open"]
+        muted = muted_issues(listed)
 
     measured = ({c.strip() for c in args.measured_checks.split(",") if c.strip()}
                 if args.measured_checks else None)
-    to_file, skipped = decide(proposals, opened, issues_per_day=args.issues_per_day)
+    to_file, skipped = decide(proposals, opened, muted=muted,
+                              issues_per_day=args.issues_per_day)
     to_close = gone(candidates, opened, measured) if args.close_gone else []
 
     plan = {
@@ -326,6 +369,7 @@ def main(argv: list[str]) -> int:
         "filed": [{"fingerprint": p["fingerprint"], "path": p["path"], "check": p["check"]}
                   for p in to_file],
         "skipped": skipped,
+        "muted": [issue.get("number") for issue in muted.values()],
         "closed": [],
         "urls": [],
         "failures": [],

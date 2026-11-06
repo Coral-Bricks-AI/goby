@@ -31,11 +31,14 @@ whole design exists to prevent.
    issue that claims verification it does not have is worse than one that admits the plan is
    untried.
 
-3. **A smell is filed at most once, and a closed one does not count.** The fingerprint is
-   `check|path` — no model wording, so a re-titled report of the same file is the same
-   fingerprint. Dedupe reads **open** `goby-tide` issues only, because code grows back; the
-   cleaner reads closed issues too, and copying that here would make every fixed-then-regrown
-   smell invisible forever.
+3. **A smell is filed at most once, and the two close reasons are not the same.** The fingerprint
+   is `check|path` — no model wording, so a re-titled report of the same file is the same
+   fingerprint. An **open** issue suppresses, and so does one closed as **`not planned`**: that is
+   a human decision not to act, and re-asking it every sweep is the noise this product exists to
+   avoid. A **`completed`** close does not suppress, because code grows back — a file split today
+   and passed again next year is a new finding, and the closed issue is the record that it was
+   fixed once. A `not planned` close is permanent for that path, so `known` is the better answer
+   and every issue says so.
 
 4. **Nothing is closed by a sweep that did not measure the whole tree, and the measurement is
    every measurement.** `--close-gone` is passed only when `detect.py` succeeded, and the file it
