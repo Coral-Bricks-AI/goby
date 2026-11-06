@@ -27,3 +27,7 @@ agent has exited, on files the agent wrote.
 
 - The findings schema is deliberately strict about `path`/`line` and tolerant about severity: a
   mislabelled severity is a ranking problem, an unparseable coordinate is a lost finding.
+- "A 5xx on the review or status POST that GitHub actually stored is reported as a failed review"
+  — accepted. A commit status and a review POST have no compare-and-swap, so a write can land and
+  still be answered with an error; reading every one back is more machinery than a rare, visible,
+  re-runnable failure is worth. The run exits non-zero and both statuses say `error` (#62, #66, #85).
