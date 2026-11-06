@@ -69,3 +69,5 @@ bun run check   # typecheck → kernel-checked policies → Node build → offli
 The tests are offline: the contract corpus, the diff and line-positioning rules, the key proxy
 against a stub upstream, the publisher against a stubbed GitHub, and the gate over every Boolean
 combination of its facts.
+
+<!-- throwaway design test, do not merge -->
