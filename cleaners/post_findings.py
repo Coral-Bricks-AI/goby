@@ -40,9 +40,11 @@ LABEL = "goby-cleaners"
 # daily budget, and filed the same defect again.
 # The component is a directory path, and a directory may contain a space. `\S+` stopped at the
 # first one, so the marker a run had just written was unparsable and the next run re-filed the
-# same defect on every scan; the component therefore runs to the ` severity=` delimiter.
+# same defect on every scan. The component therefore runs to the *last* ` severity=` on the line:
+# greedy, because a directory name may itself end in ` severity=high -->`, and reading the first
+# delimiter would file a medium finding as exempt-from-the-cap high.
 MARKER = re.compile(
-    r"<!--\s+[A-Za-z0-9._-]+\s+fp=(?P<fp>[0-9a-f]{12})\s+component=(?P<component>.+?)"
+    r"<!--\s+[A-Za-z0-9._-]+\s+fp=(?P<fp>[0-9a-f]{12})\s+component=(?P<component>.+)"
     r"\s+severity=(?P<severity>\w+)\s*-->")
 DEFAULT_PRODUCER = "goby-cleaners"
 
@@ -92,7 +94,13 @@ def marker(component: str, finding: dict, fp: str, severity: str) -> str:
 
 
 def parse_marker(body: str) -> re.Match | None:
-    return MARKER.search(body or "")
+    """The filing's own marker: the first thing in the body, not anywhere in it.
+
+    A marker quoted *inside* a body is evidence, not a filing — a scan of this repository has
+    markers in its repro output. Searching the whole body let one quoted marker suppress the real
+    finding it named, and spend the daily budget that finding needed.
+    """
+    return MARKER.match((body or "").lstrip())
 
 
 def _parse_ts(value: str) -> datetime | None:
@@ -116,19 +124,20 @@ def decide(findings: list[dict], existing: list[dict], *,
     seen_existing: set[str] = set()
     day_count = 0
     for issue in existing:
-        markers = list(MARKER.finditer(issue.get("body") or ""))
-        if not markers:
+        # One filing, one marker: the leading one. Anything quoted later in the body is part of
+        # the evidence, not a second filing.
+        marker = parse_marker(issue.get("body") or "")
+        if not marker:
             continue
         created = _parse_ts(issue.get("created_at") or "")
-        for m in markers:
-            fp = m.group("fp")
-            if fp in seen_existing:
-                continue
-            seen_existing.add(fp)
-            # The daily cap is about what a human was handed today. A high finding is
-            # exempt: the cap bounds noise, it must not bury the one that matters.
-            if created and created >= day_floor and m.group("severity") != "high":
-                day_count += 1
+        fp = marker.group("fp")
+        if fp in seen_existing:
+            continue
+        seen_existing.add(fp)
+        # The daily cap is about what a human was handed today. A high finding is exempt: the cap
+        # bounds noise, it must not bury the one that matters.
+        if created and created >= day_floor and marker.group("severity") != "high":
+            day_count += 1
 
     filed, skipped = [], []
     # Two defects in one file can share a title, and then share a fingerprint: the key is

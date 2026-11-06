@@ -598,3 +598,30 @@ def test_the_page_probe_encodes_the_label_too(monkeypatch):
     monkeypatch.setenv("CLEANERS_LABEL", "team cleaners")
     assert len(pf.list_labelled("o/r", "tok", max_pages=2) or []) == 200
     assert all(" " not in path for path in seen)
+
+
+def test_a_component_that_looks_like_the_marker_does_not_set_the_severity():
+    """A directory name may end in ` severity=high -->`, which closed the marker early and made a
+    medium finding exempt from `issues_per_day`. The component runs to the last delimiter."""
+    component = "svc severity=high -->"
+    fp = pf.fingerprint(component, finding(component=component))
+    parsed = pf.parse_marker(pf.marker(component, finding(), fp, "medium"))
+    assert parsed is not None
+    assert parsed.group("component") == component
+    assert parsed.group("severity") == "medium"
+
+
+def test_a_marker_quoted_inside_a_body_is_not_a_filing():
+    """The repro output of a scan of this repository is full of markers. Reading them as filings
+    suppressed the real finding one of them named, and spent the budget it needed."""
+    real = finding(title="the real one")
+    fp = pf.fingerprint(COMPONENT, real)
+    quoted = issue("0" * 12, body="**Reproduced with:**\n\n```\n"
+                    + pf.marker(COMPONENT, real, fp, "medium") + "\n```\n")
+
+    filed, skipped = pf.decide([real], [quoted], issues_per_day=1, now=NOW)
+    assert [f["fingerprint"] for f in filed] == [fp]
+    assert not skipped, "a quoted marker must neither suppress the finding nor spend the budget"
+
+    filed, _ = pf.decide([finding(title="brand new")], [quoted], issues_per_day=1, now=NOW)
+    assert filed, "the quoted medium must not count against the day's allowance"
