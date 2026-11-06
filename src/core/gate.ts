@@ -15,7 +15,7 @@ export class HeadChanged extends Error {}
  * where rewriting a written success to `error` would leave the gate refusing a reviewed head.
  *
  * A write that GitHub stored but answered with an error is the accepted gap: it is reported as a
- * failed review, which is visible and re-runnable (see review/INVARIANTS.md, Known non-findings).
+ * failed review, which is visible and re-runnable (see src/INVARIANTS.md, Known non-findings).
  */
 export function finish_failure_should_report(error: unknown, published: boolean): boolean {
   return !published && !(error instanceof HeadChanged);
