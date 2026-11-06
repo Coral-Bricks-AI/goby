@@ -45,10 +45,10 @@ are skipped: they receive no secrets, so the job would fail rather than review.
 
 ## Network
 
-There is no egress filtering. The reviewer can reach the network, which is what lets it run
-`bun install` and the project's own test suite. With the key behind the proxy, network access
-gives up little: everything worth stealing is either already in the repository being reviewed or
-unreachable by design. Filtering can be added later as an allowlist in the shared entrypoint if a
+There is no egress filtering. The reviewer can reach the network, which is what lets it install a
+toolchain the image does not ship and run the project's own test suite. With the key behind the
+proxy, network access gives up little: everything worth stealing is either already in the
+repository being reviewed or unreachable by design. Filtering can be added later as an allowlist in the shared entrypoint if a
 concrete need shows up; it is not free (IP rotation, installs that stop working) and it is not
 needed to keep the token out of reach.
 

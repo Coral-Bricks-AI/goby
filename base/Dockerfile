@@ -8,15 +8,16 @@
 #   - pi, pinned, because an agent that changes personality when npm publishes makes two runs
 #     incomparable.
 #
-# Deliberately absent: any language toolchain for the reviewed repo. A review images ships
-# node/bun/python; a repo that needs Go or Rust brings its own image (the workflow takes an
-# image digest). Baking every runtime in here would pay image size and attack surface for a
+# Deliberately absent: any language toolchain for the reviewed repo, and any tool the reviewer
+# can install for itself. A repo that needs Go, Rust, bun or git-lfs downloads it in the sandbox
+# (there is no egress filtering) or brings its own image — the workflow takes an image digest.
+# Baking every runtime in here would pay image size and attack surface, on every review, for a
 # container that runs untrusted code.
 FROM node:24-bookworm-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash ca-certificates git git-lfs jq ripgrep coreutils python3 python3-venv \
+      bash ca-certificates git jq ripgrep coreutils python3 python3-venv \
  && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.4.0

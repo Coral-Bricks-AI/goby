@@ -57,10 +57,13 @@ for that repository.
 
 ## Repositories that need more than the default image
 
-The reviewer image carries node, bun, python3, git and ripgrep. A project whose tests need Go, Rust
-or a system library should build its own image `FROM goby-base`, add the toolchain, and point the
-workflow at its digest. That also pre-bakes dependencies: the job can install packages (there is no
-egress filtering), but a warm image is faster than an install on every review.
+The reviewer image carries node, python3, git, jq and ripgrep: what the harness itself runs, plus
+the tools a reviewer reaches for on almost every diff. Everything else it installs for itself — the
+sandbox has a shell and there is no egress filtering, so a repo whose tests need bun or git-lfs gets
+them at review time. A project that would rather not pay that install on every review, or whose
+tests need Go, Rust or a system library, should build its own image `FROM goby-base`, add the
+toolchain, and point the workflow at its digest. That also pre-bakes dependencies: the job can
+install packages, but a warm image is faster than an install on every review.
 
 ## Stable contracts
 

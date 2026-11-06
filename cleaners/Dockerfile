@@ -16,7 +16,7 @@ FROM node:24-bookworm-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash ca-certificates git git-lfs jq ripgrep coreutils python3 python3-venv \
+      bash ca-certificates git jq ripgrep coreutils python3 python3-venv \
  && rm -rf /var/lib/apt/lists/*
 
 # Pinned, not floating: a cleaner that changes personality because npm published cannot be
