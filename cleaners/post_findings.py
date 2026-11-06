@@ -71,19 +71,15 @@ def issue_label() -> str:
 
 
 def _norm(text) -> str:
-    r"""Case, punctuation and spacing beaten out of a title — in any script.
+    r"""Case, punctuation and spacing beaten out of a title.
 
-    `[^a-z0-9 ]` erased every non-Latin letter, so a title with no ASCII at all normalised to ""
-    and a mixed one to its ASCII remnant alone: two different defects in one file shared a
-    fingerprint, and every one after the first was filed as "already filed" — including after the
-    first was closed as not-a-bug, which hides the second for good.
-
-    This changes the fingerprint of any title carrying a non-ASCII letter, so such a title already
-    filed is filed once more. That is bounded by `issues_per_day` and a human can close it; hiding
-    a defect is the failure the fingerprint exists to prevent. `\W` is Unicode-aware, so letters
-    of any script survive and punctuation still becomes a space.
+    ASCII letters and digits survive; everything else becomes a space. A title in a non-Latin
+    script therefore normalises to "" (or to the ASCII words in it), so two such titles in one
+    file share a fingerprint — accepted: our findings are titled in English, and keeping the
+    script cost a fingerprint change for every accented title we have already filed. Recorded
+    under "Known non-findings" in INVARIANTS.md.
     """
-    return " ".join(re.sub(r"[\W_]+", " ", str(text or "").casefold()).split())
+    return " ".join(re.sub(r"[^a-z0-9 ]+", " ", str(text or "").lower()).split())
 
 
 def fingerprint(component: str, finding: dict) -> str:
