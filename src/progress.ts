@@ -35,7 +35,9 @@ export function marker(run: string, state: State): string {
 
 export function body(run: string, state: State, head: string): string {
   if (state === 'done') {
-    return `${marker(run, state)}\n**Goby finished reviewing \`${head.slice(0, 10)}\`.** The result is further down.`;
+    // Also reached when the reviewer failed: no review is posted then, and the check says why.
+    return `${marker(run, state)}\n**Goby is done with \`${head.slice(0, 10)}\`.** Its review is further ` +
+      'down; if there is none, the Goby Review check says why.';
   }
   return `${marker(run, state)}\n\`\`\`text\n${ART}\`\`\`\n\n` +
     `**Goby is reviewing \`${head.slice(0, 10)}\`.** This note updates when the review is posted.`;
