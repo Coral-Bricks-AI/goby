@@ -70,3 +70,29 @@ def test_paths_reach_the_picker_unquoted():
     for command in ("ls-files -- '*INVARIANTS.md'", 'diff --name-only "$BEFORE" "$HEAD_SHA"'):
         start = text.index(command)
         assert "-c core.quotePath=false" in text[start - 40:start], command
+
+
+def test_the_prompt_renders_when_a_changed_path_is_not_utf8(tmp_path):
+    """The changed list carries raw path bytes since `core.quotePath=false`, and `cleaner.sh` is
+    the third reader of that file. Reading it strictly aborted the render, so every component of
+    the push went unscanned — the picker fix undone one step later."""
+    import os
+    import subprocess
+    import sys
+
+    text = (HERE / "cleaner.sh").read_text()
+    block = text.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    changed = tmp_path / "changed.txt"
+    changed.write_bytes(b"docs/caf\xe9.md\nsvc/a.py\n")
+    charter = tmp_path / "INVARIANTS.md"
+    charter.write_text("1. Nothing here is false.\n")
+    rules = tmp_path / "AGENTS.md"
+    rules.write_text("rules\n")
+    env = {**os.environ, "CLEANERS_PROMPT_DIR": str(HERE), "REPO": "owner/repo"}
+    out = subprocess.run(
+        [sys.executable, "-c", block, "svc", "deadbeef", "", str(charter), str(rules),
+         str(changed), str(tmp_path)],
+        capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    assert "svc/a.py" in out.stdout
+    assert "caf\ufffd.md" in out.stdout
