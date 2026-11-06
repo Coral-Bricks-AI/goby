@@ -57,3 +57,14 @@ export function evaluateGate(receipt: ReviewReceipt | null, head: string, opened
   const key = (Object.keys(facts) as (keyof GateFacts)[]).find(key => facts[key] !== true)!;
   return {head_sha: head, state: 'failure', description: reasons[key]};
 }
+
+/**
+ * Whether a review for this head, carrying a complete receipt, is already on the pull request.
+ *
+ * A review POST has no compare-and-swap: GitHub can store the review and still answer with an
+ * error. Reading it back before believing the failure keeps `finish` from posting `error` over a
+ * review that exists, which would leave the gate refusing a reviewed head.
+ */
+export function review_landed(reviews: readonly {head: string; body: string}[], head: string): boolean {
+  return reviews.some(review => review.head === head && parseReceipt(review.body, head)?.complete === true);
+}
