@@ -103,3 +103,9 @@ not by you. What you *can* prove here is the pure logic: `plan.py`, `model_check
 ## Known non-findings
 
 <!-- Closed as not-a-bug. One line each: date, the claim, and why it is not a defect. -->
+- 2026-11-06 · "A title with a non-ASCII letter was filed under the old ASCII fingerprint, so
+  changing `_norm` to keep the script re-files it" — deliberate. The old form erased every
+  non-Latin letter, so two different defects in one file shared a fingerprint and every one after
+  the first was hidden for good, including after the first was closed as not-a-bug. One duplicate a
+  human can close, bounded by `issues_per_day`, is the cheaper failure than a hidden defect
+  (#76, #77, #78).
