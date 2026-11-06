@@ -1,7 +1,7 @@
 {
   "_comment": [
     "goby's own answer to its own sweep. Everything here is a measurement the detector makes",
-    "correctly, on a file where the measurement is not the problem — the list exists so a real",
+    "correctly, on a file where the measurement is not the problem \u2014 the list exists so a real",
     "smell in the same file is still reported, while this one decision does not have to be",
     "re-made every day.",
     "",
@@ -14,6 +14,11 @@
       "check": "max_file_lines",
       "path": "tests-ts/fixtures/contract-diff.json",
       "reason": "a frozen corpus of diff cases, one object per case: it is data the tests read, not code anyone maintains. Splitting it makes a case harder to find, cut a change harder to review, and moves no logic."
+    },
+    {
+      "check": "max_todos",
+      "path": "tide/test_detect.py",
+      "reason": "the markers are the fixtures: this file asserts what counts as debt, so it has to contain TODO/FIXME/HACK strings. Counting them as debt is the test doing its job."
     }
   ]
 }

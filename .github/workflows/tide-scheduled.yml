@@ -75,6 +75,18 @@ on:
       max-file-imports:
         description: A file with more imports than this is a smell; empty uses the default.
         type: number
+      max-test-file-lines:
+        description: A test file longer than this is a smell; empty uses the image default.
+        type: number
+      max-todos:
+        description: Debt markers in one file before it is a smell; empty uses the image default.
+        type: number
+      max-todo-age-days:
+        description: Oldest debt marker worth filing; empty uses the image default.
+        type: number
+      history-depth:
+        description: Commits the sweep fetches, for todo_age; empty uses the image default.
+        type: number
       label:
         description: Issue label to file under (and to dedupe against).
         type: string
@@ -114,6 +126,18 @@ on:
         type: number
       max-file-imports:
         description: A file with more imports than this is a smell; empty uses the default.
+        type: number
+      max-test-file-lines:
+        description: A test file longer than this is a smell; empty uses the image default.
+        type: number
+      max-todos:
+        description: Debt markers in one file before it is a smell; empty uses the image default.
+        type: number
+      max-todo-age-days:
+        description: Oldest debt marker worth filing; empty uses the image default.
+        type: number
+      history-depth:
+        description: Commits the sweep fetches, for todo_age; empty uses the image default.
         type: number
       label:
         description: Issue label to file under (and to dedupe against).
@@ -161,6 +185,10 @@ jobs:
       TIDE_MAX_FILE_LINES: ${{ inputs.max-file-lines }}
       TIDE_MAX_DIR_FILES: ${{ inputs.max-dir-files }}
       TIDE_MAX_FILE_IMPORTS: ${{ inputs.max-file-imports }}
+      TIDE_MAX_TEST_FILE_LINES: ${{ inputs.max-test-file-lines }}
+      TIDE_MAX_TODOS: ${{ inputs.max-todos }}
+      TIDE_MAX_TODO_AGE_DAYS: ${{ inputs.max-todo-age-days }}
+      TIDE_HISTORY_DEPTH: ${{ inputs.history-depth }}
       TIDE_LABEL: ${{ inputs.label || 'goby-tide' }}
     steps:
       # The image measures, plans and files; the step is one line because there is nothing for the

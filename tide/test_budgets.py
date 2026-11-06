@@ -87,3 +87,27 @@ def test_the_log_names_the_known_entries_it_used_and_the_stale_ones():
     assert "known: {candidate[\"check\"]}" in entrypoint
     assert "stale known entry, safe to delete" in entrypoint
     assert 'done < "$OUT/plan.txt"' in entrypoint
+
+
+def test_the_new_checks_default_from_the_image():
+    defaults = (HERE / "defaults.env").read_text()
+    for name, value in (("TIDE_MAX_TEST_FILE_LINES", 1500), ("TIDE_MAX_TODOS", 10),
+                        ("TIDE_MAX_TODO_AGE_DAYS", 365), ("TIDE_HISTORY_DEPTH", 200)):
+        assert f': "${{{name}:={value}}}"' in defaults, name
+    entrypoint = (HERE / "entrypoint.sh").read_text()
+    for name, value in (("TIDE_MAX_TODOS", 10), ("TIDE_MAX_TODO_AGE_DAYS", 365),
+                        ("TIDE_HISTORY_DEPTH", 200), ("TIDE_MAX_TEST_FILE_LINES", 1500)):
+        assert f'{name}="${{{name}:-{value}}}"' not in entrypoint, name
+    workflow = WORKFLOW.read_text()
+    for name, value in (("TIDE_MAX_TODOS", 10), ("TIDE_MAX_TODO_AGE_DAYS", 365),
+                        ("TIDE_HISTORY_DEPTH", 200), ("TIDE_MAX_TEST_FILE_LINES", 1500)):
+        assert f"{name}: ${{{{ inputs." in workflow, name
+        assert f"|| {value}" not in workflow, name
+
+
+def test_the_clone_is_deep_enough_for_todo_age():
+    """A one-commit clone blames every line to the head, so `todo_age` would report 0 days forever.
+    Both the clone and the follow-up fetch have to use the depth, or the fetch re-shallowens it."""
+    entrypoint = (HERE / "entrypoint.sh").read_text()
+    assert '--depth "$TIDE_HISTORY_DEPTH"' in entrypoint
+    assert entrypoint.count('--depth "$TIDE_HISTORY_DEPTH"') == 2, "clone and fetch"
