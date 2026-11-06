@@ -11,8 +11,10 @@ and the image publish reach every consumer automatically.
   copy in sync, and say in the PR that consumers need to re-copy.
 - Only the default branch publishes `:latest`; reviews report the digest they resolved, so a finding
   stays attributable to the bytes that produced it.
-- A merge performed with `GITHUB_TOKEN` starts no `push` workflows, so `:latest` would never publish
-  and the post-merge cleaners would never scan: `auto-merge.yml` merges with `AUTO_MERGE_TOKEN`.
+- Arm auto-merge when you open a pull request: `gh pr merge <n> --auto --squash`. `main` requires
+  `check` and `Goby Review` and every conversation resolved, so GitHub merges it when those are true.
+  Arm it with a person's token, never a `GITHUB_TOKEN` inside CI: that merge starts no `push`
+  workflows, so `:latest` would never publish and the post-merge cleaners would never scan.
 
 ## A review round, from the other side
 

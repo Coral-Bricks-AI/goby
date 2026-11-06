@@ -83,7 +83,7 @@ test('every workflow parses under actionlint rules we rely on', () => {
   for (const file of ['.github/workflows/ci.yml', '.github/workflows/review-image.yml',
     '.github/workflows/cleaners-image.yml', '.github/workflows/cleaners-post-merge.yml',
     '.github/workflows/test-cleaners.yml', '.github/workflows/test-review-image.yml',
-    '.github/workflows/auto-merge.yml', '.github/workflows/goby-review.yml']) {
+    '.github/workflows/goby-review.yml']) {
     const block = read(file).split(/^permissions:$/m)[1];
     if (!block) continue;
     for (const line of block.split('\n')) {
