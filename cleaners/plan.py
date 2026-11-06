@@ -99,7 +99,9 @@ def rank(directory: str, changed: list[str], sha: str = "") -> tuple[int, str]:
     prefix = directory + "/"
     inside = sorted(p for p in changed if p == directory or p.startswith(prefix))
     key = "\n".join((sha, directory, *inside))
-    tie = hashlib.blake2b(key.encode(), digest_size=8).hexdigest()
+    # A changed path may carry a byte that is not valid UTF-8 (see `read_changed`), and the
+    # default codec refuses it: the tie-break would crash the picker for the whole push.
+    tie = hashlib.blake2b(key.encode("utf-8", "surrogateescape"), digest_size=8).hexdigest()
     return (-len(inside), tie)
 
 

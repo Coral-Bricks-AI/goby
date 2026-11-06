@@ -281,3 +281,15 @@ def test_the_picker_reads_stdin_as_bytes(monkeypatch, capsys, tmp_path):
     out = capsys.readouterr()
     assert "good" in out.out.split()
     assert "not valid UTF-8" in out.err
+
+
+def test_a_changed_path_that_is_not_valid_utf8_still_ranks_a_real_component(tmp_path):
+    """The changed list and the component list are separate reads: filtering the component list
+    left a `surrogateescape`d *changed* path flowing into `rank()`, where the default codec
+    raised `UnicodeEncodeError` and the push went unscanned. Rank the raw bytes instead."""
+    changed = tmp_path / "changed.txt"
+    changed.write_bytes(b"services/billing/bad\xff.py\nservices/billing/fine.py\n")
+    found, _ = plan.components(["services/billing/INVARIANTS.md"])
+    chosen, _ = plan.picked(found, plan.read_changed(changed), 4,
+                            before_known=True, sha="abc")
+    assert chosen == ["services/billing"]
