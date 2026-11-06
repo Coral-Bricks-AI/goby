@@ -23,10 +23,10 @@ import * as contract from './core/contract.ts';
 import { select } from './core/selection.ts';
 import { build_summary } from './core/summary.ts';
 import { assertHead, finish_failure_should_report, HeadChanged, loadReceipt, refreshGate } from './core/gate.ts';
-import { diffDigest, parseReceipt, receiptMarker, review_landed, type ReviewReceipt } from './core/verdict.ts';
+import { diffDigest, parseReceipt, receiptMarker, type ReviewReceipt } from './core/verdict.ts';
 import { REVIEW_VERSION } from './identity.ts';
 import { GitHubClient } from './platforms/github.ts';
-import { post_gate_status, post_review, post_status, post_verdict, reply_in_thread, resolve_thread } from './platforms/publish.ts';
+import { post_gate_status, post_review, post_status, reply_in_thread, resolve_thread } from './platforms/publish.ts';
 
 /** A resolved thread carries the text that resolved it; the model needs it to judge a re-report. */
 type ResolvedThread = contract.ThreadRecord & { resolution?: string };
@@ -162,7 +162,7 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   const maxFindings = intEnv('GOBY_MAX_FINDINGS');
 
   if (job.reuse) {
-    await post_verdict(client, job.head, job.reuse_reason ?? 'Complete review reused on unchanged head');
+    await post_status(client, job.head, 'success', job.reuse_reason ?? 'Complete review reused on unchanged head');
     // This branch publishes a verdict too, so a later failure must not rewrite it: the gate
     // refresh below owns the gate status, not the review's.
     state.published = true;
@@ -218,18 +218,10 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
     }, REVIEW_VERSION) + '\n\n' + receiptMarker(receipt);
 
   await assertHead(client, job.pr, job.head);
-  try {
-    await post_review(client, job.pr, job.head, summary, picked.inline);
-  } catch (error) {
-    // A review POST has no compare-and-swap either: it can be stored and answered with an error.
-    // If a complete review for this head is now on the pull request, it landed — carrying on
-    // writes the verdict status instead of posting `error` over a review that exists.
-    if (!review_landed(await client.own_reviews(job.pr).catch(() => []), receipt)) throw error;
-    warn(`the review POST failed but the review landed: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  await post_review(client, job.pr, job.head, summary, picked.inline);
   const found = picked.inline.length + picked.overflow.length;
   const description = found ? `${found} new bug(s) found` : 'no bugs found';
-  await post_verdict(client, job.head, description);
+  await post_status(client, job.head, 'success', description);
   // Publication is the review *and* the status. Until that write succeeds the `pending` one
   // prepare posted is all anyone can see, so the failure path still has to resolve it; after it,
   // a later failure must not rewrite the verdict to `error`.

@@ -11,9 +11,11 @@ export class HeadChanged extends Error {}
  * `prepare` posts `pending`, so a failure before the verdict is published must end in `error` on
  * both statuses — a pending check with nothing behind it blocks the pull request with nothing to
  * read (review/INVARIANTS.md 1). Two failures are not ours to report: a head that moved (the run
- * that superseded this one owns the statuses), and anything after the verdict status is written
- * (`post_verdict` reads a failed write back first, so a success the API recorded counts), where
- * rewriting a written success to `error` would leave the gate refusing a reviewed head.
+ * that superseded this one owns the statuses), and anything after the verdict status is written,
+ * where rewriting a written success to `error` would leave the gate refusing a reviewed head.
+ *
+ * A write that GitHub stored but answered with an error is the accepted gap: it is reported as a
+ * failed review, which is visible and re-runnable (see review/INVARIANTS.md, Known non-findings).
  */
 export function finish_failure_should_report(error: unknown, published: boolean): boolean {
   return !published && !(error instanceof HeadChanged);
