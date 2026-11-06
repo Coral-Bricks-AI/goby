@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 80" width="400" height="80" role="img" aria-label="Goby is reviewing">
+  <!-- Placeholder: a goby swims left to right, forever. The note stops showing it when the review ends. -->
+  <g>
+    <animateTransform attributeName="transform" type="translate" from="-70 0" to="420 0" dur="4s" repeatCount="indefinite"/>
+    <path d="M10 40 L-8 26 L-4 40 L-8 54 Z" fill="#c8915a"/>
+    <ellipse cx="30" cy="40" rx="26" ry="13" fill="#d9a066"/>
+    <circle cx="22" cy="36" r="2" fill="#8a5a2b"/>
+    <circle cx="32" cy="45" r="2" fill="#8a5a2b"/>
+    <circle cx="45" cy="35" r="4" fill="#ffffff"/>
+    <circle cx="46" cy="35" r="2" fill="#1f2328"/>
+  </g>
+  <g fill="none" stroke="#7aa6d6" stroke-width="1.5">
+    <circle cx="80" cy="60" r="3"><animate attributeName="cy" from="70" to="5" dur="3s" repeatCount="indefinite"/></circle>
+    <circle cx="210" cy="60" r="2"><animate attributeName="cy" from="72" to="5" dur="2.5s" begin="1s" repeatCount="indefinite"/></circle>
+    <circle cx="330" cy="60" r="3"><animate attributeName="cy" from="70" to="5" dur="3.5s" begin="0.5s" repeatCount="indefinite"/></circle>
+  </g>
+</svg>
