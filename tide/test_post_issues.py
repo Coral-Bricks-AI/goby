@@ -119,9 +119,10 @@ def test_a_closed_issue_does_not_suppress_a_new_one():
     assert [f["fingerprint"] for f in filed] == [p["fingerprint"]]
 
 
-def test_the_read_is_scoped_to_open_issues_and_this_products_label(monkeypatch, tmp_path):
-    """The two properties that make the rule above true, asserted where they are configured:
-    the request asks for `state=open` and for `goby-tide`, never for the general label."""
+def test_the_read_is_scoped_to_this_products_label_and_every_state(monkeypatch, tmp_path):
+    """One read, three questions. `open` is "already asked", `not planned` is "asked and answered",
+    `completed` is neither — so the read has to see every state, and only the product's own label
+    (reading `goby` would pull in the cleaner's history)."""
     seen: list[str] = []
 
     def fake_http(method, path, token, payload=None):
@@ -140,7 +141,7 @@ def test_the_read_is_scoped_to_open_issues_and_this_products_label(monkeypatch, 
     reads = [p for p in seen if p.startswith("/repos/o/r/issues?")]
     assert reads, seen
     for path in reads:
-        assert "state=open" in path
+        assert "state=all" in path, "a `not planned` close is invisible to an open-only read"
         assert "labels=goby-tide" in path, "reading `goby` would mix in the cleaner's history"
 
 
@@ -318,16 +319,18 @@ def test_a_plan_only_run_posts_nothing(monkeypatch, tmp_path, capsys):
     assert called == [] and json.loads(out.read_text())["filed"]
 
 
-def test_the_footer_says_that_closing_alone_does_not_stop_it_coming_back():
-    """The sweep re-measures the whole tree, so a closed issue for a smell that is still over its
-    threshold is filed again on the next run. "Close it" without "add a `known` line" is half an
-    instruction, and the half it leaves out is the one that works."""
+def test_the_footer_names_both_ways_to_dismiss_it_and_which_one_to_prefer():
+    """Two close reasons mean opposite things, so the footer has to be explicit: `known` is the
+    durable, reviewable record, `not planned` works but cannot be taken back, and `completed`
+    means fixed — after which a file that grows back is a new finding."""
     _, body = pi.render_issue(proposal(), "a" * 40)
     footer = body.split("**What must not change**")[1]
-    assert "closing it does not stop it coming back" in footer
     assert "`.goby/tide.json`" in footer
     assert '"check": "max_file_lines", "path": "src/cli/entry.ts"' in footer
     assert "`known` entry is measured and then skipped" in footer
+    assert "Closing this issue as **not planned** also stops it" in footer
+    assert "cannot be taken back" in footer
+    assert "Closing as *completed* does not stop it" in footer
 
 
 def test_the_known_snippet_can_be_placed_in_the_file_as_printed():
@@ -400,3 +403,60 @@ def test_an_issue_with_no_readable_check_is_left_alone():
     """A body whose marker cannot be parsed says nothing about which check filed it."""
     unparsable = {"number": 9, "title": "x", "body": "no marker here"}
     assert pi.gone([], [unparsable], {"max_file_lines"}) == []
+
+
+def test_a_close_as_not_planned_mutes_the_check_on_that_path():
+    """Two close reasons mean opposite things. `not planned` is a human deciding not to; asking
+    again every sweep is exactly the noise this product exists to avoid."""
+    p = proposal()
+    closed = issue(p["fingerprint"], state="closed")
+    closed["state_reason"] = "NOT_PLANNED"
+    muted = pi.muted_issues([closed])
+    filed, skipped = pi.decide([p], [], muted=muted, issues_per_day=5, now=NOW)
+    assert filed == []
+    assert skipped[0]["reason"] == "closed as not planned in #1"
+
+
+def test_a_close_as_completed_frees_the_fingerprint():
+    """`completed` says the smell was dealt with. Code grows back, and a file that passes the
+    threshold again is a new finding, not a duplicate of the one that was fixed."""
+    p = proposal()
+    closed = issue(p["fingerprint"], state="closed")
+    closed["state_reason"] = "COMPLETED"
+    assert pi.muted_issues([closed]) == {}
+    filed, _ = pi.decide([p], [], muted=pi.muted_issues([closed]),
+                         issues_per_day=5, now=NOW)
+    assert len(filed) == 1
+
+
+def test_muting_is_per_check_and_path_not_per_file():
+    """A muted `max_file_lines` on a file says nothing about its imports: the human decided about
+    one measurement, and the other one is a different change."""
+    lines = proposal()
+    closed = issue(lines["fingerprint"], state="closed")
+    closed["state_reason"] = "NOT_PLANNED"
+    imports = proposal(check="max_file_imports", metric=51)
+    filed, _ = pi.decide([imports], [], muted=pi.muted_issues([closed]),
+                         issues_per_day=5, now=NOW)
+    assert [f["check"] for f in filed] == ["max_file_imports"]
+
+
+def test_a_muted_suppression_is_reported_in_the_plan(monkeypatch, tmp_path, capsys):
+    """A permanent mute that nothing logs is the unexplained silence the rest of this product
+    argues against: the plan names the issue that holds the decision."""
+    closed = issue("aaaaaaaaaaaa", state="closed")
+    closed["state_reason"] = "NOT_PLANNED"
+
+    def fake_http(method, path, token, payload=None):
+        if method == "GET" and "/issues?" in path:
+            return 200, [closed]
+        return 200, []
+
+    monkeypatch.setattr(pi, "_http", fake_http)
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    (tmp_path / "p.jsonl").write_text("")
+    (tmp_path / "c.jsonl").write_text("")
+    assert pi.main(["--proposals", str(tmp_path / "p.jsonl"), "--candidates",
+                    str(tmp_path / "c.jsonl"), "--repo", "o/r", "--sha", "a" * 40,
+                    "--issues-per-day", "5"]) == 0
+    assert json.loads(capsys.readouterr().out)["muted"] == [1]
