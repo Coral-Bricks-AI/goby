@@ -13,11 +13,11 @@ ROOT = HERE.parent
 def test_the_numeric_defaults_live_in_the_image():
     defaults = (HERE / "defaults.env").read_text()
     assert ': "${MAX_TOOLS:=200}"' in defaults
-    assert ': "${ISSUES_PER_DAY:=10}"' in defaults
+    assert ': "${ISSUES_PER_DAY:=25}"' in defaults
     assert ': "${MAX_COMPONENTS:=4}"' in defaults
     entrypoint = (HERE / "entrypoint.sh").read_text()
     assert "source /opt/cleaners/defaults.env" in entrypoint
-    for fallback in ('MAX_TOOLS="${MAX_TOOLS:-200}"', 'ISSUES_PER_DAY="${ISSUES_PER_DAY:-10}"',
+    for fallback in ('MAX_TOOLS="${MAX_TOOLS:-200}"', 'ISSUES_PER_DAY="${ISSUES_PER_DAY:-25}"',
                      'MAX_COMPONENTS="${MAX_COMPONENTS:-4}"'):
         assert fallback not in entrypoint
     assert "COPY defaults.env /opt/cleaners/defaults.env" in (HERE / "Dockerfile").read_text()
@@ -31,6 +31,6 @@ def test_the_workflow_passes_overrides_and_does_not_restate_the_numbers():
     assert "MAX_TOOLS: ${{ inputs.max-tools }}" in workflow
     assert "ISSUES_PER_DAY: ${{ inputs.issues-per-day }}" in workflow
     assert "MAX_COMPONENTS: ${{ inputs.max-components }}" in workflow
-    for fallback in ("inputs.max-tools || 60", "inputs.issues-per-day || 10",
-                     "inputs.max-components || 4", "default: 60", "default: 10", "default: 4"):
+    for fallback in ("inputs.max-tools || 60", "inputs.issues-per-day || 25",
+                     "inputs.max-components || 4", "default: 60", "default: 25", "default: 4"):
         assert fallback not in workflow
