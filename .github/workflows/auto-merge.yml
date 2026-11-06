@@ -1,0 +1,52 @@
+name: auto merge
+
+# Arms auto-merge on every pull request, so "the checks are green and every conversation is
+# resolved" is all that is left for a merge. This workflow decides nothing itself: `main` requires
+# `check` and `Goby Review`, and requires every conversation resolved, so GitHub is the one that
+# merges, and it merges exactly when those are true for the head.
+#
+# The reviewer posts `Goby Review` **pending** before its agent starts, so a pull request cannot
+# merge in the window between a push and the review that push triggered — the required status is
+# already there, holding it. For the same reason there is no grace period after a thread is
+# resolved: a coder who pushes before replying (see AGENTS.md) has already moved the head, and the
+# required checks on the old one no longer count.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  arm:
+    # A draft cannot be armed — GitHub refuses — and a fork's head is not ours to merge. `no-review`
+    # is the case to keep out: the reviewer skips those pull requests, so `Goby Review` never
+    # reports and an armed merge would wait forever rather than being a decision someone can make.
+    # Un-arming is not needed for the same reason it is not possible: the label can be removed
+    # again, and this job runs on `unlabeled`.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.pull_request.labels.*.name, 'no-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Arm auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Idempotent: this runs on every push, and the request is already there on most of them.
+          if [[ -n "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+                        --json autoMergeRequest --jq '.autoMergeRequest // empty')" ]]; then
+            echo "auto-merge is already armed on #$PR"
+            exit 0
+          fi
+          gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --squash --auto
