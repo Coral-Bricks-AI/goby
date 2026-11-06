@@ -70,6 +70,8 @@ jobs:
       # state with no model involved. Turn it on when branch protection requires it; off, the review
       # posts its findings and claims nothing about merging.
       GOBY_GATE: "off"
+      # Throwaway test PR only: two rounds, to watch the progress note edited across reviews.
+      GOBY_MAX_ROUNDS: "2"
     steps:
       # A container job ignores the image's ENTRYPOINT — GitHub keeps its own — so the step names
       # it. Everything else (clone, sandbox, agent, publish) happens inside. The two secrets are
