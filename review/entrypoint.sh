@@ -40,6 +40,12 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   goby_log "error: missing required input(s): ${missing[*]}"
   exit 2
 fi
+
+# Cosmetic only (src/progress.ts): a "Goby is reviewing" note on the pull request, deleted on every
+# exit. Wall-clocked and `|| true`, so it can neither hang a review nor change how one ends.
+goby_progress() { timeout 30 node /opt/goby/progress.js "$1" || true; }
+goby_progress start
+trap 'goby_progress stop' EXIT
 PROVIDER="${GOBY_PROVIDER:-coral}"
 MODEL="${GOBY_MODEL:-deepseek-v4.1-flash-fast}"
 MAX_DIFF_LINES="$GOBY_MAX_DIFF_LINES"
@@ -113,7 +119,8 @@ goby_key_to_file "$KEY"
 goby_token_to_file
 export GOBY_KEY_FILE GOBY_TOKEN_FILE
 goby_proxy_start "$UPSTREAM"
-trap 'goby_proxy_stop' EXIT
+# Replaces the trap above, so it keeps the progress cleanup; that one goes first as it cannot fail.
+trap 'goby_progress stop; goby_proxy_stop' EXIT
 
 # Prepare talks to GitHub, so it runs before the drop and while the token is in this process.
 GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
