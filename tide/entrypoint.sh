@@ -55,10 +55,15 @@ mkdir -p "$OUT"
 # .git/config, which is inside the tree the sweep reads.
 AUTH=(-c "http.extraHeader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)")
 log "clone $REPO@$SHA"
-git "${AUTH[@]}" -c advice.detachedHead=false clone --depth 1 --quiet \
+# `TIDE_HISTORY_DEPTH` commits, not one: `todo_age` is a question about history, and a one-commit
+# clone answers it with "0 days" for every line. The depth bounds the cost of a slow clone, which
+# is the only thing it costs — the sweep is scheduled and nobody is waiting for it.
+git "${AUTH[@]}" -c advice.detachedHead=false clone --depth "$TIDE_HISTORY_DEPTH" --quiet \
   "https://github.com/${REPO}.git" "$REPO_DIR"
 git -C "$REPO_DIR" remote set-url origin "https://github.com/${REPO}.git"
-if ! git "${AUTH[@]}" -C "$REPO_DIR" fetch --depth 1 --quiet origin "$SHA" \
+# Same depth as the clone, or the fetch re-shallowens the tree to one commit and quietly takes
+# `todo_age` away.
+if ! git "${AUTH[@]}" -C "$REPO_DIR" fetch --depth "$TIDE_HISTORY_DEPTH" --quiet origin "$SHA" \
    || ! git -C "$REPO_DIR" -c advice.detachedHead=false checkout --quiet "$SHA"; then
   log "error: cannot check out $SHA; refusing to sweep a different commit"
   exit 2
@@ -84,15 +89,18 @@ umask 022
 # --- measure -------------------------------------------------------------------------
 # No model call yet. This is the cheap step, and it is also the one that decides whether the
 # sweep has anything to do at all — a repository under every threshold costs a container start.
-log "detect thresholds file_lines=$TIDE_MAX_FILE_LINES dir_files=$TIDE_MAX_DIR_FILES imports=$TIDE_MAX_FILE_IMPORTS items=$TIDE_MAX_ITEMS"
+log "detect thresholds file_lines=$TIDE_MAX_FILE_LINES test_file_lines=$TIDE_MAX_TEST_FILE_LINES dir_files=$TIDE_MAX_DIR_FILES imports=$TIDE_MAX_FILE_IMPORTS todos=$TIDE_MAX_TODOS todo_age_days=$TIDE_MAX_TODO_AGE_DAYS history=$TIDE_HISTORY_DEPTH items=$TIDE_MAX_ITEMS"
 set +e
 python3 /opt/tide/detect.py scan --repo-dir "$REPO_DIR" --sha "$HEAD_SHA" \
   --config "$REPO_DIR/.goby/tide.json" \
   --out "$OUT/candidates.jsonl" --candidates "$OUT/picked.jsonl" \
   --max-items "$TIDE_MAX_ITEMS" \
   --max-file-lines "$TIDE_MAX_FILE_LINES" \
+  --max-test-file-lines "$TIDE_MAX_TEST_FILE_LINES" \
   --max-dir-files "$TIDE_MAX_DIR_FILES" \
-  --max-file-imports "$TIDE_MAX_FILE_IMPORTS" > "$OUT/plan.json"
+  --max-file-imports "$TIDE_MAX_FILE_IMPORTS" \
+  --max-todos "$TIDE_MAX_TODOS" \
+  --max-todo-age-days "$TIDE_MAX_TODO_AGE_DAYS" > "$OUT/plan.json"
 DETECT_STATUS=$?
 set -e
 if [[ $DETECT_STATUS -ne 0 ]]; then
@@ -108,7 +116,7 @@ python3 - "$OUT/plan.json" > "$OUT/plan.txt" <<'PY'
 import json, sys
 plan = json.load(open(sys.argv[1]))
 print(f'measured {plan["candidates"]} candidate(s), {len(plan["picked"])} picked, '
-      f'{len(plan["suppressed"])} suppressed by .goby/tide.json')
+      f'{len(plan["suppressed"])} suppressed by .goby/tide.json, history {plan.get("history")}')
 for candidate in plan["suppressed"]:
     print(f'  known: {candidate["check"]} {candidate["path"]} — {candidate["known_reason"]}')
 for entry in plan["stale_known"]:
@@ -339,9 +347,15 @@ CLOSE=()
 if [[ $DETECT_STATUS -eq 0 ]]; then CLOSE=(--close-gone); fi
 log "file repo=$REPO sha=$HEAD_SHA issues_per_day=$TIDE_ISSUES_PER_DAY close_gone=${#CLOSE[@]}"
 set +e
+# The checks this sweep evaluated, not the ones that fired: `post_issues` closes an open issue only
+# when the check behind it actually ran, so a sweep without history cannot close the `todo_age`
+# issues it is unable to re-measure.
+MEASURED="$(python3 -c 'import json,sys; print(",".join(json.load(open(sys.argv[1]))["checks"]))' \
+  "$OUT/plan.json")"
+log "checks measured: $MEASURED"
 python3 /opt/tide/post_issues.py \
   --proposals "$OUT/proposals.jsonl" --candidates "$OUT/candidates.jsonl" \
-  --repo "$REPO" --sha "$HEAD_SHA" \
+  --repo "$REPO" --sha "$HEAD_SHA" --measured-checks "$MEASURED" \
   --issues-per-day "$TIDE_ISSUES_PER_DAY" "${CLOSE[@]}" | tee "$OUT/filed.json"
 FILE_STATUS=${PIPESTATUS[0]}
 set -e

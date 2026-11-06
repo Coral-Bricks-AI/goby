@@ -40,7 +40,7 @@ def test_a_file_over_the_line_limit_is_measured_with_its_number():
     assert checks(found) == {("max_file_lines", "src/a.py", 11)}
     (candidate,) = found
     assert candidate["threshold"] == 10 and candidate["unit"] == "lines"
-    assert candidate["facts"] == {"lines": 11}
+    assert candidate["facts"] == {"lines": 11, "kind": "source"}
 
 
 def test_a_file_at_the_limit_is_not_a_smell():
@@ -283,3 +283,183 @@ def test_the_written_measurements_are_everything_not_the_picked_subset(tmp_path)
                         "--max-dir-files", "100", "--max-file-imports", "100"]) == 0
     assert len(measured.read_text().splitlines()) == 4
     assert len(picked.read_text().splitlines()) == 1
+
+
+# --- debt markers --------------------------------------------------------------------
+
+
+def test_a_marker_is_counted_only_where_it_is_written():
+    """`L.TODO` is a status constant in www's retirement.py, twenty times in one file. A bare
+    `\\bTODO\\b` would have filed all twenty as debt; the marker has to follow a comment delimiter."""
+    source = "\n".join([
+        "status = L.TODO",                       # an identifier, not debt
+        "x = 'TODO in a string'",                # a string, not a comment
+        "// TODO: fold this into the reaper",    # js
+        "# FIXME: the retry is unbounded",       # python
+        "-- HACK: temporary",                    # sql
+        "/* XXX: remove */",                     # c-style
+        " * TODO: jsdoc line",                   # block comment continuation
+        "<!-- TODO: docs -->",                   # html
+    ])
+    found = detect.measure(["a.multi"], reader({"a.multi": source}),
+                           detect.Thresholds(10, 100, 100, max_todos=2), EMPTY)
+    (candidate,) = found
+    assert candidate["check"] == "max_todos"
+    assert candidate["metric"] == 6, "the identifier and the string are not debt markers"
+    assert candidate["unit"] == "markers"
+    assert candidate["facts"]["first"].startswith("line 3")
+
+
+def test_a_marker_count_at_the_limit_is_not_a_smell():
+    source = "\n".join("// TODO: one" for _ in range(3))
+    assert detect.measure(["a.ts"], reader({"a.ts": source}),
+                          detect.Thresholds(10, 100, 100, max_todos=3), EMPTY) == []
+
+
+def test_the_oldest_marker_decides_the_age(tmp_path):
+    """One blame per file with markers; the age reported is the oldest of them, because "this file
+    has a TODO from two years ago" is the claim, not the newest one."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = lambda *args: subprocess.run(["git", *args], cwd=repo, check=True,
+                                       capture_output=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    old = "2024-01-01T00:00:00+0000"
+    (repo / "a.py").write_text("# TODO: two years ago\nx = 1\n")
+    git("add", "-A")
+    subprocess.run(["git", "commit", "-qm", "old"], cwd=repo, check=True,
+                   env={"GIT_AUTHOR_DATE": old, "GIT_COMMITTER_DATE": old,
+                        "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(tmp_path)})
+    (repo / "a.py").write_text("# TODO: two years ago\nx = 1\ny = 2\n")
+    git("add", "-A")
+    git("commit", "-qm", "recent")
+
+    now = 1_800_000_000
+    age = detect.blame_ages(repo, "a.py", [1], now=now)
+    assert age is not None and age > 700, age
+    picked = detect.measure(["a.py"], reader({"a.py": "# TODO: two years ago\nx = 1\n"}),
+                            detect.Thresholds(1000, 100, 100, max_todos=10,
+                                              max_todo_age_days=365),
+                            EMPTY, age_of=lambda path, lines: 900)
+    (candidate,) = picked
+    assert candidate["check"] == "todo_age" and candidate["metric"] == 900
+    assert candidate["unit"] == "days"
+
+
+def test_an_age_under_the_threshold_is_not_filed():
+    assert detect.measure(["a.py"], reader({"a.py": "# TODO: new\n"}),
+                          detect.Thresholds(1000, 100, 100, max_todo_age_days=365),
+                          EMPTY, age_of=lambda path, lines: 30) == []
+
+
+def test_a_one_commit_clone_reports_no_history_rather_than_zero_days(tmp_path):
+    """Every line blames to the head, so the check would say "0 days" forever and a repository full
+    of ancient debt would look clean. Skipping it loudly is the only honest answer."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "a.py").write_text("# TODO: ancient but unattributable\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "only"], cwd=repo, check=True)
+    assert detect.has_history(repo) is False
+    plan, measured = detect.scan(repo, "deadbeef", detect.Thresholds(1000, 100, 100), EMPTY, 3)
+    assert "no history" in plan["history"] or "one-commit" in plan["history"]
+    assert [c["check"] for c in measured] == []
+
+
+# --- per-kind thresholds --------------------------------------------------------------
+
+
+def test_a_test_file_is_measured_against_the_test_limit():
+    """The same 900 lines is a different smell in `tests/`: splitting a table of cases buys less
+    than splitting a module with logic in it."""
+    thresholds = detect.Thresholds(10, 100, 100, max_test_file_lines=50)
+    test_file = detect.measure(["tests/test_a.py"], reader({"tests/test_a.py": "x\n" * 40}),
+                               thresholds, EMPTY)
+    assert test_file == [], "40 lines is under the 50-line test limit"
+
+    over = detect.measure(["tests/test_a.py"], reader({"tests/test_a.py": "x\n" * 60}),
+                          thresholds, EMPTY)
+    assert over[0]["threshold"] == 50 and over[0]["facts"]["kind"] == "test"
+
+
+def test_a_source_file_keeps_the_source_limit():
+    thresholds = detect.Thresholds(10, 100, 100, max_test_file_lines=5000)
+    (candidate,) = detect.measure(["src/a.py"], reader({"src/a.py": "x\n" * 40}),
+                                 thresholds, EMPTY)
+    assert candidate["threshold"] == 10 and candidate["facts"]["kind"] == "source"
+
+
+def test_the_test_conventions_cover_the_usual_layouts():
+    for path in ("tests/test_a.py", "pkg/a_test.py", "src/a.test.ts", "src/a.spec.tsx",
+                 "web/__tests__/a.tsx", "testdata/x.json"):
+        assert detect.is_test_path(path), path
+    for path in ("src/a.py", "src/latest.ts", "pkg/testing.py"):
+        assert not detect.is_test_path(path), path
+
+
+def test_a_marker_below_the_first_line_of_a_hunk_is_still_blamed(tmp_path):
+    """`git blame --line-porcelain` prints the hunk count on the first line only. Parsing just that
+    form recorded the first line of every hunk and lost every marker below it, so the age of a file
+    whose TODO sits under a comment block was reported from the wrong line — or not at all."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    old = "2024-01-01T00:00:00+0000"
+    # One commit, three consecutive lines: line 1 carries the hunk count, lines 2-3 do not.
+    (repo / "a.py").write_text("x = 1\n# TODO: second line of the hunk\ny = 2\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "only"], cwd=repo, check=True,
+                   env={"GIT_AUTHOR_DATE": old, "GIT_COMMITTER_DATE": old,
+                        "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(tmp_path)})
+    age = detect.blame_ages(repo, "a.py", [2], now=1_800_000_000)
+    assert age is not None and age > 700, "line 2 is in the same hunk as line 1, not the head"
+
+
+def test_a_file_the_reader_could_decode_does_not_crash_the_blame(tmp_path):
+    """`read_text` decodes with `errors="replace"`, so a legacy-encoded file is measurable right up
+    until blame decodes it strictly and raises out of the whole sweep."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "latin.py").write_bytes(b"# TODO: caf\xe9\nx = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "only"], cwd=repo, check=True)
+    detect.blame_ages(repo, "latin.py", [1])  # must not raise
+
+
+def test_the_plan_says_which_checks_ran_not_which_fired(tmp_path):
+    """A check that found nothing was still evaluated, so the open issues it filed earlier may be
+    closed. A check that could not run says nothing about anything."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "a.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "only"], cwd=repo, check=True)
+    plan, _ = detect.scan(repo, "deadbeef", detect.Thresholds(1000, 100, 100), EMPTY, 3)
+    assert "max_todos" in plan["checks"] and "max_file_lines" in plan["checks"]
+    assert "todo_age" not in plan["checks"], "one commit, so the age question was not asked"
+
+    plan, _ = detect.scan(HERE.parent, "deadbeef", detect.Thresholds(1000, 100, 100), EMPTY, 3,
+                          age_of=lambda path, lines: None)
+    assert "todo_age" in plan["checks"], "an injected age means the check ran"
+
+
+def test_an_equal_pair_of_limits_still_calls_a_test_a_test():
+    """`facts.kind` came from the two limits differing, so a repository that pinned them equal had
+    its test files reported as source."""
+    thresholds = detect.Thresholds(20, 100, 100, max_test_file_lines=20)
+    (candidate,) = detect.measure(["tests/test_a.py"], reader({"tests/test_a.py": "x\n" * 40}),
+                                  thresholds, EMPTY)
+    assert candidate["facts"]["kind"] == "test"

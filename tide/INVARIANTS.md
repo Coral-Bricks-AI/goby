@@ -45,12 +45,18 @@ whole design exists to prevent.
    run costs a proposal, not a candidate. A failed *detection* is the opposite: it knows nothing,
    and closing on it would turn the sweep's own blindness into a "resolved" comment.
 
-5. **A failed measurement is never a clean sweep.** A detector that cannot read the tree exits
+5. **Every check is exact, and one that cannot be made is skipped loudly.** No check may need a
+   parser or a language model to be right: a measurement whose premise is a heuristic turns a
+   scheduled sweep into a source of wrong issues. `todo_age` is the one check that depends on
+   something outside the tree — git history — so a one-commit clone skips it and says so in the
+   plan, rather than blaming every line to the head and reporting `0 days`.
+
+6. **A failed measurement is never a clean sweep.** A detector that cannot read the tree exits
    non-zero and the task fails; a model call that failed is visible only through
    `summarize_run.py --status` (pi exits 0 on a 401). A sweep that filed nothing while any scan
    failed exits non-zero, so silence is never indistinguishable from "no smells".
 
-6. **The agent cannot reach a credential, and the sweep cannot reach the network it was not
+7. **The agent cannot reach a credential, and the sweep cannot reach the network it was not
    given.** The agent runs as uid 10001 under `env -i` with one provider key; the GitHub token is
    a root-only file. On a GitHub-hosted runner the sweep sees the repository and nothing else,
    and no code path may widen that without the workflow asking for a self-hosted runner.
@@ -71,6 +77,12 @@ whole design exists to prevent.
   importing it across products. The expensive shared thing — filing, labelling, reading the
   history — is in `common/issues.py`; the alternative here is a `sys.path` bootstrap in a module
   that does not otherwise touch GitHub.
+- `COMMENT_MARKER` needs the marker to follow a comment delimiter, which is not a parser: a
+  `"// TODO"` inside a string counts, and a marker written mid-block-comment without a `*` prefix
+  does not. Both are accepted, because the agent reads the line anyway and a wrong *measurement*
+  is the failure this check exists to avoid.
+- `todo_age` measures within the fetched window (`TIDE_HISTORY_DEPTH`). A marker older than the
+  window is attributed to the boundary commit, so its age is capped — too *young*, never too old.
 - `detect.py` counts import *lines*, not imports. The number is a hint that the module is doing
   too much, not a module graph, and a multi-line import counts once per line it spans.
 - `max_dir_files` skips the repository root: at the root the count is config files as often as

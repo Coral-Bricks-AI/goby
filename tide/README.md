@@ -12,9 +12,19 @@ own tests around it.
 
 ## What it does, in order
 
-1. **Measure.** `detect.py` counts lines per file, files per directory and imports per file in
-   the checkout. No model is called. If nothing is over a threshold, the run costs a container
-   start and exits.
+1. **Measure.** `detect.py` counts, in the checkout, with no model and no parsing:
+
+   | check | what it counts |
+   |---|---|
+   | `max_file_lines` | lines in a file (source limit, and a separate limit for test paths) |
+   | `max_dir_files` | files directly inside a directory |
+   | `max_file_imports` | import lines in a file |
+   | `max_todos` | `TODO`/`FIXME`/`HACK`/`XXX` written in a comment |
+   | `todo_age` | days since the oldest of those markers was committed |
+
+   Every count is exact. `todo_age` needs history, so the clone fetches `TIDE_HISTORY_DEPTH`
+   commits (default 200); if that is 1, the check is skipped and the log says so rather than
+   reporting "0 days" for debt older than the window.
 2. **Pick.** The worst offenders first, up to `TIDE_MAX_ITEMS` model calls, rotating between
    sweeps so a repository with forty smells hears about all of them eventually.
 3. **Plan.** One agent run per candidate: it reads the file, writes the split plan, attempts the
@@ -67,9 +77,13 @@ A workflow input overrides one for that repository.
 
 | input | default | meaning |
 |---|---|---|
-| `max-file-lines` | 800 | a file longer than this is a smell |
+| `max-file-lines` | 800 | a source file longer than this is a smell |
+| `max-test-file-lines` | 1500 | a test file gets its own limit: splitting a table of cases buys less than splitting a module with logic in it |
 | `max-dir-files` | 30 | a directory holding more files than this is a smell |
 | `max-file-imports` | 40 | a file importing more than this is a smell |
+| `max-todos` | 10 | debt markers in one file before it is a smell |
+| `max-todo-age-days` | 365 | oldest debt marker worth filing |
+| `history-depth` | 200 | commits fetched; below 2, `todo_age` is skipped and logged |
 | `max-items` | 3 | agent runs one sweep may spend on smells |
 | `max-tools` | 120 | tool calls one agent run may make |
 | `issues-per-day` | 5 | issues this repository may receive from the tide in 24h |
@@ -127,7 +141,9 @@ cleaner's:
   the way is not filed here; that is a review or a cleaner's job.
 - **Replace a linter.** Deterministic, threshold-shaped smells only. Nesting depth, duplication
   and function length need a parser and a language server per repository, so they belong in a
-  per-repository image, not in a sweep whose premise is "works everywhere with no setup".
+  per-repository image, not in a sweep whose premise is "works everywhere with no setup". A
+  marker is counted only where it is written — after a comment delimiter — because `L.TODO` is a
+  constant in one real repository, twenty times in one file, and none of them is debt.
 - **Read a private network.** On a GitHub-hosted runner it sees the repository and nothing else.
   Set `runs-on` to a self-hosted runner for a scan that reaches your network.
 

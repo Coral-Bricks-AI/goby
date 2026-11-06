@@ -30,6 +30,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -56,6 +57,22 @@ BUILT_IN_IGNORE = (
     "**/*.generated.*",
 )
 
+# A debt marker, but only where one is written: the marker has to follow a comment delimiter on
+# the same line. A bare `\bTODO\b` looks right and is not — `L.TODO` is a status constant in
+# www's `ml/platform/infra/retirement.py`, twenty times in one file, and every one of them would
+# have been filed as debt. The agent can reason about the stragglers this misses (a `"// TODO"`
+# inside a string); it cannot un-file a wrong measurement that was never debt.
+COMMENT_MARKER = re.compile(r"(?://|#|--|/\*|\*|<!--)\s*(?P<word>TODO|FIXME|HACK|XXX)\b")
+
+# Test paths, for the one threshold that is measured per kind. A 900-line test file and a 900-line
+# source file are different smells: splitting a table of cases buys less than splitting a module
+# with logic in it. Built in rather than configurable because it is a convention, not a policy, and
+# a repository that disagrees can `ignore` the path or record it under `known`.
+TEST_PATH_PATTERNS = (
+    "**/test_*.py", "**/*_test.py", "**/tests/**", "**/__tests__/**",
+    "**/testdata/**", "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx",
+)
+
 # An import line, as the languages a repository might be written in spell it. Counting lines
 # rather than parsing is the point: the number is a hint, not a claim about the module graph.
 IMPORT_LINE = re.compile(
@@ -75,6 +92,8 @@ HUMAN_NAME = {
     "max_file_lines": "one file, too many lines",
     "max_dir_files": "one directory, too many files",
     "max_file_imports": "one file, too many imports",
+    "max_todos": "one file, too many debt markers",
+    "todo_age": "a debt marker old enough to be a decision nobody made",
 }
 
 
@@ -83,6 +102,9 @@ class Thresholds:
     max_file_lines: int
     max_dir_files: int
     max_file_imports: int
+    max_todos: int = 10
+    max_todo_age_days: int = 365
+    max_test_file_lines: int = 1500
 
 
 @dataclass(frozen=True)
@@ -233,9 +255,18 @@ def line_count(text: str) -> int:
     return text.count("\n") + (0 if text.endswith("\n") else 1)
 
 
+def is_test_path(path: str) -> bool:
+    return any(matches(path, pattern) for pattern in TEST_PATH_PATTERNS)
+
+
 def measure(files: list[str], read: Callable[[str], str | None], thresholds: Thresholds,
-            config: Config) -> list[dict]:
-    """Every over-threshold measurement, sorted so the report does not move between runs."""
+            config: Config, age_of: Callable[[str, list[int]], int | None] | None = None
+            ) -> list[dict]:
+    """Every over-threshold measurement, sorted so the report does not move between runs.
+
+    `age_of` is the one measurement this file cannot make alone: how old a marker is lives in git
+    history, not in the tree, so it is injected (and `None` when no history is available).
+    """
     found: list[dict] = []
     dirs: dict[str, int] = {}
     for path in files:
@@ -248,21 +279,105 @@ def measure(files: list[str], read: Callable[[str], str | None], thresholds: Thr
         if text is None:
             continue
         lines = line_count(text)
-        if lines > thresholds.max_file_lines:
+        limit = thresholds.max_test_file_lines if is_test_path(path) else thresholds.max_file_lines
+        if lines > limit:
             found.append({"check": "max_file_lines", "path": path, "metric": lines,
-                          "threshold": thresholds.max_file_lines, "unit": "lines",
-                          "facts": {"lines": lines}})
+                          "threshold": limit, "unit": "lines",
+                          # The kind is a fact about the path, not about the two limits
+                          # disagreeing: a consumer may pin them to the same number.
+                          "facts": {"lines": lines,
+                                    "kind": "test" if is_test_path(path) else "source"}})
         imports = sum(1 for line in text.splitlines() if IMPORT_LINE.match(line))
         if imports > thresholds.max_file_imports:
             found.append({"check": "max_file_imports", "path": path, "metric": imports,
                           "threshold": thresholds.max_file_imports, "unit": "imports",
                           "facts": {"imports": imports}})
+        markers = [(number, match.group("word"))
+                   for number, line in enumerate(text.splitlines(), 1)
+                   if (match := COMMENT_MARKER.search(line))]
+        if len(markers) > thresholds.max_todos:
+            found.append({"check": "max_todos", "path": path, "metric": len(markers),
+                          "threshold": thresholds.max_todos, "unit": "markers",
+                          "facts": {"markers": len(markers),
+                                    "first": f"line {markers[0][0]}: {markers[0][1]}"}})
+        if markers and age_of is not None:
+            age = age_of(path, [number for number, _ in markers])
+            if age is not None and age > thresholds.max_todo_age_days:
+                found.append({"check": "todo_age", "path": path, "metric": age,
+                              "threshold": thresholds.max_todo_age_days, "unit": "days",
+                              "facts": {"oldest_days": age, "markers": len(markers)}})
     for directory, count in dirs.items():
         if count > thresholds.max_dir_files:
             found.append({"check": "max_dir_files", "path": directory, "metric": count,
                           "threshold": thresholds.max_dir_files, "unit": "files",
                           "facts": {"files": count}})
     return sorted(found, key=lambda c: (c["check"], c["path"]))
+
+
+# `<sha> <orig> <final>` with the hunk count on the first line only. Matching just the four-field
+# form silently dropped every marker that was not the first line of its hunk.
+BLAME_HEADER = re.compile(r"^[0-9a-f]{40} \d+ (?P<final>\d+)(?: \d+)?$")
+
+
+def has_history(repo_dir: Path) -> bool:
+    """Whether the clone carries more than the commit being swept.
+
+    A one-commit clone cannot answer the age question: every line blames to the head, so the check
+    would report 0 days forever and look like a repository with no old debt. Skipping it loudly is
+    the only honest answer, and it is why `TIDE_HISTORY_DEPTH` exists.
+    """
+    try:
+        done = subprocess.run(["git", "-C", str(repo_dir), "rev-list", "--count", "HEAD"],
+                              capture_output=True, text=True)
+    except OSError:
+        return False
+    if done.returncode != 0:
+        return False
+    return int(done.stdout.strip() or 0) > 1
+
+
+def blame_ages(repo_dir: Path, path: str, lines: list[int],
+               now: int | None = None) -> int | None:
+    """The age in days of the oldest of `lines`, from `git blame`; None when git cannot say.
+
+    Porcelain output has a header per line, `<sha> <orig> <final> <count>` for the first line of a
+    hunk and `<sha> <orig> <final>` for the rest of it, and repeats the commit's fields — including
+    `committer-time` — only when the commit changes. So the header is matched with the count
+    optional and the timestamp carries over: parsing only the four-field form recorded the first
+    line of every hunk and lost every marker below it. One blame call per file with markers,
+    because the alternative — one call per line — is the same work with more process starts.
+
+    A shallow clone stops at its boundary commit: every line older than the fetched depth is
+    attributed to it, so the age is *capped* at the window rather than wrong in a direction that
+    matters. With the shipped `TIDE_HISTORY_DEPTH` that window is weeks-to-months, and an age over
+    the threshold is still an age over the threshold.
+    """
+    if not lines:
+        return None
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(repo_dir), "blame", "--line-porcelain", "--", path],
+            # `read_text` decodes the tree with `errors="replace"`; a legacy-encoded file must not
+            # become the one path that raises out of a sweep that had already read it fine.
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if done.returncode != 0:
+        return None
+    wanted, ages = set(lines), {}
+    current, stamp = None, None
+    for line in done.stdout.splitlines():
+        header = BLAME_HEADER.match(line)
+        if header:
+            current = int(header.group("final"))
+        elif line.startswith("committer-time "):
+            stamp = int(line.split(" ", 1)[1])
+        elif line.startswith("\t") and current in wanted and stamp is not None:
+            ages[current] = stamp
+    if not ages:
+        return None
+    oldest = min(ages.values())
+    return max(0, ((now or int(time.time())) - oldest) // 86400)
 
 
 def apply_known(candidates: list[dict], config: Config) -> tuple[list[dict], list[dict]]:
@@ -312,7 +427,9 @@ def rotate(candidates: list[dict], max_items: int, sha: str) -> list[dict]:
 
 def scan(repo_dir: Path, sha: str, thresholds: Thresholds, config: Config,
          max_items: int, files: list[str] | None = None,
-         read: Callable[[str], str | None] | None = None) -> tuple[dict, list[dict]]:
+         read: Callable[[str], str | None] | None = None,
+         age_of: Callable[[str, list[int]], int | None] | None = None
+         ) -> tuple[dict, list[dict]]:
     """(the plan, every measurement).
 
     The second half is not `plan["picked"]`: the picked list is the subset this sweep may spend a
@@ -322,22 +439,37 @@ def scan(repo_dir: Path, sha: str, thresholds: Thresholds, config: Config,
     """
     files = tracked_files(repo_dir) if files is None else files
     measure_read = read or (lambda path: read_text(repo_dir, path))
-    everything = measure(files, measure_read, thresholds, config)
+    if age_of is not None:
+        measure_age, history = age_of, "injected"
+    elif has_history(repo_dir):
+        measure_age, history = (lambda path, lines: blame_ages(repo_dir, path, lines)), "clone"
+    else:
+        measure_age, history = None, "none (one-commit clone; todo_age skipped)"
+    everything = measure(files, measure_read, thresholds, config, measure_age)
     for candidate in everything:
         candidate["fingerprint"] = fingerprint(candidate["check"], candidate["path"])
     firing, suppressed = apply_known(everything, config)
     picked = rotate(firing, max_items, sha)
+    # What this sweep *looked at*, which is not the same as what fired: a check that found nothing
+    # was still evaluated, and a check that could not run must not let its open issues be closed.
+    evaluated = [check for check in HUMAN_NAME
+                 if not (check == "todo_age" and measure_age is None)]
     plan = {
         "sha": sha,
         "files": len(files),
         "candidates": len(everything),
         "firing": len(firing),
+        "history": history,
+        "checks": sorted(evaluated),
         "suppressed": suppressed,
         "stale_known": stale_known(everything, config),
         "picked": picked,
         "thresholds": {"max_file_lines": thresholds.max_file_lines,
+                       "max_test_file_lines": thresholds.max_test_file_lines,
                        "max_dir_files": thresholds.max_dir_files,
-                       "max_file_imports": thresholds.max_file_imports},
+                       "max_file_imports": thresholds.max_file_imports,
+                       "max_todos": thresholds.max_todos,
+                       "max_todo_age_days": thresholds.max_todo_age_days},
     }
     return plan, everything
 
@@ -356,11 +488,16 @@ def main(argv: list[str]) -> int:
     scan_cmd.add_argument("--config", type=Path, default=None)
     scan_cmd.add_argument("--max-items", type=int, default=3)
     scan_cmd.add_argument("--max-file-lines", type=int, default=800)
+    scan_cmd.add_argument("--max-test-file-lines", type=int, default=1500)
     scan_cmd.add_argument("--max-dir-files", type=int, default=30)
     scan_cmd.add_argument("--max-file-imports", type=int, default=40)
+    scan_cmd.add_argument("--max-todos", type=int, default=10)
+    scan_cmd.add_argument("--max-todo-age-days", type=int, default=365)
     args = ap.parse_args(argv)
 
-    thresholds = Thresholds(args.max_file_lines, args.max_dir_files, args.max_file_imports)
+    thresholds = Thresholds(args.max_file_lines, args.max_dir_files, args.max_file_imports,
+                            args.max_todos, args.max_todo_age_days,
+                            args.max_test_file_lines)
     config = load_config(args.config or (args.repo_dir / CONFIG_PATH))
     plan, measured = scan(args.repo_dir, args.sha, thresholds, config, args.max_items)
 
