@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -80,10 +81,16 @@ def _norm(text) -> str:
 
     This changes the fingerprint of any title carrying a non-ASCII letter, so such a title already
     filed is filed once more. That is bounded by `issues_per_day` and a human can close it; hiding
-    a defect is the failure the fingerprint exists to prevent. `\W` is Unicode-aware, so letters
-    of any script survive and punctuation still becomes a space.
+    a defect is the failure the fingerprint exists to prevent.
+
+    Letters, digits and combining marks are kept: `\W` is Unicode-aware for letters but drops
+    marks (category M), and in Devanagari, Thai, Tamil and Bengali the vowel signs are marks — two
+    titles differing only in a matra normalised to the same text. NFKC composes a decomposed
+    sequence first, so a title is not split by how its accents happened to be encoded.
     """
-    return " ".join(re.sub(r"[\W_]+", " ", str(text or "").casefold()).split())
+    raw = unicodedata.normalize("NFKC", str(text or "")).casefold()
+    kept = "".join(char if unicodedata.category(char)[0] in "LNM" else " " for char in raw)
+    return " ".join(kept.split())
 
 
 def fingerprint(component: str, finding: dict) -> str:

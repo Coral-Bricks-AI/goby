@@ -678,3 +678,26 @@ def test_the_script_change_costs_one_re_file_and_no_hidden_finding():
     fp_old = hashlib.sha256("|".join([COMPONENT, "registry.py", legacy]).encode()).hexdigest()[:12]
     filed, _ = pf.decide([finding(title=title)], [issue(fp_old)], issues_per_day=25, now=NOW)
     assert len(filed) == 1, "one re-file, bounded by the cap"
+
+
+def test_a_title_that_differs_only_in_a_combining_mark_is_its_own_finding():
+    """`\\W` drops marks, and in Devanagari the vowel signs *are* marks: two different defects
+    normalised to the same text and the second was filed as "already filed" forever."""
+    first = finding(title="गलत बिल जोड़ा जाता है")
+    second = finding(title="गलत बॉल जोड़ा जाता है")
+    assert pf._norm(first["title"]) != pf._norm(second["title"])
+    assert pf.fingerprint(COMPONENT, first) != pf.fingerprint(COMPONENT, second)
+
+    filed, skipped = pf.decide([second], [issue(pf.fingerprint(COMPONENT, first))],
+                               issues_per_day=25, now=NOW)
+    assert filed and not skipped
+
+
+def test_composed_and_decomposed_accents_are_the_same_title():
+    """A title must not be split by how its accents were encoded: NFKC composes them first."""
+    import unicodedata
+
+    composed = "Falha na validação do cache"
+    decomposed = unicodedata.normalize("NFD", composed)
+    assert composed != decomposed
+    assert pf._norm(composed) == pf._norm(decomposed)
