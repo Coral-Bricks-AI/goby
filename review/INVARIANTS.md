@@ -31,3 +31,7 @@ image the job is actually running.
 
 - A review that finds nothing is a valid result; do not report the absence of findings as a defect.
 - The model's own judgement of the code under review is out of scope: this brief is the harness.
+- "A 5xx on the review or status POST that GitHub actually stored is reported as a failed review"
+  — accepted. A commit status and a review POST have no compare-and-swap, so a write can land and
+  still be answered with an error; reading every one back is more machinery than a rare, visible,
+  re-runnable failure is worth. The run exits non-zero and both statuses say `error` (#62, #66).
