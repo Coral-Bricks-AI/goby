@@ -71,7 +71,14 @@ def issue_label() -> str:
 
 
 def _norm(text) -> str:
-    return " ".join(re.sub(r"[^a-z0-9 ]+", " ", str(text or "").lower()).split())
+    """Case, punctuation and spacing beaten out of a title — in any script.
+
+    `[^a-z0-9 ]` erased every non-Latin title to "", so two different defects in one file shared
+    a fingerprint and the second was filed as "already filed" forever — and a title in another
+    script is exactly what a component whose brief is written in that script produces. `\W` is
+    Unicode-aware, so letters survive and punctuation still becomes a space.
+    """
+    return " ".join(re.sub(r"[\W_]+", " ", str(text or "").casefold()).split())
 
 
 def fingerprint(component: str, finding: dict) -> str:

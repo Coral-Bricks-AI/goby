@@ -181,13 +181,17 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
   const records = (await readFile(join(agentOut, 'findings.jsonl'), 'utf8').catch(() => ''))
     .split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
   // Two different things, kept apart on purpose. "Incomplete" means the evidence cannot be
-  // trusted — a failed thread read, an unreadable findings record, or a reviewer that never
-  // reported — and the gate refuses it. A spent tool budget means the scan was bounded: the
-  // reviewer answered, and saying otherwise would block every large pull request on a cap we chose.
+  // trusted — a failed thread read, or a reviewer that never reported — and the gate refuses it.
+  // A spent tool budget means the scan was bounded: the reviewer answered, and saying otherwise
+  // would block every large pull request on a cap we chose. An unreadable findings record is
+  // neither: it throws below, because nobody can say what the reviewer found.
   const incomplete: string[] = [...job.incomplete];
   const caveats = caveats_for(records);
   const [emitted, unreadable] = contract.emitted_findings(records);
-  if (unreadable) incomplete.push('a findings record was not an array, so its findings could not be read.');
+  // An unreadable record means "we do not know what the reviewer found", not "it found nothing".
+  // The gate is opt-in, so `complete:false` alone still posts a green "No bugs found"; refusing the
+  // run is the same answer an off-contract text reply gets.
+  if (unreadable) throw new Error('report_findings produced an off-contract payload; refusing to post');
   const parsed = contract.parse_findings(JSON.stringify(emitted), true);
   if (parsed === null) throw new Error('report_findings produced an off-contract payload; refusing to post');
 
