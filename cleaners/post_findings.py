@@ -30,6 +30,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote, urlencode
 
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 LABEL = "goby-cleaners"
@@ -37,10 +38,23 @@ LABEL = "goby-cleaners"
 # scanned by two producers at once, and a rename must not lose the dedupe history. Parsing only
 # our own prefix made every legacy issue invisible to `decide` — it saw no fingerprints and no
 # daily budget, and filed the same defect again.
+# The component is a directory path, and a directory may contain a space. `\S+` stopped at the
+# first one, so the marker a run had just written was unparsable and the next run re-filed the
+# same defect on every scan; the component therefore runs to the ` severity=` delimiter.
 MARKER = re.compile(
-    r"<!--\s+[A-Za-z0-9._-]+\s+fp=(?P<fp>[0-9a-f]{12})\s+component=(?P<component>\S+)"
+    r"<!--\s+[A-Za-z0-9._-]+\s+fp=(?P<fp>[0-9a-f]{12})\s+component=(?P<component>.+?)"
     r"\s+severity=(?P<severity>\w+)\s*-->")
 DEFAULT_PRODUCER = "goby-cleaners"
+
+
+def issues_url(repo: str, label: str, page: int) -> str:
+    """The dedupe read's URL, with the label encoded.
+
+    Interpolating the label raw meant `team cleaners` produced a request line with a space in
+    it: the read failed, and nothing was filed under that label at all.
+    """
+    return f"/repos/{repo}/issues?" + urlencode(
+        {"labels": label, "state": "all", "per_page": 100, "page": page}, quote_via=quote)
 
 
 def issue_label() -> str:
@@ -256,8 +270,7 @@ def list_labelled(repo: str, token: str, label: str | None = None,
     label = label or issue_label()
     out: list[dict] = []
     for page in range(1, max_pages + 1):
-        st, body = _http("GET", f"/repos/{repo}/issues?labels={label}&state=all"
-                                f"&per_page=100&page={page}", token)
+        st, body = _http("GET", issues_url(repo, label, page), token)
         if st != 200 or not isinstance(body, list):
             print(f"error: list issues ({label}) -> HTTP {st}: {str(body)[:160]}",
                   file=sys.stderr)
@@ -270,8 +283,7 @@ def list_labelled(repo: str, token: str, label: str | None = None,
     # Walked the bound with every page full, so one probe decides between "the history ends
     # exactly here" and "it is longer than we will read". Without it the bound itself refuses
     # a complete read: 10 000 issues fill 100 pages and page 101 is the one that proves it.
-    st, body = _http("GET", f"/repos/{repo}/issues?labels={label}&state=all"
-                            f"&per_page=100&page={max_pages + 1}", token)
+    st, body = _http("GET", issues_url(repo, label, max_pages + 1), token)
     if st == 200 and isinstance(body, list) and not body:
         return out
     print(f"error: more than {max_pages} pages of issues carry the {label} label; the dedupe "
