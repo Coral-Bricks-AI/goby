@@ -39,7 +39,7 @@ count_lines() { if [[ -f "$1" ]]; then wc -l < "$1" | tr -d ' '; else echo 0; fi
 # (CLEANERS_SESSION_ID is config, not a credential), and it is the one gate that decides
 # whether the system does anything at all, so it is tested rather than written in shell.
 MODELS_DIR=/opt/cleaners/models
-if ! MODEL="$(python3 /opt/cleaners/model_check.py --models-dir "$MODELS_DIR" \
+if ! MODEL="$(python3 /opt/common/model_check.py --models-dir "$MODELS_DIR" \
       --model "$MODEL" --fallback "$FALLBACK_MODEL")"; then
   log "error: nothing to scan with"
   exit 2
@@ -186,6 +186,11 @@ if [[ -f "$REPO_DIR/AGENTS.md" ]]; then RULES=(--rules "$REPO_DIR/AGENTS.md"); f
 run_scan() {
   local dir="$1" model="$2" agent_out="$3" charter="$4" provider="${2%%/*}" agent_home=/home/agent/.pi-agent
   local status=0
+  # One id per run, and the models file interpolates it as the gateway's session header — which
+  # was empty in the agent's environment until now, so every scan was attributed to no session at
+  # all. Derived from the run directory, so a retry is a separate id and a re-run of the same
+  # component is still distinguishable.
+  local session_id="clean-$(echo "$dir" | tr '/' '-')-${HEAD_SHA:0:10}-$(basename "$agent_out")"
   # `agent/` is created here, root-owned and traversable but not writable: it holds every
   # scan's run directory, and nothing an agent runs may reach a sibling's findings. Only
   # the directory for the scan in progress is handed to the agent.
@@ -257,6 +262,7 @@ run_scan() {
     GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 \
     PI_CODING_AGENT_DIR="$agent_home" PI_OFFLINE=1 PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 \
     CLEANERS_JSON=1 CLEANERS_MAX_TOOLS="$MAX_TOOLS" \
+    CLEANERS_SESSION_ID="$session_id" GOBY_SESSION_ID="$session_id" \
     REPO="$REPO" \
     CLEANERS_COMPONENT="$dir" CLEANERS_OUT="$agent_out" \
     CLEANERS_SANDBOX="$SANDBOX" CLEANERS_SCRATCH="$agent_out/scratch" \
@@ -298,11 +304,12 @@ for dir in "${PICKED[@]}"; do
   # the *model* failed: pi exits 0 with stopReason=error even on a 401 or a refused
   # connection, so the exit code never carries that information.
   model_failed=0
-  python3 /opt/cleaners/summarize_run.py --status "$OUT/agent/$SLUG/events.jsonl" \
+  python3 /opt/common/summarize_run.py --status "$OUT/agent/$SLUG/events.jsonl" \
     || model_failed=1
-  DECISION=$(python3 /opt/cleaners/plan.py classify --exit "$status" \
-    --findings "$(count_lines "$OUT/agent/$SLUG/findings.jsonl")" \
-    $([[ $model_failed -eq 1 ]] && echo --model-failed))
+  CLASSIFY_ARGS=(--exit "$status"
+                 --findings "$(count_lines "$OUT/agent/$SLUG/findings.jsonl")")
+  [[ $model_failed -eq 1 ]] && CLASSIFY_ARGS+=(--model-failed)
+  DECISION=$(python3 /opt/cleaners/plan.py classify "${CLASSIFY_ARGS[@]}")
 
   case "$DECISION" in
     ok) model_error=0 ;;
@@ -319,14 +326,14 @@ for dir in "${PICKED[@]}"; do
   # transient, and with MODEL == FALLBACK_MODEL (the shipped default) gating on inequality
   # meant a transient failure never retried at all.
   if [[ $model_error -eq 1 ]] \
-     && python3 /opt/cleaners/model_check.py --models-dir "$MODELS_DIR" \
+     && python3 /opt/common/model_check.py --models-dir "$MODELS_DIR" \
           --model "$FALLBACK_MODEL" --fallback "$FALLBACK_MODEL" > /dev/null 2>&1; then
     log "model error on $MODEL for $dir; retrying once on $FALLBACK_MODEL"
     status=0
     run_scan "$dir" "$FALLBACK_MODEL" "$OUT/agent/$SLUG-retry" "$charter" || status=$?
     log "retry exit=$status findings=$(count_lines "$OUT/agent/$SLUG-retry/findings.jsonl")"
     tail -20 "$OUT/agent.log" || true
-    if [[ $status -ne 0 ]] || ! python3 /opt/cleaners/summarize_run.py --status \
+    if [[ $status -ne 0 ]] || ! python3 /opt/common/summarize_run.py --status \
          "$OUT/agent/$SLUG-retry/events.jsonl"; then
       log "error: the retry failed too; nothing filed from $dir"
       FAILED_SCANS=$((FAILED_SCANS + 1))
@@ -343,7 +350,7 @@ for dir in "${PICKED[@]}"; do
   # A quiet run has to be attributable from the log alone: the event stream lives inside
   # the container, and "found nothing" is otherwise indistinguishable from "did not look".
   if [[ "$(count_lines "$OUT/agent/$SLUG/findings.jsonl")" -eq 0 && -s "$OUT/agent/$SLUG/events.jsonl" ]]; then
-    python3 /opt/cleaners/summarize_run.py "$OUT/agent/$SLUG/events.jsonl" || true
+    python3 /opt/common/summarize_run.py "$OUT/agent/$SLUG/events.jsonl" || true
   fi
   if [[ -f "$OUT/agent/$SLUG/run.json" ]]; then
     log "run $(tr -d '\n' < "$OUT/agent/$SLUG/run.json")"
@@ -352,7 +359,7 @@ for dir in "${PICKED[@]}"; do
   # because GITHUB_STEP_SUMMARY is set by Actions and absent everywhere else — and because a
   # container that cannot reach the summary file must still report what it spent.
   if [[ -f "$OUT/agent/$SLUG/events.jsonl" ]]; then
-    summary_line="$(python3 /opt/cleaners/usage.py "$OUT/agent/$SLUG" --markdown || true)"
+    summary_line="$(python3 /opt/common/usage.py "$OUT/agent/$SLUG" --markdown || true)"
     if [[ -n "$summary_line" ]]; then
       log "usage ${summary_line#- }"
       if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] \

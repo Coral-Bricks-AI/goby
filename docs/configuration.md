@@ -3,6 +3,20 @@
 Everything is an environment variable, because the only caller is a workflow. The two local
 scripts take flags that override the same values.
 
+This page is the **reviewer**. The other two products have their own, because they run on a
+different trigger and file into a different place:
+
+| product | configuration | trigger |
+|---|---|---|
+| review | this page | a pull request |
+| cleaners | [`cleaners/README.md`](../cleaners/README.md) | a push to the default branch |
+| tide | [`tide/README.md`](../tide/README.md) | a schedule you set in the workflow |
+
+What they do share is one rule, and it is the reason a consumer can stay on `:latest`: the
+numbers — budgets, thresholds — live in the image (`*/defaults.env`), and a workflow sets a
+variable only to override one. The single exception is the tide's `cron`, which is a repository's
+own decision and cannot be an input (`on.schedule` takes none).
+
 ## The job
 
 | variable | meaning |

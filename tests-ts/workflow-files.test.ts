@@ -83,7 +83,8 @@ test('every workflow parses under actionlint rules we rely on', () => {
   for (const file of ['.github/workflows/ci.yml', '.github/workflows/review-image.yml',
     '.github/workflows/cleaners-image.yml', '.github/workflows/cleaners-post-merge.yml',
     '.github/workflows/test-cleaners.yml', '.github/workflows/test-review-image.yml',
-    '.github/workflows/goby-review.yml']) {
+    '.github/workflows/goby-review.yml', '.github/workflows/tide-scheduled.yml',
+    '.github/workflows/tide-image.yml', '.github/workflows/test-tide.yml']) {
     const block = read(file).split(/^permissions:$/m)[1];
     if (!block) continue;
     for (const line of block.split('\n')) {
@@ -154,7 +155,7 @@ test('the reviewer\'s own code carries briefs, so a cleaner can debug the review
   // Without an INVARIANTS.md a directory is invisible to the post-merge cleaner, which is how the
   // reviewer would be the one part of this project nothing ever scanned.
   const {existsSync} = require('node:fs') as typeof import('node:fs');
-  for (const dir of ['review', 'src']) {
+  for (const dir of ['review', 'src', 'tide']) {
     const path = join(root, dir, 'INVARIANTS.md');
     expect(existsSync(path)).toBe(true);
     const text = readFileSync(path, 'utf8');
@@ -170,3 +171,67 @@ test('a pull request is reviewed once by default', () => {
   }
   expect(read('docs/configuration.md')).toContain('reviews per pull request');
 });
+
+
+test('the tide is the only scheduled product, and the schedule is the consumer\'s', () => {
+  // A cron expression cannot read an input, so it is the one knob that stays in the workflow a
+  // consumer copies. Everything else arrives through `:latest`, which is why no product may sneak
+  // a second scheduled workflow in without this test changing.
+  const tide = read('.github/workflows/tide-scheduled.yml');
+  expect(tide).toContain('schedule:');
+  expect(tide).toContain('cron:');
+  expect(tide).toContain('workflow_dispatch:');
+  expect(tide).toContain('workflow_call:');
+  expect(tide).toContain('goby-tide:latest');
+  expect(tide).not.toMatch(/goby-tide@sha256/);
+  expect(tide).not.toMatch(/^\s*pull_request_target:/m);
+  // The run has to be able to file issues and pull the image; nothing else.
+  expect(tide).toContain('issues: write');
+  expect(tide).toContain('packages: read');
+  expect(tide).toContain('run: bash /opt/tide/entrypoint.sh');
+  for (const other of ['review/workflow.yml', '.github/workflows/goby-review.yml',
+    '.github/workflows/cleaners-post-merge.yml']) {
+    expect(read(other)).not.toContain('schedule:');
+  }
+})
+
+test('a scheduled sweep never cancels another, and is not keyed on the commit', () => {
+  // On a schedule `github.sha` is the branch head, so keying concurrency on it would let two
+  // ticks over the same head run together; cancelling one can leave an issue half-filed.
+  const tide = read('.github/workflows/tide-scheduled.yml');
+  expect(tide).toContain('group: goby-tide');
+  expect(tide).not.toContain('group: goby-tide-${{');
+  expect(tide).toContain('cancel-in-progress: false');
+})
+
+test('every product that files issues files under its own label plus the general one', () => {
+  // `label:goby` lists everything goby filed in a repository; `label:goby-tide` only the
+  // scheduled ones. The shared module adds the general label, so a product opts in by passing its
+  // own name — and a product that files without going through `common/issues.py` would lose it.
+  const common = read('common/issues.py');
+  expect(common).toContain('GENERAL = "goby"');
+  expect(common).toMatch(/return \[self\.label\.name, \*/);
+  for (const [file, label] of [['cleaners/post_findings.py', 'goby-cleaners'],
+    ['tide/post_issues.py', 'goby-tide']] as const) {
+    const text = read(file);
+    expect(text).toContain(`LABEL = "${label}"`);
+    expect(text).toContain('import issues as common');
+    expect(text).toContain('common.file_issues');
+  }
+})
+
+test('the shared filing code exists once, in one directory', () => {
+  // Two copies of the dedupe read is how the two products would drift into disagreeing about what
+  // a duplicate is. Both images copy `common/`; neither owns a copy of it.
+  const {existsSync} = require('node:fs') as typeof import('node:fs');
+  for (const name of ['issues.py', 'model_check.py', 'summarize_run.py', 'usage.py']) {
+    expect(existsSync(join(root, 'common', name))).toBe(true);
+    for (const product of ['cleaners', 'tide']) {
+      expect(existsSync(join(root, product, name))).toBe(false);
+    }
+  }
+  for (const dockerfile of ['cleaners/Dockerfile', 'tide/Dockerfile']) {
+    expect(read(dockerfile)).toContain('COPY common/issues.py /opt/common/issues.py');
+  }
+  expect(read('tide/Dockerfile')).toContain('FROM ${BASE_IMAGE}');
+})

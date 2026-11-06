@@ -20,7 +20,9 @@ def test_the_numeric_defaults_live_in_the_image():
     for fallback in ('MAX_TOOLS="${MAX_TOOLS:-200}"', 'ISSUES_PER_DAY="${ISSUES_PER_DAY:-25}"',
                      'MAX_COMPONENTS="${MAX_COMPONENTS:-4}"'):
         assert fallback not in entrypoint
-    assert "COPY defaults.env /opt/cleaners/defaults.env" in (HERE / "Dockerfile").read_text()
+    # The build context is the repository root now: the image carries `common/` beside
+    # `cleaners/`, so every copy source is prefixed with its directory.
+    assert "COPY cleaners/defaults.env /opt/cleaners/defaults.env" in (HERE / "Dockerfile").read_text()
     extension = (HERE / "report_finding.ts").read_text()
     assert "?? 60" not in extension
     assert 'requiredInt("CLEANERS_MAX_TOOLS")' in extension
@@ -42,7 +44,8 @@ def test_every_shipped_module_compiles_without_escape_warnings():
     import subprocess
     import sys
 
-    for path in sorted(HERE.glob("*.py")):
+    # `common/` ships in this image too, so it is held to the same rule.
+    for path in sorted([*HERE.glob("*.py"), *(HERE.parent / "common").glob("*.py")]):
         done = subprocess.run([sys.executable, "-W", "error::SyntaxWarning", "-B",
                                "-m", "py_compile", str(path)],
                               capture_output=True, text=True)
