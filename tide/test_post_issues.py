@@ -343,3 +343,44 @@ def test_the_known_snippet_can_be_placed_in_the_file_as_printed():
     (entry,) = document["known"]
     assert entry["check"] == "max_file_lines" and entry["path"] == "src/cli/entry.ts"
     assert entry["reason"].strip()
+
+
+def test_a_truncated_block_says_so_and_names_where_the_rest_comes_from():
+    """#101's diff was cut mid-function at 12k characters with nothing to say it had been cut: the
+    issue looked complete, and the one thing a reviewer needed — the end of the change — was
+    missing with no marker. The cap stays; the silence does not."""
+    body = "\n".join(f"+ line {n} of the refactor" for n in range(4000))
+    _, rendered = pi.render_issue(proposal(diff=body), "a" * 40)
+    assert "…diff truncated: showing" in rendered
+    assert "of 4,000 lines" in rendered
+    assert "reproducible by following the plan above" in rendered
+    # Cut on a line boundary: a diff that ends mid-line cannot be applied or read.
+    tail = rendered.split("```diff", 1)[1]
+    assert "+ line 3999 of the refactor" not in tail
+    truncated = [line for line in tail.splitlines() if line.startswith("+ line")]
+    assert truncated and truncated[-1].endswith("of the refactor")
+
+
+def test_a_block_under_the_cap_is_not_marked():
+    _, rendered = pi.render_issue(proposal(diff="+ one line\n"), "a" * 40)
+    assert "truncated" not in rendered
+
+
+def test_every_block_that_can_be_cut_uses_the_same_marker():
+    """Prose and evidence are both evidence when a reader is deciding to approve a refactor: a
+    plan that stops mid-step without saying so is the same failure as a truncated diff."""
+    long = "\n".join(f"step {n}" for n in range(3000))
+    _, rendered = pi.render_issue(proposal(summary=long, plan=long, risk=long), "a" * 40)
+    for what in ("summary truncated", "plan truncated", "risk truncated"):
+        assert f"…{what}" in rendered, what
+
+
+def test_a_single_line_block_cut_mid_line_counts_characters_not_lines():
+    """A one-paragraph summary or a one-line test command has no line boundary to cut on. Counting
+    lines made the note read "showing 1 of 1 lines" — a claim that nothing was omitted, printed
+    directly under text that had been cut mid-sentence."""
+    paragraph = "one long paragraph about the file " * 300
+    _, rendered = pi.render_issue(proposal(summary=paragraph), "a" * 40)
+    assert "…summary truncated: showing 4,000 of" in rendered
+    assert "characters" in rendered
+    assert "1 of 1 lines" not in rendered

@@ -139,8 +139,30 @@ def gone(candidates: list[dict], open_issues: list[dict]) -> list[dict]:
             if fp not in current]
 
 
-def _block(text: str, limit: int) -> str:
-    return str(text or "").strip()[:limit]
+def _clip(text: str, limit: int, what: str, *, follows_from_plan: bool = False) -> str:
+    """The text, cut at a line boundary, and a note saying so when it has to be cut.
+
+    A silently truncated block is the failure this whole file argues against: the issue looks
+    complete, and the reader cannot tell that the end of the diff — or of the run that is the
+    evidence for it — is missing. The cap itself stays: an issue is a plan, not a patch, and a
+    thousand-line body is one nobody reads. What changes is that a cut is visible.
+    """
+    body = str(text or "").strip()
+    if len(body) <= limit:
+        return body
+    cut = body[:limit]
+    head = cut.rsplit("\n", 1)[0] if "\n" in cut else cut
+    if "\n" in head:
+        shown, total, unit = head.count("\n") + 1, body.count("\n") + 1, "lines"
+    else:
+        # Nothing survived the cut but part of one line — a one-paragraph summary, a one-line
+        # command, a minified diff. Counting lines there says "showing 1 of 1 lines", which claims
+        # nothing was omitted while characters were dropped, so characters are what get counted.
+        shown, total, unit = len(head), len(body), "characters"
+    note = f"…{what} truncated: showing {shown:,} of {total:,} {unit}."
+    if follows_from_plan:
+        note += " The full change is reproducible by following the plan above."
+    return f"{head}\n\n{note}"
 
 
 def render_issue(proposal: dict, sha: str) -> tuple[str, str]:
@@ -161,40 +183,42 @@ def render_issue(proposal: dict, sha: str) -> tuple[str, str]:
         "",
         "**Why this is worth fixing**",
         "",
-        _block(proposal.get("summary"), 4000),
+        _clip(proposal.get("summary"), 4000, "summary"),
         "",
         "**How to take it apart**",
         "",
-        _block(proposal.get("plan"), 8000),
+        _clip(proposal.get("plan"), 8000, "plan"),
         "",
     ]
     if proposal.get("applied"):
         body += [
             "**Verified in a container** — the suite was run before the change and after it.",
             "",
-            f"```\n{_block(proposal.get('tests_command'), 500)}\n```",
+            f"```\n{_clip(proposal.get('tests_command'), 500, 'test command')}\n```",
             "",
             "Before:",
             "",
-            f"```\n{_block(proposal.get('tests_output_before'), 3000)}\n```",
+            f"```\n{_clip(proposal.get('tests_output_before'), 3000, 'before output')}\n```",
             "",
             "After:",
             "",
-            f"```\n{_block(proposal.get('tests_output_after'), 3000)}\n```",
+            f"```\n{_clip(proposal.get('tests_output_after'), 3000, 'after output')}\n```",
             "",
         ]
     else:
         body += [
             "**Not verified in a container** — the plan below has not been run.",
             "",
-            _block(proposal.get("unverified_reason"), 2000) or "(no reason given)",
+            _clip(proposal.get("unverified_reason"), 2000, "reason") or "(no reason given)",
             "",
         ]
     if proposal.get("diff"):
         body += [
             "**The change the sweep applied** — this is what the after-run tested:",
             "",
-            f"```diff\n{_block(proposal.get('diff'), 12000)}\n```",
+            # The cap stays at 12k characters: an issue is a plan, not a patch. A cut is now
+            # visible and says where the rest comes from.
+            f"```diff\n{_clip(proposal.get('diff'), 12000, 'diff', follows_from_plan=True)}\n```",
             "",
         ]
     elif proposal.get("applied"):
@@ -208,7 +232,7 @@ def render_issue(proposal: dict, sha: str) -> tuple[str, str]:
     body += [
         "**What must not change**",
         "",
-        _block(proposal.get("risk"), 4000),
+        _clip(proposal.get("risk"), 4000, "risk"),
         "",
         "---",
         "",
