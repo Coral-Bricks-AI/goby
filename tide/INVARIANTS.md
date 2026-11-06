@@ -37,11 +37,13 @@ whole design exists to prevent.
    cleaner reads closed issues too, and copying that here would make every fixed-then-regrown
    smell invisible forever.
 
-4. **Nothing is closed by a sweep that did not measure the whole tree.** `--close-gone` is passed
-   only when `detect.py` succeeded, which is the one thing that says every candidate was measured.
-   What decides "gone" is the measurement, never the model: a failed agent run costs a proposal,
-   not a candidate. A failed *detection* is the opposite — it knows nothing, and closing on it
-   would turn the sweep's own blindness into a "resolved" comment.
+4. **Nothing is closed by a sweep that did not measure the whole tree, and the measurement is
+   every measurement.** `--close-gone` is passed only when `detect.py` succeeded, and the file it
+   reads (the `--out` of `detect.py`) holds every candidate, never the `max_items` subset: a smell
+   over today's model budget is still a smell, and closing it would put a "resolved" comment on a
+   file nobody touched. What decides "gone" is the measurement, never the model — a failed agent
+   run costs a proposal, not a candidate. A failed *detection* is the opposite: it knows nothing,
+   and closing on it would turn the sweep's own blindness into a "resolved" comment.
 
 5. **A failed measurement is never a clean sweep.** A detector that cannot read the tree exits
    non-zero and the task fails; a model call that failed is visible only through

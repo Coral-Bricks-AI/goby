@@ -224,13 +224,16 @@ def test_a_sweep_of_a_capped_tree_picks_a_subset_and_marks_nothing_else(tmp_path
     for path in files:
         (tmp_path / path).write_text(files[path])
     config = detect.Config(known=(detect.Known("max_file_lines", "src/f0.py", "decided"),))
-    plan = detect.scan(tmp_path, "deadbeef", detect.Thresholds(10, 100, 2), config,
-                       max_items=2, files=sorted(files), read=reader(files))
+    plan, measured = detect.scan(tmp_path, "deadbeef", detect.Thresholds(10, 100, 2), config,
+                                 max_items=2, files=sorted(files), read=reader(files))
     assert plan["candidates"] == 5
     assert plan["firing"] == 4, "the known entry is measured but not filed"
     assert len(plan["picked"]) == 2
     assert [c["path"] for c in plan["suppressed"]] == ["src/f0.py"]
     assert all(c["fingerprint"] for c in plan["picked"])
+    # Every measurement, not the picked subset: `--close-gone` reads this file, and a smell over
+    # today's model budget is still a smell.
+    assert len(measured) == plan["candidates"] == 5
 
 
 def test_every_shipped_module_compiles_without_escape_warnings():
@@ -241,3 +244,26 @@ def test_every_shipped_module_compiles_without_escape_warnings():
                                "-m", "py_compile", str(path)],
                               capture_output=True, text=True)
         assert done.returncode == 0, (path.name, done.stderr)
+
+
+def test_the_written_measurements_are_everything_not_the_picked_subset(tmp_path):
+    """The file the filing step closes issues from is `--out`, so it has to be every measurement.
+    Writing only the picked subset made `--close-gone` close an open issue for a smell that was
+    merely over this sweep's model budget — a "resolved" comment about a file nobody touched."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    for n in range(4):
+        (repo / f"big{n}.py").write_text("x = 1\n" * 30)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+    measured, picked = tmp_path / "measured.jsonl", tmp_path / "picked.jsonl"
+    assert detect.main(["scan", "--repo-dir", str(repo), "--sha", "deadbeef",
+                        "--out", str(measured), "--candidates", str(picked),
+                        "--max-items", "1", "--max-file-lines", "10",
+                        "--max-dir-files", "100", "--max-file-imports", "100"]) == 0
+    assert len(measured.read_text().splitlines()) == 4
+    assert len(picked.read_text().splitlines()) == 1

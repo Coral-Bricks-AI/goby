@@ -300,7 +300,14 @@ def rotate(candidates: list[dict], max_items: int, sha: str) -> list[dict]:
 
 def scan(repo_dir: Path, sha: str, thresholds: Thresholds, config: Config,
          max_items: int, files: list[str] | None = None,
-         read: Callable[[str], str | None] | None = None) -> dict:
+         read: Callable[[str], str | None] | None = None) -> tuple[dict, list[dict]]:
+    """(the plan, every measurement).
+
+    The second half is not `plan["picked"]`: the picked list is the subset this sweep may spend a
+    model call on, and the measurements it could not afford are still measurements. `--close-gone`
+    reads the second half, so a smell over the model budget is not mistaken for a smell that went
+    away — which is what closing an issue on it would say.
+    """
     files = tracked_files(repo_dir) if files is None else files
     measure_read = read or (lambda path: read_text(repo_dir, path))
     everything = measure(files, measure_read, thresholds, config)
@@ -308,7 +315,7 @@ def scan(repo_dir: Path, sha: str, thresholds: Thresholds, config: Config,
         candidate["fingerprint"] = fingerprint(candidate["check"], candidate["path"])
     firing, suppressed = apply_known(everything, config)
     picked = rotate(firing, max_items, sha)
-    return {
+    plan = {
         "sha": sha,
         "files": len(files),
         "candidates": len(everything),
@@ -320,6 +327,7 @@ def scan(repo_dir: Path, sha: str, thresholds: Thresholds, config: Config,
                        "max_dir_files": thresholds.max_dir_files,
                        "max_file_imports": thresholds.max_file_imports},
     }
+    return plan, everything
 
 
 def main(argv: list[str]) -> int:
@@ -329,7 +337,8 @@ def main(argv: list[str]) -> int:
     scan_cmd.add_argument("--repo-dir", type=Path, required=True)
     scan_cmd.add_argument("--sha", required=True)
     scan_cmd.add_argument("--out", type=Path, required=True,
-                          help="every measurement, one JSON object per line")
+                          help="every measurement, one JSON object per line; this is what the "
+                               "filing step closes issues from, so it must not be the subset")
     scan_cmd.add_argument("--candidates", type=Path, default=None,
                           help="the ones this sweep will scan (default: nowhere)")
     scan_cmd.add_argument("--config", type=Path, default=None)
@@ -341,11 +350,13 @@ def main(argv: list[str]) -> int:
 
     thresholds = Thresholds(args.max_file_lines, args.max_dir_files, args.max_file_imports)
     config = load_config(args.config or (args.repo_dir / CONFIG_PATH))
-    plan = scan(args.repo_dir, args.sha, thresholds, config, args.max_items)
+    plan, measured = scan(args.repo_dir, args.sha, thresholds, config, args.max_items)
 
-    everything = plan["picked"] + plan["suppressed"]
+    # Every measurement, not the picked subset: the filing step closes an open issue whose smell
+    # is no longer in this file, so a smell that was merely over today's model budget would be
+    # closed as "resolved" if this were only the candidates the sweep could afford.
     args.out.write_text("".join(json.dumps(c) + "\n" for c in
-                                sorted(everything, key=lambda c: (c["check"], c["path"]))))
+                                sorted(measured, key=lambda c: (c["check"], c["path"]))))
     if args.candidates:
         args.candidates.write_text("".join(json.dumps(c) + "\n" for c in plan["picked"]))
     # The plan is the log: what was measured, what a human already decided, and what this sweep
