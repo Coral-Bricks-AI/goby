@@ -41,8 +41,8 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 2
 fi
 
-# Cosmetic only (src/progress.ts): a "Goby is reviewing" note on the pull request, deleted on every
-# exit. Wall-clocked and `|| true`, so it can neither hang a review nor change how one ends.
+# Cosmetic only (src/progress.ts): a "Goby is reviewing" note on the pull request, marked done on
+# every exit. Wall-clocked and `|| true`, so it can neither hang a review nor change how one ends.
 goby_progress() { timeout 30 node /opt/goby/progress.js "$1" || true; }
 goby_progress start
 trap 'goby_progress stop' EXIT
