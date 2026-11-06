@@ -216,16 +216,19 @@ def render_issue(proposal: dict, sha: str) -> tuple[str, str]:
         "",
         "**If this is not worth doing, closing it does not stop it coming back.** Every sweep "
         "re-measures the whole tree, so the same file is filed again on the next run. Close it "
-        "*and* add this to `.goby/tide.json`:",
+        "*and* add this to `.goby/tide.json`, as the whole document if that file does not exist "
+        "yet and as an entry in its `known` array if it does:",
         "",
         "```json",
-        f'{{ "check": "{check}", "path": "{path}", "reason": "why this is fine as it is" }}',
+        f'{{ "known": [ {{ "check": "{check}", "path": "{path}", '
+        f'"reason": "why this is fine as it is" }} ] }}',
         "```",
         "",
         "`reason` is required — it is what the next reader of that file finds beside the path. A "
         "`known` entry is measured and then skipped, so it stops being filed; when it stops "
         "firing, because the file was finally split, the sweep logs that the entry can be "
-        "deleted.",
+        "deleted. A key the sweep does not recognise is an error rather than a silence, so an "
+        "entry added in the wrong shape fails the run instead of doing nothing.",
         "",
     ]
     return title, "\n".join(body)

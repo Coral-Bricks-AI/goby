@@ -148,3 +148,46 @@ def test_our_own_rates_file_prices_the_default_model(tmp_path, capsys):
     assert usage.main([str(out), "--models-json", str(path)]) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["billed_usd"] is not None, summary.get("note")
+
+
+def full_rate_catalog(tmp_path: Path) -> Path:
+    path = tmp_path / "models.json"
+    path.write_text(json.dumps({"models": {"test-model-1": {"bill": {
+        "input_cents_per_m": 1, "output_cents_per_m": 120,
+        "cache_read_cents_per_m": 0, "cache_write_cents_per_m": 8}}}}))
+    return path
+
+
+def tide_scan_dir(tmp_path, model="coral/test-model-1"):
+    """What a tide run leaves behind: `path`, not `component`, and `proposals.jsonl`."""
+    (tmp_path / "run.json").write_text(json.dumps({"path": "cleaners/entrypoint.sh",
+                                                   "model": model}))
+    (tmp_path / "events.jsonl").write_text(json.dumps(
+        {"type": "message_end", "message": {"usage": {"input": 10, "output": 100}}}) + "\n")
+    (tmp_path / "proposals.jsonl").write_text('{"check": "max_file_lines"}\n')
+    return tmp_path
+
+
+def test_the_cost_line_names_the_subject_a_tide_actually_has(tmp_path, capsys):
+    """The shared line read `component` only, so every tide scan printed "`?`" — the one thing a
+    cost line must not do is hide which work it paid for. The live run of 2026-11-06 printed
+    exactly that."""
+    catalog_path = full_rate_catalog(tmp_path)
+    out = tide_scan_dir(tmp_path)
+    assert usage.main([str(out), "--models-json", str(catalog_path)]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["component"] == "cleaners/entrypoint.sh"
+    line = usage.markdown(summary)
+    assert line.startswith("- `cleaners/entrypoint.sh`"), line
+    assert "1 proposals" in line, line
+
+
+def test_a_cleaner_scan_still_says_findings(tmp_path, capsys):
+    """The word follows the record file, not the product: a cleaner has findings, a tide has
+    proposals, and neither may report a count under the other's name."""
+    catalog_path = full_rate_catalog(tmp_path)
+    out = scan_dir(tmp_path, {"input": 10, "output": 100})
+    (out / "findings.jsonl").write_text('{"title": "a"}\n{"title": "b"}\n')
+    assert usage.main([str(out), "--models-json", str(catalog_path)]) == 0
+    line = usage.markdown(json.loads(capsys.readouterr().out))
+    assert "2 findings" in line, line
