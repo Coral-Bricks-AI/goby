@@ -1,0 +1,180 @@
+name: Goby tide
+
+# The scheduled sweep: once per cron tick, measure the default branch, and file one issue per
+# smell over a threshold with a plan to remove it. No pull request, no diff, no push payload —
+# this is the one goby product that looks at the whole repository on a clock.
+#
+# Three ways to run it, same code:
+#
+#   **A schedule you own.** Copy this file into your repo and edit the `cron` line. That is the
+#   one thing a consumer keeps their own copy of, because when a repository is swept is a
+#   repository's decision; everything else — thresholds, budgets, prompt, model, image — arrives
+#   through `:latest` without editing anything.
+#
+#   **By hand.** Actions -> Goby tide -> Run workflow. The dispatch form mirrors every input the
+#   reusable workflow takes, so a manual run can pin a digest, a model or a budget.
+#
+#   **From another workflow**, or another repository's clock:
+#
+#   jobs:
+#     tide:
+#       uses: Coral-Bricks-AI/goby/.github/workflows/tide-scheduled.yml@<sha>
+#       with:
+#         max-items: 2
+#       secrets:
+#         CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
+#
+# Four things about `schedule` that surprise people, all of them GitHub's:
+#   - the cron is UTC and best-effort: runs are delayed at busy times and sometimes dropped;
+#   - a scheduled workflow only fires on the default branch;
+#   - GitHub disables it after 60 days of repository inactivity (any push re-enables it);
+#   - `schedule` cannot read inputs, which is why the cron is here and every knob is in the image.
+
+on:
+  schedule:
+    # 06:00 UTC daily. Change this line, and nothing else, to choose your cadence: hourly is
+    # "0 * * * *", weekly is "0 6 * * 1". Avoid ":00"-heavy crons only if you are unlucky with
+    # GitHub's queue; the sweep is idempotent, so a delayed tick costs nothing but time.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    # Mirrors the workflow_call inputs, so a manual run can pin what a caller could pin. Empty
+    # inputs fall through to the image defaults in tide/defaults.env, which is what a schedule
+    # event uses since it has no inputs at all.
+    inputs:
+      image:
+        description: Tide image; defaults to :latest, or pin a @sha256 digest.
+        type: string
+        default: ghcr.io/coral-bricks-ai/goby-tide:latest
+      runs-on:
+        description: Runner label(s); a self-hosted runner is what reaches a private network.
+        type: string
+        default: ubuntu-latest
+      model:
+        description: MODEL, in provider/name form.
+        type: string
+        default: coral/deepseek-v4.1-flash-fast
+      fallback-model:
+        description: Used when the chosen provider has no key or its call fails.
+        type: string
+        default: coral/deepseek-v4.1-flash-fast
+      max-items:
+        description: Smells one sweep may spend a model call on; empty uses the image default.
+        type: number
+      max-tools:
+        description: Tool calls one scan may make; empty uses the image default.
+        type: number
+      issues-per-day:
+        description: Issues this repo may receive from the tide in 24h; empty uses the default.
+        type: number
+      max-file-lines:
+        description: A file longer than this is a smell; empty uses the image default.
+        type: number
+      max-dir-files:
+        description: A directory with more files than this is a smell; empty uses the default.
+        type: number
+      max-file-imports:
+        description: A file with more imports than this is a smell; empty uses the default.
+        type: number
+      label:
+        description: Issue label to file under (and to dedupe against).
+        type: string
+        default: goby-tide
+  workflow_call:
+    inputs:
+      image:
+        description: Tide image; defaults to :latest, or pin a @sha256 digest.
+        type: string
+        default: ghcr.io/coral-bricks-ai/goby-tide:latest
+      runs-on:
+        description: Runner label(s); a self-hosted runner is what reaches a private network.
+        type: string
+        default: ubuntu-latest
+      model:
+        description: MODEL, in provider/name form; the provider picks the credential.
+        type: string
+        default: coral/deepseek-v4.1-flash-fast
+      fallback-model:
+        description: Used when the chosen provider has no key or its call fails.
+        type: string
+        default: coral/deepseek-v4.1-flash-fast
+      max-items:
+        description: Smells one sweep may spend a model call on; empty uses the image default.
+        type: number
+      max-tools:
+        description: Tool calls one scan may make; empty uses the image default.
+        type: number
+      issues-per-day:
+        description: Issues this repo may receive from the tide in 24h; empty uses the default.
+        type: number
+      max-file-lines:
+        description: A file longer than this is a smell; empty uses the image default.
+        type: number
+      max-dir-files:
+        description: A directory with more files than this is a smell; empty uses the default.
+        type: number
+      max-file-imports:
+        description: A file with more imports than this is a smell; empty uses the default.
+        type: number
+      label:
+        description: Issue label to file under (and to dedupe against).
+        type: string
+        default: goby-tide
+    secrets:
+      CORALBRICKS_API_KEY:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+  # The job runs our published image, and the runner authenticates to ghcr.io with this token
+  # before pulling. Without `packages: read` that pull is denied even when the package is public —
+  # the runner's login sends a token that does not carry the scope.
+  packages: read
+
+# One sweep at a time per repository, and never cancelled: a sweep holds no state a later tick
+# needs, but a cancelled one can leave an issue half-filed (a created issue whose close-comment
+# never happened). `github.sha` is deliberately not in the group: on a schedule it is the branch
+# head, and two ticks over the same head must still queue rather than run together.
+concurrency:
+  group: goby-tide
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ${{ inputs.runs-on || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    container:
+      image: ${{ inputs.image || 'ghcr.io/coral-bricks-ai/goby-tide:latest' }}
+    env:
+      REPO: ${{ github.repository }}
+      # On a schedule this is the default branch head, which is exactly the tree to sweep.
+      SHA: ${{ github.sha }}
+      MODEL: ${{ inputs.model || 'coral/deepseek-v4.1-flash-fast' }}
+      FALLBACK_MODEL: ${{ inputs.fallback-model || 'coral/deepseek-v4.1-flash-fast' }}
+      TIDE_MAX_ITEMS: ${{ inputs.max-items }}
+      TIDE_MAX_TOOLS: ${{ inputs.max-tools }}
+      TIDE_ISSUES_PER_DAY: ${{ inputs.issues-per-day }}
+      TIDE_MAX_FILE_LINES: ${{ inputs.max-file-lines }}
+      TIDE_MAX_DIR_FILES: ${{ inputs.max-dir-files }}
+      TIDE_MAX_FILE_IMPORTS: ${{ inputs.max-file-imports }}
+      TIDE_LABEL: ${{ inputs.label || 'goby-tide' }}
+    steps:
+      # The image measures, plans and files; the step is one line because there is nothing for the
+      # runner to set up. Nothing from the swept tree is executed by the runner itself.
+      #
+      # Secrets are step-scoped, never job-scoped: a job-level env becomes part of the container's
+      # own environment, and these belong to the one process that needs them. The entrypoint then
+      # moves the token to a root-only file and gives each scan an empty environment, so neither
+      # the token nor the key reaches the agent's shell.
+      - name: Sweep
+        working-directory: /workspace
+        env:
+          CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash /opt/tide/entrypoint.sh

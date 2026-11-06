@@ -67,9 +67,19 @@ def test_a_catalog_can_be_given_explicitly(tmp_path):
 
 def test_a_catalog_can_come_from_the_environment(tmp_path, monkeypatch):
     path = write_catalog(tmp_path)
-    monkeypatch.setenv("CLEANERS_MODELS_JSON", str(path))
+    monkeypatch.delenv("CLEANERS_MODELS_JSON", raising=False)
+    monkeypatch.setenv("GOBY_MODELS_JSON", str(path))
     assert usage.catalog() == path
     assert usage.rate_for("coral/test-model-1") is not None
+
+
+def test_the_cleaners_variable_name_still_prices_a_run(tmp_path, monkeypatch):
+    """`CLEANERS_MODELS_JSON` is documented in `cleaners/README.md`, so a repository that sets
+    it must keep getting its price line after the module moved."""
+    path = write_catalog(tmp_path)
+    monkeypatch.delenv("GOBY_MODELS_JSON", raising=False)
+    monkeypatch.setenv("CLEANERS_MODELS_JSON", str(path))
+    assert usage.catalog() == path
 
 
 def test_without_a_catalog_the_price_is_unknown_not_zero(tmp_path, monkeypatch):

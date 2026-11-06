@@ -15,8 +15,15 @@ One issue per confirmed finding. Three gates, in order:
 3. **Nothing else.** There is no digest, no weekly bucket, and no judge: the cleaner already
    proved the defect with two runs, and `report_finding` refuses a claim without them.
 
-Everything that talks to GitHub is one function (`_http`), so the whole decision path is
-testable without a network, and `--out` writes the plan instead of posting.
+The decisions in this file are this product's own. Filing, labelling and reading the history
+are not: those live in `common/issues.py`, shared with `goby-tide`, so a fix to the dedupe read
+or the label convention reaches both products. This module reads its *own* label and nothing
+else — a cleaner finds defects in what a push touched, a tide finds smells on a schedule, so
+their issues never overlap and neither product's page budget depends on the other's history.
+
+Everything that talks to GitHub is one function (`_http`), re-exported from `common` so the
+whole decision path is testable without a network, and `--out` writes the plan instead of
+posting.
 """
 from __future__ import annotations
 
@@ -26,13 +33,33 @@ import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote, urlencode
 
-API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+
+# The shared filing machinery lives in `common/`. The repository (`cleaners/` beside `common/`)
+# and every image (`/opt/cleaners` beside `/opt/common`) put the two in the same shape, so this
+# resolves without knowing which one it is in; `GOBY_COMMON_DIR` exists for a layout that is
+# neither.
+def _common_dir() -> Path:
+    here = Path(__file__).resolve().parent
+    candidates = [here.parent / "common", Path("/opt/common")]
+    override = os.environ.get("GOBY_COMMON_DIR")
+    if override:
+        candidates.insert(0, Path(override))
+    for candidate in candidates:
+        if (candidate / "issues.py").is_file():
+            return candidate
+    raise RuntimeError(f"no common/issues.py; looked in {', '.join(map(str, candidates))}")
+
+
+sys.path.insert(0, str(_common_dir()))
+import issues as common  # noqa: E402 — after the path bootstrap above
+
+# Tests stub this module attribute, so it is kept here and passed into every shared call rather
+# than letting `common` use its own copy.
+_http = common._http
+
 LABEL = "goby-cleaners"
 # The marker identifies a filing by its fields, not by the name that wrote it: a repo can be
 # scanned by two producers at once, and a rename must not lose the dedupe history. Parsing only
@@ -43,20 +70,29 @@ LABEL = "goby-cleaners"
 # same defect on every scan. The component therefore runs to the *last* ` severity=` on the line:
 # greedy, because a directory name may itself end in ` severity=high -->`, and reading the first
 # delimiter would file a medium finding as exempt-from-the-cap high.
-MARKER = re.compile(
-    r"<!--\s+[A-Za-z0-9._-]+\s+fp=(?P<fp>[0-9a-f]{12})\s+component=(?P<component>.+)"
-    r"\s+severity=(?P<severity>\w+)\s*-->")
+# The producer token is fixed, not the active label: a label is a repository's own convention and
+# may contain characters the marker grammar rejects (`cleaners/goby` did exactly that), which made
+# the issue a run had just filed invisible to its own next dedupe. The writer stays beside the
+# grammar it was written for.
 DEFAULT_PRODUCER = "goby-cleaners"
+MARKER = common.Marker(
+    token=DEFAULT_PRODUCER,
+    pattern=(r"<!--\s+[A-Za-z0-9._-]+\s+fp=(?P<fp>[0-9a-f]{12})"
+             r"\s+component=(?P<component>.+)\s+severity=(?P<severity>\w+)\s*-->"),
+    # The producer token is fixed, not the active label: a label is a repository's own
+    # convention and may contain characters the marker grammar rejects (`cleaners/goby` did
+    # exactly that), which made the issue a run had just filed invisible to its own next
+    # dedupe. The writer stays beside the grammar it was written for.
+    template=("<!-- {token} fp={fp} component={component} severity={severity} -->"),
+)
 
 
-def issues_url(repo: str, label: str, page: int) -> str:
-    """The dedupe read's URL, with the label encoded.
-
-    Interpolating the label raw meant `team cleaners` produced a request line with a space in
-    it: the read failed, and nothing was filed under that label at all.
-    """
-    return f"/repos/{repo}/issues?" + urlencode(
-        {"labels": label, "state": "all", "per_page": 100, "page": page}, quote_via=quote)
+def product() -> common.Product:
+    """This run's identity: the label it files under, and the marker it reads back."""
+    return common.Product(
+        label=common.Label(LABEL, "0e8a16", "filed by goby-cleaners"),
+        marker=MARKER,
+    ).renamed(issue_label())
 
 
 def issue_label() -> str:
@@ -94,11 +130,7 @@ def fingerprint(component: str, finding: dict) -> str:
 
 
 def marker(component: str, finding: dict, fp: str, severity: str) -> str:
-    # The producer token is fixed, not the active label: a label is a repository's own convention
-    # and may contain characters the marker grammar rejects (`cleaners/goby` did exactly that),
-    # which made the issue a run had just filed invisible to its own next dedupe.
-    return (f"<!-- {DEFAULT_PRODUCER} fp={fp} component={component} "
-            f"severity={severity} -->")
+    return MARKER.render(token=MARKER.token, fp=fp, component=component, severity=severity)
 
 
 def parse_marker(body: str) -> re.Match | None:
@@ -108,7 +140,7 @@ def parse_marker(body: str) -> re.Match | None:
     markers in its repro output. Searching the whole body let one quoted marker suppress the real
     finding it named, and spend the daily budget that finding needed.
     """
-    return MARKER.match((body or "").lstrip())
+    return MARKER.parse(body)
 
 
 def _parse_ts(value: str) -> datetime | None:
@@ -245,103 +277,41 @@ def render_issue(component: str, item: dict, sha: str) -> tuple[str, str]:
 
 
 # --- GitHub ------------------------------------------------------------------------
+# Transport, the label convention, the history read and the filing loop are shared with
+# goby-tide (`common/issues.py`). What stays here is this product's rule for *which* findings
+# to file, which is exactly the part a second product does differently.
 
-
-def _http(method: str, path: str, token: str, payload=None):
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(
-        (path if path.startswith("http") else API + path),
-        data=data, method=method,
-        headers={"accept": "application/vnd.github+json", "authorization": f"Bearer {token}",
-                 "x-github-api-version": "2022-11-28", "content-type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, json.loads(r.read() or b"null")
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode(errors="replace")
-    except (urllib.error.URLError, TimeoutError) as e:
-        return 0, str(e)
-
-
-# Dedupe has to see every issue carrying the label, in *any* state: a closed "not a bug" is
-# the answer that must not be asked again, and GitHub lists newest first, so a truncated read
-# loses precisely the oldest verdicts. The bound is therefore on **pages walked**, not on
-# issues returned: a page count has no boundary to get wrong, where an issue count creates a
-# cliff — with a 2000-issue bound, 2099 issues read cleanly and 2100 refused, although both
-# lists are complete (#1298, and #1296 before it). 100 pages is 10 000 issues, a little over a
-# year at the shipped `issues_per_day` 25 — the cap bounds noise, not history, and a year of
-# files a human handed out is the window that decides whether a defect is being asked again.
-MAX_LABELLED_PAGES = 100
+MAX_LABELLED_PAGES = common.MAX_LABELLED_PAGES
 
 
 def list_labelled(repo: str, token: str, label: str | None = None,
                   max_pages: int = MAX_LABELLED_PAGES) -> list[dict] | None:
-    """Every issue carrying the label, newest first, in any state.
+    """Every issue carrying the cleaner's label, newest first, in any state.
 
-    None when that cannot be known — a failed read, or a list longer than `max_pages` is
-    willing to walk. An empty list and a failed read mean opposite things ("nothing filed
-    yet" versus "do not know what is filed"), and treating them alike re-files every open
-    finding; the same is true of a truncated read, which is why it fails rather than
-    returns a prefix. The caller decides what to do with None; this function refuses to
-    guess.
+    Closed is included on purpose: a defect the team closed as "not a defect" is the answer
+    that must not be asked again next week. `None` when the history cannot be read — a failed
+    read and an empty list mean opposite things, and the caller croaks on None.
     """
-    label = label or issue_label()
-    out: list[dict] = []
-    for page in range(1, max_pages + 1):
-        st, body = _http("GET", issues_url(repo, label, page), token)
-        if st != 200 or not isinstance(body, list):
-            print(f"error: list issues ({label}) -> HTTP {st}: {str(body)[:160]}",
-                  file=sys.stderr)
-            return None
-        if not body:
-            return out
-        out.extend(body)
-        if len(body) < 100:
-            return out
-    # Walked the bound with every page full, so one probe decides between "the history ends
-    # exactly here" and "it is longer than we will read". Without it the bound itself refuses
-    # a complete read: 10 000 issues fill 100 pages and page 101 is the one that proves it.
-    st, body = _http("GET", issues_url(repo, label, max_pages + 1), token)
-    if st == 200 and isinstance(body, list) and not body:
-        return out
-    print(f"error: more than {max_pages} pages of issues carry the {label} label; the dedupe "
-          f"read is incomplete, so nothing is filed. Raise MAX_LABELLED_PAGES or prune the "
-          f"closed ones.", file=sys.stderr)
-    return None
-
-
-def ensure_label(repo: str, token: str, name: str | None = None) -> None:
-    name = name or issue_label()
-    st, _ = _http("POST", f"/repos/{repo}/labels", token,
-                  {"name": name, "color": "0e8a16",
-                   "description": "filed by goby-cleaners"})
-    if st not in (201, 422):  # 422 = already exists
-        print(f"warning: label {name} -> HTTP {st}", file=sys.stderr)
+    return common.list_labelled(repo, token, label or issue_label(), state="all",
+                                max_pages=max_pages, http=_http)
 
 
 def full_name(repo: str) -> str:
-    return repo if "/" in repo else f"Coral-Bricks-AI/{repo}"
+    return common.full_name(repo)
 
 
 def file_findings(repo: str, token: str, sha: str, filed: list[dict]) -> tuple[list[str],
                                                                               list[str]]:
     """(urls, failures). A failure has to reach the caller: a task that exits 0 while a
-    reproduced finding was rejected by GitHub is a finding lost with nobody told."""
-    urls: list[str] = []
-    failures: list[str] = []
-    if not filed:
-        return urls, failures
-    ensure_label(repo, token)
-    for item in filed:
-        title, body = render_issue(str(item["finding"].get("component") or ""), item, sha)
-        st, resp = _http("POST", f"/repos/{repo}/issues", token,
-                         {"title": title, "body": body, "labels": [issue_label()]})
-        if st == 201 and isinstance(resp, dict):
-            urls.append(resp["html_url"])
-            continue
-        failures.append(f"create issue HTTP {st}: {str(resp)[:160]}")
-        print(f"error: {failures[-1]}", file=sys.stderr)
-    return urls, failures
+    reproduced finding was rejected by GitHub is a finding lost with nobody told.
+
+    Each issue carries two labels — `goby-cleaners` and the general `goby` — so a repository
+    can filter for one product or for everything goby filed.
+    """
+    return common.file_issues(
+        repo, token, product(), filed,
+        lambda item: render_issue(str(item["finding"].get("component") or ""), item, sha),
+        http=_http)
 
 
 def main(argv: list[str]) -> int:

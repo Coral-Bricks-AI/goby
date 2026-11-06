@@ -23,17 +23,19 @@ RUN apt-get update \
 # compared across weeks, and phase 0's numbers would stop meaning anything.
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.4.0
 
-COPY report_finding.ts /opt/cleaners/report_finding.ts
-COPY defaults.env /opt/cleaners/defaults.env
-COPY prompt.md /opt/cleaners/prompt.md
-COPY models/ /opt/cleaners/models/
-COPY cleaner.sh /opt/cleaners/cleaner.sh
-COPY entrypoint.sh /opt/cleaners/entrypoint.sh
-COPY post_findings.py /opt/cleaners/post_findings.py
-COPY model_check.py /opt/cleaners/model_check.py
-COPY plan.py /opt/cleaners/plan.py
-COPY summarize_run.py /opt/cleaners/summarize_run.py
-COPY usage.py /opt/cleaners/usage.py
+# The build context is the repository root, because `common/` is copied in beside `cleaners/`.
+COPY cleaners/report_finding.ts /opt/cleaners/report_finding.ts
+COPY cleaners/defaults.env /opt/cleaners/defaults.env
+COPY cleaners/prompt.md /opt/cleaners/prompt.md
+COPY common/models/ /opt/cleaners/models/
+COPY cleaners/cleaner.sh /opt/cleaners/cleaner.sh
+COPY cleaners/entrypoint.sh /opt/cleaners/entrypoint.sh
+COPY cleaners/post_findings.py /opt/cleaners/post_findings.py
+COPY cleaners/plan.py /opt/cleaners/plan.py
+# Shared with goby-tide: the filing machinery, the credential check, the run summary, the cost
+# line, and the provider model files. One copy in the repository, one copy in each image.
+COPY common/issues.py /opt/common/issues.py
+COPY common/model_check.py common/summarize_run.py common/usage.py /opt/common/
 RUN chmod +x /opt/cleaners/*.sh /opt/cleaners/*.py
 
 # The one provider file a scan needs is copied into the agent's own dir at run time, so the

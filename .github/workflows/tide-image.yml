@@ -1,0 +1,77 @@
+name: tide image
+
+# Publishes the image the scheduled sweep runs from, and prints the digest to pin.
+#
+# The digest, not the tag: `ghcr.io/coral-bricks-ai/goby-tide:latest` is a moving handle, and two
+# sweeps are only comparable across a month if the container that produced them is the same one.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tide/**"
+      - "common/**"
+      - "base/**"
+      - ".github/workflows/tide-image.yml"
+    tags: ["tide-v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: tide-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet pytest
+      - name: Harness tests
+        # `common/` is shared, so a change to the filing machinery has to pass here and in the
+        # cleaner's own job — the same code is in both images.
+        run: python -m pytest -q tide common
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # amd64 only: it is what `ubuntu-latest` is, and it is what a container job pulls. The base
+      # is built locally rather than pulled, so this never publishes an image from a stale base.
+      - name: Build goby-base
+        run: docker build --platform linux/amd64 -t base:local base
+
+      - name: Build the tide
+        run: docker build --platform linux/amd64 --build-arg BASE_IMAGE=base:local -f tide/Dockerfile -t tide:local .
+
+      - name: Publish, and print what to pin
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse --short=12 HEAD)"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/goby-tide"
+          docker tag tide:local "$image:$SHA"
+          docker push --quiet "$image:$SHA"
+          # `:latest` is the runtime now, so only the default branch may move it. A release tag or
+          # a dispatch against an older commit pushes its own sha and leaves `latest` alone.
+          if [[ "$GITHUB_REF" == "refs/heads/${GITHUB_DEFAULT_BRANCH:-main}" ]]; then
+            docker tag tide:local "$image:latest"
+            docker push --quiet "$image:latest"
+          fi
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$SHA")"
+          { echo "### goby-tide — pin this"; echo '```'; echo "$digest"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "goby-tide -> $digest"

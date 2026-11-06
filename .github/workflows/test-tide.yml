@@ -1,0 +1,67 @@
+name: test tide
+
+# The sweep's own tests. The image is built here too, so a broken Dockerfile fails on the PR that
+# broke it, not on a scheduled tick nobody is watching.
+
+on:
+  pull_request:
+    paths:
+      - "tide/**"
+      - "common/**"
+      - "base/**"
+      - ".github/workflows/test-tide.yml"
+      - ".github/workflows/tide-image.yml"
+      - ".github/workflows/tide-scheduled.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tide/**"
+      - "common/**"
+
+concurrency:
+  group: test-tide-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet pytest
+      - name: Harness tests
+        run: python -m pytest -q tide common
+
+  dockerfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build goby-base
+        run: docker build --platform linux/amd64 -t base:local base
+      - name: Build the tide
+        run: docker build --platform linux/amd64 --build-arg BASE_IMAGE=base:local -t goby-tide:test -f tide/Dockerfile .
+      # A build that succeeds but cannot start is the failure mode that only shows up on the first
+      # real tick. This proves the interpreter, the detector and the two shared modules are where
+      # the entrypoint expects them, and that the detector runs against a real checkout.
+      - name: The image can start and measure
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint bash goby-tide:test -lc '
+            pi --version && python3 --version && git --version
+            python3 /opt/common/model_check.py --help > /dev/null
+            git config --global user.email t@example.com
+            git config --global user.name t
+            cd /tmp && mkdir -p repo && cd repo && git init -q
+            printf "import os\n" > big.py && for i in $(seq 1 20); do echo "x = $i" >> big.py; done
+            git add -A && git commit -qm i
+            python3 /opt/tide/detect.py scan --repo-dir /tmp/repo --sha deadbeef \
+              --out /tmp/measured.jsonl --candidates /tmp/picked.jsonl \
+              --max-file-lines 10 --max-dir-files 100 --max-file-imports 100 > /tmp/plan.json
+            grep -q "big.py" /tmp/picked.jsonl
+          '

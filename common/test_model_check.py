@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import pathlib
 import subprocess
 import sys
 from pathlib import Path
@@ -110,8 +111,12 @@ def test_every_shipped_provider_is_one_the_shell_can_run():
         provider = path.stem
         (credential,) = mc.credential_vars(path) or {None}
         assert credential, f"{path.name} interpolates no credential"
-        for script in ("cleaner.sh", "entrypoint.sh"):
-            text = (HERE / script).read_text()
+        # The scripts that switch on the provider belong to the products, not to `common/`:
+        # the models files are shared, so every product must know every provider.
+        for script in (HERE.parent / "cleaners" / "cleaner.sh",
+                       HERE.parent / "cleaners" / "entrypoint.sh",
+                       HERE.parent / "tide" / "tide.sh"):
+            text = pathlib.Path(script).read_text()
             assert f"{provider})" in text, f"{script} does not know provider {provider}"
             assert credential in text, f"{script} never mentions {credential}"
 

@@ -1,0 +1,8 @@
+# Build contexts: `review/` and `tide/` are built from the repository root because both need
+# files outside their own directory (`src/` for the reviewer, `common/` for both products).
+# Nothing in the image comes from these, and shipping them means uploading a dependency tree and
+# a git database on every build.
+node_modules
+.git
+**/__pycache__
+**/.pytest_cache

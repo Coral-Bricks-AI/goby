@@ -103,6 +103,11 @@ Then `post_findings.py`, in order: fingerprint already on an open **or closed** 
 `issues_per_day` (a `high` finding is exempt) → create. The fingerprint is
 `component | file basename | normalised title`, so a moved directory keeps its history.
 
+Each issue carries two labels: `goby-cleaners` and the general `goby`. So `label:goby` lists
+everything goby filed in your repository — cleaners and [tide](../tide/README.md) together — and
+`label:goby-cleaners` lists only the post-merge ones. The dedupe read uses `goby-cleaners` alone:
+the tide files smells, not defects, so the two have nothing in common to dedupe against.
+
 ## Models
 
 `MODEL=provider/name` picks `models/<provider>.json`: `coral/…` (our gateway, the default),
@@ -111,9 +116,14 @@ again inside the scan when its call fails — a rate limit or an exhausted key m
 a clean run.
 
 A provider is usable when every **credential** its models file interpolates is set.
-`CLEANERS_*` and `PI_*` are config this harness supplies, not credentials — `models/coral.json`
-interpolates `CLEANERS_SESSION_ID` for spend attribution, and counting that as a credential
-refused every default scan. The agent's own shell sees only the one key its model needs.
+`GOBY_*`, `CLEANERS_*` and `PI_*` are config this harness supplies, not credentials —
+`common/models/coral.json` interpolates `GOBY_SESSION_ID` for spend attribution, and counting
+that as a credential refused every default scan. The agent's own shell sees only the one key its
+model needs.
+
+`common/models/` is shared with [tide](../tide/README.md), and so are `post_findings.py`'s filing
+machinery (`common/issues.py`), `model_check.py`, `summarize_run.py` and `usage.py`. One copy of
+each in the repository, one copy in each image.
 
 ## Giving the cleaner better tools
 
@@ -152,7 +162,7 @@ because a stale rate is a false measurement rather than a missing one.
 ```bash
 export GITHUB_TOKEN=...            # contents:read + issues:write
 export CORALBRICKS_API_KEY=...     # or ANTHROPIC_API_KEY / OPENAI_API_KEY
-docker build -t goby-cleaners cleaners
+docker build -t goby-cleaners -f cleaners/Dockerfile .
 docker run --rm -e GITHUB_TOKEN -e CORALBRICKS_API_KEY \
   -e REPO=<owner>/<repo> -e SHA=$(git rev-parse HEAD) \
   -e BEFORE=$(git rev-parse HEAD~1) -e MODEL=coral/deepseek-v4.1-flash-fast \
@@ -163,7 +173,7 @@ A single component, without the container, from a worktree you own:
 
 ```bash
 export PI_CODING_AGENT_DIR=/tmp/pi-cleaners-agent
-cp cleaners/models/coral.json "$PI_CODING_AGENT_DIR/models.json"
+cp common/models/coral.json "$PI_CODING_AGENT_DIR/models.json"
 export PI_EXTENSION=$PWD/cleaners/report_finding.ts
 # any budget; the image default lives in cleaners/defaults.env
 export CLEANERS_JSON=1 CLEANERS_MAX_TOOLS=100 CLEANERS_SANDBOX=/tmp/sandbox

@@ -1,5 +1,7 @@
 # goby-base: everything a goby image needs to run an agent safely, and nothing about what it is
-# for. `cleaners/` and `review/` sit on top and add their own toolchains and harness.
+# for. `review/` and `tide/` are built `FROM goby-base` and add their own harness; `cleaners/`
+# still carries its own copy of the apt and pi lines, which is drift, not a design — it is the one
+# product that has not moved onto this base yet.
 #
 # What it owns, and why it is shared rather than copied:
 #   - the model key proxy (base/keyproxy.mjs) — the only process holding the real key;

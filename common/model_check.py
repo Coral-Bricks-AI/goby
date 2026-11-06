@@ -9,10 +9,10 @@ line rather than after a task start, a checkout and a sandbox copy — and becau
 cannot call a model must never look like a scan that found nothing.
 
 A provider is usable when every variable its models file interpolates is set — **except the
-ones this harness supplies itself** (`CLEANERS_*`, `PI_*`). Those do not exist yet when the
-check runs, and they are not credentials: `models/coral.json` interpolates
-`CLEANERS_SESSION_ID` for spend attribution, and counting it as a credential refused every
-default scan.
+ones the harness supplies itself** (`GOBY_*`, `CLEANERS_*`, `TIDE_*`, `PI_*`). Those do not
+exist yet when the check runs, and they are not credentials: `common/models/coral.json`
+interpolates `GOBY_SESSION_ID` for spend attribution, and counting it as a credential refused
+every default scan.
 
 This lives in Python, not in the shell, because it decides whether the system does anything
 at all, and shell arithmetic on a JSON file cannot be tested.
@@ -30,8 +30,10 @@ from pathlib import Path
 # so the required fallback never ran and the scan failed after the clone instead of before it.
 VAR = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}|\$([A-Z_][A-Z0-9_]*)")
 # Names the harness sets for the scan itself. A models file may interpolate them; they are
-# config, not credentials.
-HARNESS_PREFIXES = ("CLEANERS_", "PI_")
+# config, not credentials. Every product's prefix is here because the models files under
+# `common/models/` are shared: the day one product's variable is interpolated by a file the
+# other product ships, a name missing from this tuple refuses that product's every scan.
+HARNESS_PREFIXES = ("GOBY_", "CLEANERS_", "TIDE_", "PI_")
 
 
 def interpolated(models_file: Path) -> set[str]:
@@ -72,7 +74,9 @@ def choose(models_dir: Path, model: str, fallback: str,
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--models-dir", type=Path, default=Path("/opt/cleaners/models"))
+    # No default: every product ships its own copy of `common/models/`, and a default path
+    # would quietly read another product's directory when one is deployed without the other.
+    ap.add_argument("--models-dir", type=Path, required=True)
     ap.add_argument("--model", required=True)
     ap.add_argument("--fallback", required=True)
     args = ap.parse_args(argv)

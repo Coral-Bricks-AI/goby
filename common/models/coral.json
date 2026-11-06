@@ -6,7 +6,7 @@
       "api": "openai-responses",
       "apiKey": "$CORALBRICKS_API_KEY",
       "headers": {
-        "x-session-id": "$CLEANERS_SESSION_ID"
+        "x-session-id": "$GOBY_SESSION_ID"
       },
       "models": [
         {
