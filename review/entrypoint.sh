@@ -41,11 +41,10 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 2
 fi
 
-# Cosmetic only (src/progress.ts): a "Goby is reviewing" note on the pull request, marked done on
-# every exit. Wall-clocked and `|| true`, so it can neither hang a review nor change how one ends.
+# Cosmetic only (src/progress.ts): a "Goby is reviewing" note on the pull request, started once a
+# review will actually run and marked done on every exit after that. Wall-clocked and `|| true`, so
+# it can neither hang a review nor change how one ends.
 goby_progress() { timeout 30 node /opt/goby/progress.js "$1" || true; }
-goby_progress start
-trap 'goby_progress stop' EXIT
 PROVIDER="${GOBY_PROVIDER:-coral}"
 MODEL="${GOBY_MODEL:-deepseek-v4.1-flash-fast}"
 MAX_DIFF_LINES="$GOBY_MAX_DIFF_LINES"
@@ -119,7 +118,7 @@ goby_key_to_file "$KEY"
 goby_token_to_file
 export GOBY_KEY_FILE GOBY_TOKEN_FILE
 goby_proxy_start "$UPSTREAM"
-# Replaces the trap above, so it keeps the progress cleanup; that one goes first as it cannot fail.
+# The progress stop is a no-op until `goby_progress start` below; it goes first as it cannot fail.
 trap 'goby_progress stop; goby_proxy_stop' EXIT
 
 # Prepare talks to GitHub, so it runs before the drop and while the token is in this process.
@@ -135,6 +134,10 @@ if grep -q '"reuse":true' "$OUT/prepare.json"; then
     node /opt/goby/reviewRun.js finish
   exit $?
 fi
+
+# Only here, past the reuse exit: with the round cap reached a push is not reviewed, and a note
+# saying it is would be wrong.
+goby_progress start
 
 # The reference tree is what findings quote; the sandbox is what the reviewer may change.
 cp -a "$REPO_DIR/." "$SANDBOX/"
