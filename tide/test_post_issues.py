@@ -384,3 +384,19 @@ def test_a_single_line_block_cut_mid_line_counts_characters_not_lines():
     assert "…summary truncated: showing 4,000 of" in rendered
     assert "characters" in rendered
     assert "1 of 1 lines" not in rendered
+
+
+def test_a_check_that_did_not_run_cannot_close_its_issues():
+    """`todo_age` without history measures nothing. Closing its open issues would put "no longer
+    over its threshold" on a question this sweep never asked."""
+    stale = issue(candidate("src/rot.ts", "todo_age")["fingerprint"], check="todo_age",
+                  path="src/rot.ts")
+    measured = {"max_file_lines", "max_todos"}
+    assert pi.gone([], [stale], measured) == []
+    assert pi.gone([], [stale], measured | {"todo_age"}) == [stale]
+
+
+def test_an_issue_with_no_readable_check_is_left_alone():
+    """A body whose marker cannot be parsed says nothing about which check filed it."""
+    unparsable = {"number": 9, "title": "x", "body": "no marker here"}
+    assert pi.gone([], [unparsable], {"max_file_lines"}) == []

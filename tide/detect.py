@@ -283,9 +283,10 @@ def measure(files: list[str], read: Callable[[str], str | None], thresholds: Thr
         if lines > limit:
             found.append({"check": "max_file_lines", "path": path, "metric": lines,
                           "threshold": limit, "unit": "lines",
+                          # The kind is a fact about the path, not about the two limits
+                          # disagreeing: a consumer may pin them to the same number.
                           "facts": {"lines": lines,
-                                    "kind": "test" if limit != thresholds.max_file_lines
-                                            else "source"}})
+                                    "kind": "test" if is_test_path(path) else "source"}})
         imports = sum(1 for line in text.splitlines() if IMPORT_LINE.match(line))
         if imports > thresholds.max_file_imports:
             found.append({"check": "max_file_imports", "path": path, "metric": imports,
@@ -313,6 +314,11 @@ def measure(files: list[str], read: Callable[[str], str | None], thresholds: Thr
     return sorted(found, key=lambda c: (c["check"], c["path"]))
 
 
+# `<sha> <orig> <final>` with the hunk count on the first line only. Matching just the four-field
+# form silently dropped every marker that was not the first line of its hunk.
+BLAME_HEADER = re.compile(r"^[0-9a-f]{40} \d+ (?P<final>\d+)(?: \d+)?$")
+
+
 def has_history(repo_dir: Path) -> bool:
     """Whether the clone carries more than the commit being swept.
 
@@ -334,9 +340,12 @@ def blame_ages(repo_dir: Path, path: str, lines: list[int],
                now: int | None = None) -> int | None:
     """The age in days of the oldest of `lines`, from `git blame`; None when git cannot say.
 
-    Porcelain output has one header per line (`<sha> <orig> <final> [<count>]`) and then the
-    commit's fields, including `committer-time`. One blame call per file with markers, because the
-    alternative — one call per line — is the same work with more process starts.
+    Porcelain output has a header per line, `<sha> <orig> <final> <count>` for the first line of a
+    hunk and `<sha> <orig> <final>` for the rest of it, and repeats the commit's fields — including
+    `committer-time` — only when the commit changes. So the header is matched with the count
+    optional and the timestamp carries over: parsing only the four-field form recorded the first
+    line of every hunk and lost every marker below it. One blame call per file with markers,
+    because the alternative — one call per line — is the same work with more process starts.
 
     A shallow clone stops at its boundary commit: every line older than the fetched depth is
     attributed to it, so the age is *capped* at the window rather than wrong in a direction that
@@ -348,7 +357,9 @@ def blame_ages(repo_dir: Path, path: str, lines: list[int],
     try:
         done = subprocess.run(
             ["git", "-C", str(repo_dir), "blame", "--line-porcelain", "--", path],
-            capture_output=True, text=True)
+            # `read_text` decodes the tree with `errors="replace"`; a legacy-encoded file must not
+            # become the one path that raises out of a sweep that had already read it fine.
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
     except OSError:
         return None
     if done.returncode != 0:
@@ -356,9 +367,9 @@ def blame_ages(repo_dir: Path, path: str, lines: list[int],
     wanted, ages = set(lines), {}
     current, stamp = None, None
     for line in done.stdout.splitlines():
-        head = line.split(" ", 3)
-        if len(head) == 4 and len(head[0]) == 40 and head[2].isdigit():
-            current, stamp = int(head[2]), stamp
+        header = BLAME_HEADER.match(line)
+        if header:
+            current = int(header.group("final"))
         elif line.startswith("committer-time "):
             stamp = int(line.split(" ", 1)[1])
         elif line.startswith("\t") and current in wanted and stamp is not None:
@@ -439,12 +450,17 @@ def scan(repo_dir: Path, sha: str, thresholds: Thresholds, config: Config,
         candidate["fingerprint"] = fingerprint(candidate["check"], candidate["path"])
     firing, suppressed = apply_known(everything, config)
     picked = rotate(firing, max_items, sha)
+    # What this sweep *looked at*, which is not the same as what fired: a check that found nothing
+    # was still evaluated, and a check that could not run must not let its open issues be closed.
+    evaluated = [check for check in HUMAN_NAME
+                 if not (check == "todo_age" and measure_age is None)]
     plan = {
         "sha": sha,
         "files": len(files),
         "candidates": len(everything),
         "firing": len(firing),
         "history": history,
+        "checks": sorted(evaluated),
         "suppressed": suppressed,
         "stale_known": stale_known(everything, config),
         "picked": picked,

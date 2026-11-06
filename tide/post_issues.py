@@ -128,15 +128,27 @@ def decide(proposals: list[dict], open_issues: list[dict], *,
     return filed, skipped
 
 
-def gone(candidates: list[dict], open_issues: list[dict]) -> list[dict]:
+def gone(candidates: list[dict], open_issues: list[dict],
+         measured: set[str] | None = None) -> list[dict]:
     """Open issues whose smell this sweep no longer measures.
 
     `candidates` is every measurement of the repository, not the picked subset: a smell that is
     merely over this sweep's model-call budget is still there, and closing it would be a lie.
+
+    `measured` is the checks this sweep actually ran. A check that could not run — `todo_age`
+    without history — says nothing about the issues it filed before, and closing them would
+    report "no longer over its threshold" about a question nobody asked.
     """
     current = {c["fingerprint"] for c in candidates}
-    return [issue for fp, issue in common.marker_index(open_issues, MARKER).items()
-            if fp not in current]
+    out = []
+    for fp, issue in common.marker_index(open_issues, MARKER).items():
+        if fp in current:
+            continue
+        check = MARKER.parse(issue.get("body") or "")
+        if measured is not None and check and check.group("check") not in measured:
+            continue
+        out.append(issue)
+    return out
 
 
 def _clip(text: str, limit: int, what: str, *, follows_from_plan: bool = False) -> str:
@@ -275,6 +287,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--issues-per-day", type=int, required=True)
     ap.add_argument("--close-gone", action="store_true",
                     help="close open issues whose smell this sweep no longer measures")
+    ap.add_argument("--measured-checks", default=None,
+                    help="comma list of the checks this sweep ran; an issue for any other check "
+                         "is left open, because nothing was measured about it")
     ap.add_argument("--out", type=Path, default=None, help="write the plan instead of posting")
     args = ap.parse_args(argv)
 
@@ -300,8 +315,10 @@ def main(argv: list[str]) -> int:
             return 1
         opened = listed
 
+    measured = ({c.strip() for c in args.measured_checks.split(",") if c.strip()}
+                if args.measured_checks else None)
     to_file, skipped = decide(proposals, opened, issues_per_day=args.issues_per_day)
-    to_close = gone(candidates, opened) if args.close_gone else []
+    to_close = gone(candidates, opened, measured) if args.close_gone else []
 
     plan = {
         "sha": args.sha,

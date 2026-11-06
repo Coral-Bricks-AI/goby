@@ -400,3 +400,66 @@ def test_the_test_conventions_cover_the_usual_layouts():
         assert detect.is_test_path(path), path
     for path in ("src/a.py", "src/latest.ts", "pkg/testing.py"):
         assert not detect.is_test_path(path), path
+
+
+def test_a_marker_below_the_first_line_of_a_hunk_is_still_blamed(tmp_path):
+    """`git blame --line-porcelain` prints the hunk count on the first line only. Parsing just that
+    form recorded the first line of every hunk and lost every marker below it, so the age of a file
+    whose TODO sits under a comment block was reported from the wrong line — or not at all."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    old = "2024-01-01T00:00:00+0000"
+    # One commit, three consecutive lines: line 1 carries the hunk count, lines 2-3 do not.
+    (repo / "a.py").write_text("x = 1\n# TODO: second line of the hunk\ny = 2\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "only"], cwd=repo, check=True,
+                   env={"GIT_AUTHOR_DATE": old, "GIT_COMMITTER_DATE": old,
+                        "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(tmp_path)})
+    age = detect.blame_ages(repo, "a.py", [2], now=1_800_000_000)
+    assert age is not None and age > 700, "line 2 is in the same hunk as line 1, not the head"
+
+
+def test_a_file_the_reader_could_decode_does_not_crash_the_blame(tmp_path):
+    """`read_text` decodes with `errors="replace"`, so a legacy-encoded file is measurable right up
+    until blame decodes it strictly and raises out of the whole sweep."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "latin.py").write_bytes(b"# TODO: caf\xe9\nx = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "only"], cwd=repo, check=True)
+    detect.blame_ages(repo, "latin.py", [1])  # must not raise
+
+
+def test_the_plan_says_which_checks_ran_not_which_fired(tmp_path):
+    """A check that found nothing was still evaluated, so the open issues it filed earlier may be
+    closed. A check that could not run says nothing about anything."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    (repo / "a.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "only"], cwd=repo, check=True)
+    plan, _ = detect.scan(repo, "deadbeef", detect.Thresholds(1000, 100, 100), EMPTY, 3)
+    assert "max_todos" in plan["checks"] and "max_file_lines" in plan["checks"]
+    assert "todo_age" not in plan["checks"], "one commit, so the age question was not asked"
+
+    plan, _ = detect.scan(HERE.parent, "deadbeef", detect.Thresholds(1000, 100, 100), EMPTY, 3,
+                          age_of=lambda path, lines: None)
+    assert "todo_age" in plan["checks"], "an injected age means the check ran"
+
+
+def test_an_equal_pair_of_limits_still_calls_a_test_a_test():
+    """`facts.kind` came from the two limits differing, so a repository that pinned them equal had
+    its test files reported as source."""
+    thresholds = detect.Thresholds(20, 100, 100, max_test_file_lines=20)
+    (candidate,) = detect.measure(["tests/test_a.py"], reader({"tests/test_a.py": "x\n" * 40}),
+                                  thresholds, EMPTY)
+    assert candidate["facts"]["kind"] == "test"

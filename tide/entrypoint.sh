@@ -347,9 +347,15 @@ CLOSE=()
 if [[ $DETECT_STATUS -eq 0 ]]; then CLOSE=(--close-gone); fi
 log "file repo=$REPO sha=$HEAD_SHA issues_per_day=$TIDE_ISSUES_PER_DAY close_gone=${#CLOSE[@]}"
 set +e
+# The checks this sweep evaluated, not the ones that fired: `post_issues` closes an open issue only
+# when the check behind it actually ran, so a sweep without history cannot close the `todo_age`
+# issues it is unable to re-measure.
+MEASURED="$(python3 -c 'import json,sys; print(",".join(json.load(open(sys.argv[1]))["checks"]))' \
+  "$OUT/plan.json")"
+log "checks measured: $MEASURED"
 python3 /opt/tide/post_issues.py \
   --proposals "$OUT/proposals.jsonl" --candidates "$OUT/candidates.jsonl" \
-  --repo "$REPO" --sha "$HEAD_SHA" \
+  --repo "$REPO" --sha "$HEAD_SHA" --measured-checks "$MEASURED" \
   --issues-per-day "$TIDE_ISSUES_PER_DAY" "${CLOSE[@]}" | tee "$OUT/filed.json"
 FILE_STATUS=${PIPESTATUS[0]}
 set -e
