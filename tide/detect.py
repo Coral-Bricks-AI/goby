@@ -67,6 +67,10 @@ IMPORT_LINE = re.compile(
 MAX_BYTES = 2_000_000
 SAMPLE_BYTES = 8192
 
+# The keys `.goby/tide.json` may carry. `_comment` is allowed because a committed config wants to
+# explain itself and the sweep should not be the thing that forbids it.
+KNOWN_KEYS = ("_comment", "ignore", "known")
+
 HUMAN_NAME = {
     "max_file_lines": "one file, too many lines",
     "max_dir_files": "one directory, too many files",
@@ -116,6 +120,14 @@ def load_config(path: Path) -> Config:
         raise SystemExit(f"error: cannot read {path}: {e}")
     if not isinstance(raw, dict):
         raise SystemExit(f"error: {path} must be a JSON object")
+    # A key this schema does not know is a typo or a bare entry pasted as the whole file, and both
+    # mean the decision its author recorded has no effect. Silently treating that as an empty
+    # config is how a smell someone decided to live with is filed again every sweep — the failure
+    # the file exists to prevent, with the reader believing they had already prevented it.
+    unknown = sorted(set(raw) - set(KNOWN_KEYS))
+    if unknown:
+        raise SystemExit(f"error: {path}: unknown key(s) {', '.join(unknown)}; this file takes "
+                         f"{', '.join(sorted(KNOWN_KEYS))}")
     ignore = raw.get("ignore") or []
     known_raw = raw.get("known") or []
     if not isinstance(ignore, list) or not all(isinstance(i, str) for i in ignore):

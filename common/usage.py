@@ -103,15 +103,28 @@ def main(argv: list[str]) -> int:
 
     if not events.is_file():
         usage = None  # unknown, not zero
+    # The subject is whatever the run called itself: a cleaner scans a `component`, a tide one
+    # measured `path`. Reading only `component` printed "`?`" on every tide line, which is the one
+    # thing a cost line must not do — hide which work it paid for.
+    subject = run.get("component") or run.get("path")
+    # `findings` is the cleaner's word. A tide produces `proposals`, and counting only findings
+    # reported "0 findings" for a run that filed one, so the count follows the record files that
+    # are actually there.
+    records, label = 0, "findings"
+    for name, word in (("findings.jsonl", "findings"), ("proposals.jsonl", "proposals")):
+        path = args.out_dir / name
+        if path.is_file():
+            records += sum(1 for _ in open(path))
+            label = word
     summary = {
-        "component": run.get("component"),
+        "component": subject,
         "model": model,
         "turns": turns,
         "tool_calls": len(tool_calls),
         "tool_histogram": {n: tool_calls.count(n) for n in sorted(set(tool_calls))},
         "tokens": usage,
-        "findings": sum(1 for _ in open(args.out_dir / "findings.jsonl"))
-        if (args.out_dir / "findings.jsonl").is_file() else 0,
+        "findings": records,
+        "records_label": label,
         "wall_s": run.get("wall_s"),
     }
 
@@ -175,7 +188,7 @@ def markdown(summary: dict) -> str:
     parts.append(f"{summary.get('tool_calls', 0)} tool calls")
     if summary.get("wall_s") is not None:
         parts.append(f"{summary['wall_s']} s")
-    parts.append(f"{summary.get('findings', 0)} findings")
+    parts.append(f"{summary.get('findings', 0)} {summary.get('records_label') or 'findings'}")
     parts.append(money(summary.get("billed_usd")))
     return "- " + " · ".join(parts)
 

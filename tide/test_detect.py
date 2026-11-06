@@ -135,6 +135,22 @@ def test_a_known_entry_needs_a_reason(tmp_path):
             "known": [{"check": "max_file_lines", "path": "a.py"}]}))
 
 
+def test_a_key_the_sweep_does_not_know_stops_it_rather_than_being_ignored(tmp_path):
+    """The bare `{check, path, reason}` object that #100's footer used to print, and a typo'd
+    `"Know"`, both used to load as an empty config: the reader believed they had recorded a
+    decision and the smell was filed every sweep anyway."""
+    for body in ({"check": "max_file_lines", "path": "a.py", "reason": "r"},
+                 {"Know": [{"check": "max_file_lines", "path": "a.py", "reason": "r"}]}):
+        with pytest.raises(SystemExit):
+            detect.load_config(config_file(tmp_path, body))
+
+
+def test_a_comment_is_allowed_beside_the_keys_it_explains(tmp_path):
+    config = detect.load_config(config_file(tmp_path, {
+        "_comment": ["why this file exists"], "known": []}))
+    assert config.known == ()
+
+
 def test_a_known_entry_stops_the_smell_being_filed(tmp_path):
     config = detect.load_config(config_file(tmp_path, {"known": [
         {"check": "max_file_lines", "path": "src/a.py", "reason": "generated table"}]}))

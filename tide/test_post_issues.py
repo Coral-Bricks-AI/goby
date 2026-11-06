@@ -328,3 +328,18 @@ def test_the_footer_says_that_closing_alone_does_not_stop_it_coming_back():
     assert "`.goby/tide.json`" in footer
     assert '"check": "max_file_lines", "path": "src/cli/entry.ts"' in footer
     assert "`known` entry is measured and then skipped" in footer
+
+
+def test_the_known_snippet_can_be_placed_in_the_file_as_printed():
+    """The footer is the only lever a reader has to stop a smell being filed, and it printed a bare
+    `{check,path,reason}` object. `.goby/tide.json` reads `known`, so a reader who followed it
+    verbatim created a file the sweep could not see and the smell came back — the outcome the
+    paragraph above it promises to prevent (#100)."""
+    _, body = pi.render_issue(proposal(), "a" * 40)
+    footer = body.split("**What must not change**")[1]
+    json_block = footer.split("```json", 1)[1].split("```", 1)[0]
+    document = json.loads(json_block)
+    assert list(document) == ["known"], "a pasteable document, not a bare entry"
+    (entry,) = document["known"]
+    assert entry["check"] == "max_file_lines" and entry["path"] == "src/cli/entry.ts"
+    assert entry["reason"].strip()
