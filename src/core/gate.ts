@@ -4,6 +4,18 @@ import {post_gate_status} from '../platforms/publish.ts';
 import {diffDigest, evaluateGate, parseReceipt, type GateResult, type ReviewReceipt} from './verdict.ts';
 
 export class HeadChanged extends Error {}
+
+/**
+ * Whether a throw out of `finish` leaves statuses that have to be resolved.
+ *
+ * `prepare` posts `pending`, so a failure after it must end in `error` on both statuses — a
+ * pending check with no review behind it blocks the pull request with nothing to read
+ * (review/INVARIANTS.md 1). A head that moved is the one exception: the run that superseded this
+ * one owns the statuses, and posting `error` here would race a newer review.
+ */
+export function finish_failure_should_report(error: unknown): boolean {
+  return !(error instanceof HeadChanged);
+}
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid GitHub review response');
   return value as Record<string, unknown>;
