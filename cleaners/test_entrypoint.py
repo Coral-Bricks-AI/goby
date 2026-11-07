@@ -64,6 +64,41 @@ def test_the_key_and_the_proxy_are_the_base_images_and_not_a_second_copy():
     assert "goby_token_to_file" in text and "/root/.cleaners-token" not in text
 
 
+def test_an_explicitly_empty_scheme_survives_the_proxy_default(tmp_path):
+    """Anthropic's `x-api-key` carries no scheme. `scheme="${3:-Bearer }"` replaces an empty-but-
+    passed argument with the default, so the proxy sent `x-api-key: Bearer <key>` and the provider
+    rejected it — a high-severity regression against an Anthropic-only consumer (#128/#129).
+
+    Runs the real `goby_proxy_start` with a `node` stand-in, so this is the shell's behaviour and
+    not a grep of it."""
+    import subprocess
+
+    lib = HERE.parent / "base" / "lib.sh"
+    record = tmp_path / "scheme"
+    runner = tmp_path / "run.sh"
+    runner.write_text(f"""set -uo pipefail
+# The stand-in records what the proxy *would* have been given. Both calls (the background proxy
+# and the readiness poll) write it; the last one wins and they agree.
+node() {{
+  # Only the proxy invocation carries the scheme; the readiness poll does not.
+  [[ -n "${{GOBY_KEY_SCHEME+x}}" ]] && printf 'scheme=[%s]' "$GOBY_KEY_SCHEME" > "{record}"
+  return 0
+}}
+export -f node 2>/dev/null || true
+source "{lib}"
+GOBY_PROXY_PID="{tmp_path}/pid"
+GOBY_PROXY_PORT=18099
+GOBY_HOME="{HERE.parent}/base"
+goby_proxy_start "https://example.invalid" "$1" "$2"
+""")
+    for header, scheme, want in (("x-api-key", "", "scheme=[]"),
+                                 ("authorization", "Bearer ", "scheme=[Bearer ]")):
+        done = subprocess.run(["bash", str(runner), header, scheme],
+                              capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr
+        assert record.read_text() == want, (header, scheme, record.read_text())
+
+
 def test_the_provider_header_reaches_the_proxy():
     """Anthropic authenticates with `x-api-key` and no scheme. The proxy rewrites only the header
     it is told to, so a missing override sends the provider the agent's dummy."""
