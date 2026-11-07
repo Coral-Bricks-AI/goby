@@ -17,9 +17,9 @@ either file: `/proc/PID/environ` for a different uid needs ptrace access, and bo
 
 The model key cannot be hidden in another uid the way the token is, because the agent's own
 process is the one calling the model — true of the reviewer and of a cleaner alike. So it never
-sees the key either: `models.json` points at
-`http://127.0.0.1:8787/v1` with a dummy credential, and the loopback proxy replaces the
-authorization header with the real key before forwarding upstream. The agent holds a string that
+sees the key either: `models.json` points at `http://127.0.0.1:8787/v1` with a dummy credential,
+and the loopback proxy replaces the provider's key header (`authorization`, or `x-api-key` for
+Anthropic) with the real key before forwarding upstream. The agent holds a string that
 is worthless outside the container.
 
 What that means in practice: code from the pull request can make model calls (it was going to

@@ -11,6 +11,7 @@ const proxyScript = resolve(import.meta.dir, '../base/keyproxy.mjs');
 async function withProxy(
   handler: Parameters<typeof createServer>[1],
   run: (url: string, port: number) => Promise<void>,
+  extraEnv: Record<string, string> = {},
 ) {
   const upstream = createServer(handler);
   await new Promise<void>(done => upstream.listen(0, '127.0.0.1', done));
@@ -22,7 +23,7 @@ async function withProxy(
   const port = 18000 + Math.floor(Math.random() * 1000);
   const child = spawn('node', [proxyScript], {
     env: { ...process.env, GOBY_PROXY_PORT: String(port), GOBY_KEY_FILE: keyFile,
-      GOBY_UPSTREAM: `http://127.0.0.1:${upstreamPort}` },
+      GOBY_UPSTREAM: `http://127.0.0.1:${upstreamPort}`, ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {
@@ -127,4 +128,24 @@ test('an https upstream is spoken to with the https module', async () => {
     child.kill();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('a provider that authenticates with another header gets the real key there', async () => {
+  // Anthropic reads `x-api-key` with no scheme. Rewriting only `authorization` would forward the
+  // agent's dummy to the upstream and put the real key where nothing looks for it.
+  let seen: Record<string, unknown> = {};
+  await withProxy((req, res) => {
+    seen = { apiKey: req.headers['x-api-key'], auth: req.headers.authorization };
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"ok":true}');
+  }, async url => {
+    const res = await fetch(`${url}/v1/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': 'dummy-proxy-key', 'content-type': 'application/json' },
+      body: '{"model":"x"}',
+    });
+    expect(res.status).toBe(200);
+    expect(seen.apiKey).toBe('REAL-SECRET-KEY');
+    expect(seen.auth).toBeUndefined();
+  }, { GOBY_KEY_HEADER: 'x-api-key', GOBY_KEY_SCHEME: '' });
 });

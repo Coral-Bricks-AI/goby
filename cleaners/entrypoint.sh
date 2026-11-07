@@ -66,7 +66,7 @@ log "model $MODEL"
 # which provider is up rather than restarting per scan.
 PROXY_PROVIDER=""
 ensure_proxy() {
-  local provider="$1" key upstream
+  local provider="$1" key upstream header="authorization" scheme="Bearer "
   if [[ "$PROXY_PROVIDER" == "$provider" ]]; then return 0; fi
   goby_proxy_stop
   case "$provider" in
@@ -74,14 +74,17 @@ ensure_proxy() {
     # whose API lives under a prefix (deepinfra's `/v1/openai`) forwards the same path the
     # unsanitized file names. The proxy prepends `upstream.pathname` to the request path.
     coral)     key="${CORALBRICKS_API_KEY:-}"; upstream="https://inference.coralbricks.ai" ;;
-    anthropic) key="${ANTHROPIC_API_KEY:-}";   upstream="https://api.anthropic.com" ;;
+    # Anthropic authenticates with `x-api-key` and no scheme. A proxy that only rewrites
+    # `authorization` would forward the agent's dummy and add the real key where nothing reads it.
+    anthropic) key="${ANTHROPIC_API_KEY:-}";   upstream="https://api.anthropic.com"
+               header="x-api-key"; scheme="" ;;
     openai)    key="${OPENAI_API_KEY:-}";      upstream="https://api.openai.com" ;;
     deepinfra) key="${DEEPINFRA_API_KEY:-}";   upstream="https://api.deepinfra.com" ;;
     *) log "error: no upstream known for provider $provider"; return 2 ;;
   esac
   [[ -n "$key" ]] || { log "error: no key for provider $provider"; return 2; }
   goby_key_to_file "$key" || return 2
-  goby_proxy_start "$upstream" || return 2
+  goby_proxy_start "$upstream" "$header" "$scheme" || return 2
   PROXY_PROVIDER="$provider"
 }
 trap goby_proxy_stop EXIT

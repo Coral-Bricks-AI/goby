@@ -64,6 +64,15 @@ def test_the_key_and_the_proxy_are_the_base_images_and_not_a_second_copy():
     assert "goby_token_to_file" in text and "/root/.cleaners-token" not in text
 
 
+def test_the_provider_header_reaches_the_proxy():
+    """Anthropic authenticates with `x-api-key` and no scheme. The proxy rewrites only the header
+    it is told to, so a missing override sends the provider the agent's dummy."""
+    text = entrypoint()
+    block = text[text.index("ensure_proxy() {"):text.index("trap goby_proxy_stop EXIT")]
+    assert 'header="x-api-key"; scheme=""' in block
+    assert 'goby_proxy_start "$upstream" "$header" "$scheme"' in block
+
+
 def test_a_retry_on_another_provider_restarts_the_proxy():
     """The proxy reads its upstream once at startup, and FALLBACK_MODEL may name a different
     provider. Without a restart the retry calls the first provider's upstream and reads as a
