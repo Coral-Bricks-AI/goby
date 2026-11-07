@@ -15,8 +15,9 @@ The reviewer runs as uid 10001 with an empty environment (`runuser … env -i`).
 either file: `/proc/PID/environ` for a different uid needs ptrace access, and both files are
 `0600` root.
 
-The model key cannot be hidden in another uid the way the token is, because the reviewing process
-is the one calling the model. So it never sees the key either: `models.json` points at
+The model key cannot be hidden in another uid the way the token is, because the agent's own
+process is the one calling the model — true of the reviewer and of a cleaner alike. So it never
+sees the key either: `models.json` points at
 `http://127.0.0.1:8787/v1` with a dummy credential, and the loopback proxy replaces the
 authorization header with the real key before forwarding upstream. The agent holds a string that
 is worthless outside the container.

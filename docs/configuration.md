@@ -37,8 +37,9 @@ own decision and cannot be an input (`on.schedule` takes none).
 | `GOBY_MODEL` | model name |
 | `CORALBRICKS_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | the key for that provider |
 
-The key never reaches the reviewer. The entrypoint writes it to a root-only file, the proxy reads
-it, and the agent's `models.json` holds a dummy value and a loopback base URL. One provider per run:
+The key never reaches the agent. The entrypoint writes it to a root-only file, the proxy reads it,
+and the agent's `models.json` holds a dummy value and a loopback base URL. The cleaners use the
+same arrangement (`base/lib.sh`). One provider per run:
 the proxy has one upstream.
 
 ## Bounds

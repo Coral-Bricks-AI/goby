@@ -12,11 +12,14 @@
 # push payload could not name its predecessor, the diff is unknown and every component is
 # scanned (capped by MAX_COMPONENTS) — "we do not know what changed" is not "nothing did".
 #
-# Runs as root; each scan runs as the unprivileged `cleaner` user with an empty environment,
+# Runs as root; each scan runs as the unprivileged `agent` user with an empty environment,
 # so neither the token nor the Coral key is reachable from the agent: not in its env, not in
-# a shell it spawns, and not readable from this process's /proc entry. A non-zero exit is
-# visible as a failed task, and nothing retries it: the next push is the retry.
+# a shell it spawns, and not readable from this process's /proc entry. The key is not in the
+# agent's process either — it gets a dummy and a loopback proxy, like the reviewer. A non-zero
+# exit is visible as a failed task, and nothing retries it: the next push is the retry.
 set -euo pipefail
+# shellcheck source=/dev/null
+source /opt/goby/lib.sh
 # shellcheck source=/dev/null
 source /opt/cleaners/defaults.env
 
@@ -31,13 +34,22 @@ REPO_DIR="$WORK/repo"
 SANDBOX="$WORK/sandbox"
 OUT="$WORK/out"
 
-log() { printf '%s goby-cleaners %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+# The log lines stay byte-identical to what this script wrote before it moved onto the base:
+# "timestamp goby-cleaners message" is what a consumer greps for. `goby_log` reads the name, and
+# shellcheck cannot see across the sourced file.
+# shellcheck disable=SC2034
+export GOBY_LOG_NAME=goby-cleaners
+log() { goby_log "$*"; }
 count_lines() { if [[ -f "$1" ]]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
 
 # A provider is usable when every *credential* its models file interpolates is set. The
 # check lives in model_check.py: it excludes the variables this harness supplies itself
 # (CLEANERS_SESSION_ID is config, not a credential), and it is the one gate that decides
 # whether the system does anything at all, so it is tested rather than written in shell.
+#
+# This directory is the *root* side of the credentials and stays that way: it names the real
+# upstream each provider needs. The agent does not get these files — it gets
+# `/opt/goby/models/models.json`, which points at the proxy on loopback.
 MODELS_DIR=/opt/cleaners/models
 if ! MODEL="$(python3 /opt/common/model_check.py --models-dir "$MODELS_DIR" \
       --model "$MODEL" --fallback "$FALLBACK_MODEL")"; then
@@ -45,6 +57,34 @@ if ! MODEL="$(python3 /opt/common/model_check.py --models-dir "$MODELS_DIR" \
   exit 2
 fi
 log "model $MODEL"
+
+# --- the key, and the proxy that holds it ----------------------------------------------
+# The agent calls the model, so it cannot be denied one — but it can be denied the *key*. Root
+# writes the selected provider's key to a root-only file that the proxy reads, and the agent's
+# models file carries a dummy. A retry may land on a different provider, and the proxy reads its
+# upstream once at startup, so switching provider means restarting it; `ensure_proxy` remembers
+# which provider is up rather than restarting per scan.
+PROXY_PROVIDER=""
+ensure_proxy() {
+  local provider="$1" key upstream
+  if [[ "$PROXY_PROVIDER" == "$provider" ]]; then return 0; fi
+  goby_proxy_stop
+  case "$provider" in
+    # The upstream is the host only: the path comes from the agent's models file, so a provider
+    # whose API lives under a prefix (deepinfra's `/v1/openai`) forwards the same path the
+    # unsanitized file names. The proxy prepends `upstream.pathname` to the request path.
+    coral)     key="${CORALBRICKS_API_KEY:-}"; upstream="https://inference.coralbricks.ai" ;;
+    anthropic) key="${ANTHROPIC_API_KEY:-}";   upstream="https://api.anthropic.com" ;;
+    openai)    key="${OPENAI_API_KEY:-}";      upstream="https://api.openai.com" ;;
+    deepinfra) key="${DEEPINFRA_API_KEY:-}";   upstream="https://api.deepinfra.com" ;;
+    *) log "error: no upstream known for provider $provider"; return 2 ;;
+  esac
+  [[ -n "$key" ]] || { log "error: no key for provider $provider"; return 2; }
+  goby_key_to_file "$key" || return 2
+  goby_proxy_start "$upstream" || return 2
+  PROXY_PROVIDER="$provider"
+}
+trap goby_proxy_stop EXIT
 
 mkdir -p "$WORK"
 rm -rf "$REPO_DIR" "$SANDBOX" "$OUT"
@@ -99,16 +139,12 @@ else
 fi
 
 # The scan runs as another uid, but it shares this container: keep the token off this
-# process's environment entirely while the agent is working.
-TOKEN_FILE=/root/.cleaners-token
-# 077 protects the token file — and it used to leak into every later `mkdir`, so
-# `/workspace/out/agent` came out root:700 and the scan, running as `cleaner`, could not
-# even traverse into its own run directory: the first live scan died in under a second
-# with `mkdir: cannot create directory '/workspace/out/agent': Permission denied`.
-umask 077
-printf '%s' "$GITHUB_TOKEN" > "$TOKEN_FILE"
+# process's environment entirely while the agent is working. `goby_token_to_file` owns the
+# umask, and it restores it: 077 used to leak into every later `mkdir`, so `/workspace/out/agent`
+# came out root:700 and the first live scan died with
+# `mkdir: cannot create directory '/workspace/out/agent': Permission denied`.
+goby_token_to_file
 unset GITHUB_TOKEN
-umask 022
 
 # --- which components ----------------------------------------------------------------
 # The file is the opt-in: a directory with an INVARIANTS.md is scanned, a directory without one is
@@ -184,7 +220,7 @@ if [[ -f "$REPO_DIR/AGENTS.md" ]]; then RULES=(--rules "$REPO_DIR/AGENTS.md"); f
 # --- one scan ------------------------------------------------------------------------
 # $1 component directory, $2 model, $3 run directory. Returns the scan's exit status.
 run_scan() {
-  local dir="$1" model="$2" agent_out="$3" charter="$4" provider="${2%%/*}" agent_home=/home/agent/.pi-agent
+  local dir="$1" model="$2" agent_out="$3" charter="$4" provider="${2%%/*}" agent_home="/home/$GOBY_AGENT_USER/.pi-agent"
   local status=0
   # One id per run, and the models file interpolates it as the gateway's session header — which
   # was empty in the agent's environment until now, so every scan was attributed to no session at
@@ -202,34 +238,35 @@ run_scan() {
   # (that is what the gate asks it to do), plus a venv, scratch files and possibly a
   # half-edited module — and the retry would then review a tree nobody pushed.
   if [[ -d "$SANDBOX/.git" ]]; then
-    if ! runuser -u agent -- git -C "$SANDBOX" reset --hard --quiet "$HEAD_SHA" \
-         || ! runuser -u agent -- git -C "$SANDBOX" clean -xdffq; then
+    if ! runuser -u "$GOBY_AGENT_USER" -- git -C "$SANDBOX" reset --hard --quiet "$HEAD_SHA" \
+         || ! runuser -u "$GOBY_AGENT_USER" -- git -C "$SANDBOX" clean -xdffq; then
       log "warn: could not reset $SANDBOX before scanning $dir"
     fi
   fi
   # pi writes auth.json in its agent dir at startup even when the key comes from the
-  # models file, so that dir has to belong to the agent. The image's copy of the config
-  # stays root-owned and read-only; only the selected provider file is copied across.
-  if [[ ! -f "$MODELS_DIR/$provider.json" ]]; then
-    log "error: no $MODELS_DIR/$provider.json for $model"
+  # models file, so that dir has to belong to the agent. The models file is the image's
+  # sanitized one, the same for every provider: it points at the proxy and carries a dummy
+  # key, so nothing in this directory is worth reading after the scan ends.
+  if ! cp /opt/goby/models/models.json "$agent_home/models.json"; then
+    log "error: cannot install the agent's models file for $model"
     return 2
   fi
-  cp "$MODELS_DIR/$provider.json" "$agent_home/models.json"
   chown -R agent:agent "$agent_out" "$agent_home"
   chmod 700 "$agent_home"
 
-  # Only the credential this model actually uses is handed over: the agent's process holds
-  # one key, never the full set, and its shell sees none of them (see report_finding.ts).
-  local -a key_env=()
-  case "$provider" in
-    coral) key_env=(CORALBRICKS_API_KEY="$CORALBRICKS_API_KEY") ;;
-    anthropic) key_env=(ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}") ;;
-    openai) key_env=(OPENAI_API_KEY="${OPENAI_API_KEY:-}") ;;
-    deepinfra) key_env=(DEEPINFRA_API_KEY="${DEEPINFRA_API_KEY:-}") ;;
-    *) log "error: no credential name known for provider $provider"; return 2 ;;
-  esac
+  # The proxy forwards to one upstream, and a retry can name a different provider, so it is
+  # brought up for *this* scan's provider before pi starts. A scan whose key is missing fails
+  # here, by name, rather than as a 401 from the model.
+  if ! ensure_proxy "$provider"; then
+    log "error: cannot reach provider $provider for $model"
+    return 2
+  fi
 
   # Empty environment on purpose: nothing from this shell leaks into the agent's process.
+  #
+  # `GOBY_MODEL_KEY` is a dummy the proxy swaps for the real key, and `GOBY_SESSION_ID` is the
+  # gateway's spend-attribution header — the sanitized models file interpolates both, and
+  # neither is a credential.
   #
   # REPO is on the list because the prompt renders it. Without it, cleaner.sh falls back to the
   # checkout directory's name and every scan of every repository says it is reviewing "repo".
@@ -254,18 +291,16 @@ run_scan() {
   fi
 
   set +e
-  runuser -u agent -- env -i \
-    PATH=/usr/local/bin:/usr/bin:/bin \
-    HOME=/home/agent TMPDIR=/tmp \
-    "${key_env[@]}" \
-    ${tool_env[@]+"${tool_env[@]}"} \
+  goby_run_as_agent \
     GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 \
     PI_CODING_AGENT_DIR="$agent_home" PI_OFFLINE=1 PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 \
+    GOBY_MODEL_KEY=dummy-proxy-key \
     CLEANERS_JSON=1 CLEANERS_MAX_TOOLS="$MAX_TOOLS" \
     CLEANERS_SESSION_ID="$session_id" GOBY_SESSION_ID="$session_id" \
     REPO="$REPO" \
     CLEANERS_COMPONENT="$dir" CLEANERS_OUT="$agent_out" \
     CLEANERS_SANDBOX="$SANDBOX" CLEANERS_SCRATCH="$agent_out/scratch" \
+    ${tool_env[@]+"${tool_env[@]}"} \
     bash /opt/cleaners/cleaner.sh \
       --repo-dir "$REPO_DIR" --component "$dir" --sha "$HEAD_SHA" --before "$BEFORE" \
       --charter "$charter" --model "$model" --out "$agent_out" \
@@ -398,8 +433,8 @@ pairs = [line.split('\t') for line in source.read_text().splitlines() if '\t' in
 target.write_text(json.dumps({component: brief for component, brief in pairs}, indent=2) + '\n')
 PY
 
-GITHUB_TOKEN="$(cat "$TOKEN_FILE")"
-rm -f "$TOKEN_FILE"
+GITHUB_TOKEN="$(cat "$GOBY_TOKEN_FILE")"
+rm -f "$GOBY_TOKEN_FILE"
 export GITHUB_TOKEN
 log "file repo=$REPO sha=$HEAD_SHA issues_per_day=$ISSUES_PER_DAY"
 set +e

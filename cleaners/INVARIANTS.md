@@ -52,9 +52,11 @@ the *gate* is therefore the most valuable finding this component can produce.
 5. **The credential that is used is the one that exists.** `model_check.py` treats only
    non-harness variables as credentials — `CLEANERS_*` and `PI_*` are config the harness
    supplies, and counting one as a credential refused every default scan once. A provider
-   whose key is absent must fall back before the clone, not die after it; the task receives
-   only the selected provider's key plus the fallback's, and the agent's own process receives
-   only the one its scan uses.
+   whose key is absent must fall back before the clone, not die after it. The root process
+   holds the keys it was given and writes only the relevant one to a root-only file; the
+   agent's process receives a **dummy** key and a loopback base URL, and the proxy replaces
+   the credential upstream. A retry on a different provider restarts the proxy with that
+   provider's upstream — the proxy reads its upstream once, at startup.
 
 6. **The agent can read nothing secret and reach no sibling's output.** The `bash` tool's
    environment is an allowlist, not a denylist, and never includes a token or a key. The

@@ -37,7 +37,7 @@ Licensed under [Apache-2.0](LICENSE).
 |---|---|
 | `base/` | `goby-base` image: pi, git, ripgrep, python3, the key proxy, the secret conventions |
 | `review/` | reviewer image: `FROM goby-base`, the prompt, the emit tool, the entrypoint |
-| `cleaners/` | the post-merge cleaner, its own image, its own INVARIANTS.md contract |
+| `cleaners/` | cleaner image: `FROM goby-base`, the post-merge scan, its own INVARIANTS.md contract |
 | `tide/` | the scheduled sweep: `FROM goby-base`, the detector, the prompt, the entrypoint |
 | `common/` | what both issue-filing products share: `issues.py`, `model_check.py`, `usage.py`, the provider model files |
 | `src/core/contract.ts` | findings shape, parser, retraction, dedupe, re-derivation matching |

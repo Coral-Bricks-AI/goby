@@ -110,16 +110,17 @@ the tide files smells, not defects, so the two have nothing in common to dedupe 
 
 ## Models
 
-`MODEL=provider/name` picks `models/<provider>.json`: `coral/…` (our gateway, the default),
-`anthropic/…`, `openai/…`. `FALLBACK_MODEL` is used when the chosen provider has no key, and
+`MODEL=provider/name` picks the provider: `coral/…` (our gateway, the default), `anthropic/…`,
+`openai/…`, `deepinfra/…`. `FALLBACK_MODEL` is used when the chosen provider has no key, and
 again inside the scan when its call fails — a rate limit or an exhausted key must not look like
-a clean run.
+a clean run. Switching provider mid-run restarts the key proxy, which forwards to one upstream
+at a time.
 
 A provider is usable when every **credential** its models file interpolates is set.
 `GOBY_*`, `CLEANERS_*` and `PI_*` are config this harness supplies, not credentials —
 `common/models/coral.json` interpolates `GOBY_SESSION_ID` for spend attribution, and counting
-that as a credential refused every default scan. The agent's own shell sees only the one key its
-model needs.
+that as a credential refused every default scan. The scan's own process holds no key at all:
+it gets a dummy and the loopback proxy supplies the credential.
 
 `common/models/` is shared with [tide](../tide/README.md), and so are `post_findings.py`'s filing
 machinery (`common/issues.py`), `model_check.py`, `summarize_run.py` and `usage.py`. One copy of
@@ -238,10 +239,11 @@ checked before the clone (`model_check.py`), and a failed model call is caught a
 (`summarize_run.py --status`): pi exits 0 either way, and both failure modes otherwise look like
 a scan that found nothing.
 
-**`models/<provider>.json` fails hard on an unset `$VAR`.** That is why the entrypoint picks the
-file by `MODEL`'s provider prefix and checks the variable is set before starting: a missing key
-must fail in one log line, not after a clone. The same check is what lets a missing or dead
-provider fall back to `FALLBACK_MODEL` instead of going silent.
+**`models/<provider>.json` fails hard on an unset `$VAR`.** That is why the entrypoint checks the
+provider's credential (in the root process, which still holds the env) before starting, and why a
+missing key fails in one log line rather than after a clone. The same check is what lets a
+missing or dead provider fall back to `FALLBACK_MODEL` instead of going silent. The file the
+*agent* reads is the base image's sanitized one.
 
 **A scan that could not think is not a scan that found nothing.** `pi --mode json` exits 0 when
 the model call fails, so the entrypoint greps the last assistant message for
@@ -254,8 +256,10 @@ the model call fails, so the entrypoint greps the last assistant message for
 - The token is the workflow's `GITHUB_TOKEN`, scoped to one repository with `contents: read` and
   `issues: write`. The entrypoint moves it to a root-only file and unsets it before the scan
   starts, so the agent's environment never contains it.
-- The model key is in the cleaner's process, because the process that calls the model API has to
-  hold a key for it. One key per scan: only the selected provider's credential is passed.
+- The model key never reaches the scan. Root writes the selected provider's key to a root-only
+  file `/run/goby/model-key`, the base image's loopback proxy reads it, and the agent's
+  `models.json` carries a dummy — the same arrangement the reviewer uses, from `base/lib.sh`.
+  The agent can call the model and cannot hold the credential that pays for it.
 - No runs table. Spend is attributable by session id (`clean-…`) on the provider side.
 
 ## License
