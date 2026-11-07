@@ -1,5 +1,6 @@
-# Build contexts: `review/` and `tide/` are built from the repository root because both need
-# files outside their own directory (`src/` for the reviewer, `common/` for both products).
+# Build contexts: `review/`, `cleaners/` and `tide/` are built from the repository root because
+# they need files outside their own directory (`src/` for the reviewer, `common/` for the
+# products that file issues).
 # Nothing in the image comes from these, and shipping them means uploading a dependency tree and
 # a git database on every build.
 node_modules

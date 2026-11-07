@@ -55,9 +55,13 @@ OUT="$WORK/out"
 export GOBY_OUT="$OUT"
 AGENT_HOME="/home/$GOBY_AGENT_USER/.pi-agent"
 
+# The credential's header is the provider's: Anthropic reads `x-api-key` with no scheme, and a
+# proxy that rewrites only `authorization` would send it the agent's dummy instead.
+KEY_HEADER="authorization"; KEY_SCHEME="Bearer "
 case "$PROVIDER" in
   coral)     KEY="${CORALBRICKS_API_KEY:-}"; UPSTREAM="https://inference.coralbricks.ai" ;;
-  anthropic) KEY="${ANTHROPIC_API_KEY:-}";   UPSTREAM="https://api.anthropic.com" ;;
+  anthropic) KEY="${ANTHROPIC_API_KEY:-}";   UPSTREAM="https://api.anthropic.com"
+             KEY_HEADER="x-api-key"; KEY_SCHEME="" ;;
   openai)    KEY="${OPENAI_API_KEY:-}";      UPSTREAM="https://api.openai.com" ;;
   *) goby_log "error: unknown provider $PROVIDER"; exit 2 ;;
 esac
@@ -117,7 +121,7 @@ fi
 goby_key_to_file "$KEY"
 goby_token_to_file
 export GOBY_KEY_FILE GOBY_TOKEN_FILE
-goby_proxy_start "$UPSTREAM"
+goby_proxy_start "$UPSTREAM" "$KEY_HEADER" "$KEY_SCHEME"
 # The progress stop is a no-op until `goby_progress start` below; it goes first as it cannot fail.
 trap 'goby_progress stop; goby_proxy_stop' EXIT
 

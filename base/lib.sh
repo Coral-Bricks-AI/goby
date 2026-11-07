@@ -37,10 +37,14 @@ goby_key_to_file() {
   umask 022
 }
 
+# `header` and `scheme` are the provider's, not a constant: Anthropic authenticates with
+# `x-api-key` and no scheme, so the default would forward the agent's *dummy* there while adding
+# the real key to an `authorization` header the API ignores. Callers pass theirs.
 goby_proxy_start() {
-  local upstream="$1"
+  local upstream="$1" header="${2:-authorization}" scheme="${3:-Bearer }"
   mkdir -p "$(dirname "$GOBY_PROXY_PID")"
   GOBY_PROXY_PORT="$GOBY_PROXY_PORT" GOBY_UPSTREAM="$upstream" GOBY_KEY_FILE="$GOBY_KEY_FILE" \
+    GOBY_KEY_HEADER="$header" GOBY_KEY_SCHEME="$scheme" \
     node "$GOBY_HOME/keyproxy.mjs" &
   echo $! > "$GOBY_PROXY_PID"
   # Answer, not assumption: a proxy that spawned but cannot serve turns every review into a

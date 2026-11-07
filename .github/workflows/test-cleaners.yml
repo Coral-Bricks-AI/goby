@@ -6,6 +6,7 @@ name: test cleaners
 on:
   pull_request:
     paths:
+      - "base/**"
       - "cleaners/**"
       - "common/**"
       - ".github/workflows/test-cleaners.yml"
@@ -14,6 +15,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "base/**"
       - "cleaners/**"
       - "common/**"
 
@@ -40,20 +42,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: cleaners/Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: goby-cleaners:test
-          cache-from: type=gha
+      # The cleaner is `FROM goby-base`, so the base is built here too: a broken base is a broken
+      # cleaner, and this is the job that has to say so on the PR that broke it.
+      - name: Build goby-base
+        run: docker build --platform linux/amd64 -t base:local base
+      - name: Build the cleaners
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 --build-arg BASE_IMAGE=base:local \
+            -f cleaners/Dockerfile -t goby-cleaners:test .
       # A build that succeeds but cannot start is the failure mode that only shows up on the
       # first real push. `--help` proves pi, python3, bash and git are all on the path.
       - name: The image can start
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint bash goby-cleaners:test -lc \
-            'pi --version && python3 --version && git --version && bash --version | head -1'
+          docker run --rm --entrypoint bash goby-cleaners:test -lc '
+            set -euo pipefail
+            pi --version && python3 --version && git --version && bash --version | head -1
+            # The base image is genuinely underneath: its proxy and its secret helpers, and the
+            # sanitized models file the agent gets instead of a key.
+            test -s /opt/goby/lib.sh && test -s /opt/goby/keyproxy.mjs
+            test -s /opt/goby/models/models.json
+            grep -q "127.0.0.1:8787" /opt/goby/models/models.json
+            # Root-side only: the provider files model_check.py reads.
+            test -s /opt/cleaners/models/deepinfra.json
+          '

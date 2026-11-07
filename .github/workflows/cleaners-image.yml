@@ -5,11 +5,18 @@ name: cleaners image
 # The digest, not the tag: `ghcr.io/coral-bricks-ai/goby-cleaners:latest` is a moving handle,
 # and a scan's findings are only comparable across weeks if the container that produced them
 # is the same one. Copy the `@sha256:...` from this job's summary into your workflow.
+#
+# The base is built here, from this checkout, and never pulled: a `base/**` change that has not
+# published yet must not produce a cleaner image running the previous base — that is a broken
+# image from a green job. That is also why this uses `docker build` rather than buildx: the
+# cleaner's `FROM ${BASE_IMAGE}` resolves a locally tagged image, which a container-driver
+# builder cannot see.
 
 on:
   push:
     branches: [main]
     paths:
+      - "base/**"
       - "cleaners/**"
       - "common/**"
       - ".github/workflows/cleaners-image.yml"
@@ -45,11 +52,9 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.digest.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
         with:
@@ -69,27 +74,45 @@ jobs:
       # amd64 only: it is what `ubuntu-latest` is, and it is what a container job pulls. A
       # multi-arch build would double the build time for the one platform nobody runs a scan
       # on. An arm64 runner can rebuild this context in one step.
-      - id: build
-        uses: docker/build-push-action@v6
-        with:
-          # The root, because the cleaner image carries `common/` beside `cleaners/`.
-          context: .
-          file: cleaners/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build goby-base
+        run: docker build --platform linux/amd64 -t base:local base
 
-      - name: Print the digest to pin
+      - name: Build the cleaners
+        # The root, because the cleaner image carries `common/` and `base/` beside `cleaners/`.
+        # The labels come from metadata-action and have to be on the image itself: this path
+        # pushes with `docker push`, so nothing else would attach them.
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          LABELS: ${{ steps.meta.outputs.labels }}
         run: |
           set -euo pipefail
-          if [ -z "$DIGEST" ]; then
+          args=()
+          while IFS= read -r label; do
+            [ -n "$label" ] && args+=(--label "$label")
+          done <<< "$LABELS"
+          docker build --platform linux/amd64 --build-arg BASE_IMAGE=base:local \
+            "${args[@]}" -f cleaners/Dockerfile -t cleaners:local .
+
+      - name: Publish, and print what to pin
+        id: digest
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker tag cleaners:local "$tag"
+          done <<< "$TAGS"
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker push --quiet "$tag"
+          done <<< "$TAGS"
+          # The digest of the first tag, which is this repository's sha: what a consumer pins.
+          first="$(printf '%s\n' "$TAGS" | head -1)"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$first")"
+          if [ -z "$digest" ]; then
             echo "error: the build produced no digest" >&2
             exit 1
           fi
-          echo "### $IMAGE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
-          echo "image $IMAGE@$DIGEST"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "### $digest" >> "$GITHUB_STEP_SUMMARY"
+          echo "image $digest"

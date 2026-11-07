@@ -20,7 +20,7 @@ def test_the_repository_reaches_the_scan():
     the checkout directory's name. `env -i` did not carry REPO, so every scan of every repository
     said it was reviewing "repo" — a wrong value, which nothing downstream notices."""
     text = entrypoint()
-    env_block = text[text.index("runuser -u agent -- env -i"):]
+    env_block = text[text.index("goby_run_as_agent"):]
     env_block = env_block[:env_block.index("bash /opt/cleaners/cleaner.sh")]
     assert 'REPO="$REPO"' in env_block
 
@@ -35,14 +35,53 @@ def test_a_failed_predecessor_fetch_clears_the_sha():
     assert 'BEFORE=""' in branch
 
 
-def test_the_scan_gets_no_token_and_one_key():
+def test_the_scan_gets_no_token_and_no_key():
     """The allowlist is the isolation boundary; a variable added without thinking is how a
-    credential reaches the agent's shell."""
+    credential reaches the agent's shell. The model key is not a name that can be forgotten
+    here: the agent gets a dummy and the root-only proxy holds the real one."""
     text = entrypoint()
-    env_block = text[text.index("runuser -u agent -- env -i"):]
+    env_block = text[text.index("goby_run_as_agent"):]
     env_block = env_block[:env_block.index("bash /opt/cleaners/cleaner.sh")]
     assert "GITHUB_TOKEN" not in env_block
-    assert '"${key_env[@]}"' in env_block
+    for credential in ("CORALBRICKS_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+                       "DEEPINFRA_API_KEY"):
+        assert credential not in env_block, credential
+    assert "GOBY_MODEL_KEY=dummy-proxy-key" in env_block
+
+
+def test_the_key_and_the_proxy_are_the_base_images_and_not_a_second_copy():
+    """The point of the move: one secret convention, in `base/lib.sh`, with the real key in a
+    root-only file the agent cannot read. A local edit that re-adds a provider key to the
+    agent's environment is the regression this pins."""
+    text = entrypoint()
+    assert "source /opt/goby/lib.sh" in text
+    assert "goby_key_to_file" in text and "goby_proxy_start" in text
+    assert "goby_proxy_stop" in text, "the proxy must not outlive the task"
+    assert 'cp /opt/goby/models/models.json "$agent_home/models.json"' in text
+    assert "$MODELS_DIR/$provider.json" not in text, "the agent gets the sanitized file, not one per provider"
+    # The per-provider files stay, root-side only, because model_check.py is the credential gate.
+    assert 'MODELS_DIR=/opt/cleaners/models' in text
+    assert "goby_token_to_file" in text and "/root/.cleaners-token" not in text
+
+
+def test_the_provider_header_reaches_the_proxy():
+    """Anthropic authenticates with `x-api-key` and no scheme. The proxy rewrites only the header
+    it is told to, so a missing override sends the provider the agent's dummy."""
+    text = entrypoint()
+    block = text[text.index("ensure_proxy() {"):text.index("trap goby_proxy_stop EXIT")]
+    assert 'header="x-api-key"; scheme=""' in block
+    assert 'goby_proxy_start "$upstream" "$header" "$scheme"' in block
+
+
+def test_a_retry_on_another_provider_restarts_the_proxy():
+    """The proxy reads its upstream once at startup, and FALLBACK_MODEL may name a different
+    provider. Without a restart the retry calls the first provider's upstream and reads as a
+    model error."""
+    text = entrypoint()
+    block = text[text.index("ensure_proxy() {"):text.index("trap goby_proxy_stop EXIT")]
+    assert "goby_proxy_stop" in block and "goby_proxy_start" in block
+    assert '[[ "$PROXY_PROVIDER" == "$provider" ]]' in block
+    assert 'ensure_proxy "$provider"' in text
 
 
 def test_a_failing_picker_is_not_reported_as_nothing_to_scan():
@@ -55,10 +94,13 @@ def test_a_failing_picker_is_not_reported_as_nothing_to_scan():
 
 
 def test_the_images_create_the_user_the_entrypoints_drop_to():
-    """`lib.sh` and both entrypoints drop to `agent`; the images must create that user."""
-    for image in (HERE / "Dockerfile", HERE.parent / "base" / "Dockerfile"):
-        text = image.read_text()
-        assert "useradd --create-home --uid 10001 agent" in text, image
+    """`lib.sh` and the entrypoints drop to `agent`, so `goby-base` creates it. A cleaner that
+    still created its own uid would be a second source of truth for the same user."""
+    base = (HERE.parent / "base" / "Dockerfile").read_text()
+    assert "useradd --create-home --uid 10001 agent" in base
+    cleaners = (HERE / "Dockerfile").read_text()
+    assert "useradd" not in cleaners, "the base image owns the user"
+    assert "FROM ${BASE_IMAGE}" in cleaners
 
 
 def test_paths_reach_the_picker_unquoted():

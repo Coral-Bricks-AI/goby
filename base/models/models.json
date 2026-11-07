@@ -29,6 +29,20 @@
       "api": "openai-responses",
       "apiKey": "$GOBY_MODEL_KEY",
       "models": [{ "id": "gpt-4.1" }]
+    },
+    "deepinfra": {
+      "baseUrl": "http://127.0.0.1:8787/v1/openai",
+      "api": "openai-completions",
+      "apiKey": "$GOBY_MODEL_KEY",
+      "models": [
+        { "id": "Qwen/Qwen3.6-35B-A3B" },
+        {
+          "id": "zai-org/GLM-5.3",
+          "samplingParams": {
+            "reasoning_effort": "high"
+          }
+        }
+      ]
     }
   }
 }

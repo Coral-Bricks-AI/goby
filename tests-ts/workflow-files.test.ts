@@ -232,6 +232,9 @@ test('the shared filing code exists once, in one directory', () => {
   }
   for (const dockerfile of ['cleaners/Dockerfile', 'tide/Dockerfile']) {
     expect(read(dockerfile)).toContain('COPY common/issues.py /opt/common/issues.py');
+    // Every product image is built on `goby-base`, so pi, the uid drop and the key proxy exist
+    // once. A product that re-installs pi is a second version of the agent in the same repo.
+    expect(read(dockerfile)).toContain('FROM ${BASE_IMAGE}');
+    expect(read(dockerfile)).toContain('ARG BASE_IMAGE=goby-base');
   }
-  expect(read('tide/Dockerfile')).toContain('FROM ${BASE_IMAGE}');
 })

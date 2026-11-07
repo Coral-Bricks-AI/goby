@@ -99,6 +99,19 @@ def test_the_shipped_models_files_only_ask_for_credentials(tmp_path):
     assert mc.credential_vars(HERE / "models" / "openai.json") == {"OPENAI_API_KEY"}
 
 
+def test_the_sanitized_models_file_declares_every_shipped_provider():
+    """An agent is handed `base/models/models.json`, not the per-provider files, so a provider
+    missing from it is a model pi refuses to load. Review, cleaners and (soon) the tide all read
+    this one file; `common/models/` is the list of providers that have to work."""
+    catalog = json.loads((HERE.parent / "base" / "models" / "models.json").read_text())
+    shipped = {path.stem for path in (HERE / "models").glob("*.json")}
+    assert shipped == set(catalog["providers"]), (sorted(shipped), sorted(catalog["providers"]))
+    for provider, entry in catalog["providers"].items():
+        # Loopback, dummy key: the proxy is what makes the file safe to hand an agent.
+        assert entry["baseUrl"].startswith("http://127.0.0.1:8787"), provider
+        assert entry["apiKey"] == "$GOBY_MODEL_KEY", provider
+
+
 def test_every_shipped_provider_is_one_the_shell_can_run():
     """A models file that ships but cannot be selected is a provider that never runs.
 
@@ -112,9 +125,11 @@ def test_every_shipped_provider_is_one_the_shell_can_run():
         (credential,) = mc.credential_vars(path) or {None}
         assert credential, f"{path.name} interpolates no credential"
         # The scripts that switch on the provider belong to the products, not to `common/`:
-        # the models files are shared, so every product must know every provider.
-        for script in (HERE.parent / "cleaners" / "cleaner.sh",
-                       HERE.parent / "cleaners" / "entrypoint.sh",
+        # the models files are shared, so every product must know every provider. Both of these
+        # pick the upstream the proxy forwards to, so both need a `case` arm per provider.
+        # `cleaner.sh` is deliberately absent: since cleaners moved onto the key proxy it holds no
+        # key at all, so the provider no longer reaches the scan's process.
+        for script in (HERE.parent / "cleaners" / "entrypoint.sh",
                        HERE.parent / "tide" / "tide.sh"):
             text = pathlib.Path(script).read_text()
             assert f"{provider})" in text, f"{script} does not know provider {provider}"

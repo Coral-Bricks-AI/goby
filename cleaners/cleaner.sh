@@ -27,16 +27,12 @@ done
 
 : "${REPO_DIR:?}"; : "${COMPONENT:?}"; : "${SHA:?}"; : "${CHARTER:?}"
 : "${MODEL:?}"; : "${OUT:?}"
-# The credential the selected provider needs, and no other: the models file interpolates it,
-# and pi refuses to start on an unset variable. Checked per provider so a scan on Claude or
-# GPT does not demand our Coral key — the entrypoint already resolved which one is usable.
-case "${MODEL%%/*}" in
-  coral)     : "${CORALBRICKS_API_KEY:?CORALBRICKS_API_KEY must be set for a coral model}" ;;
-  anthropic) : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY must be set for an anthropic model}" ;;
-  openai)    : "${OPENAI_API_KEY:?OPENAI_API_KEY must be set for an openai model}" ;;
-  deepinfra) : "${DEEPINFRA_API_KEY:?DEEPINFRA_API_KEY must be set for a deepinfra model}" ;;
-  *) echo "unknown provider in --model $MODEL" >&2; exit 2 ;;
-esac
+# The agent holds a dummy, not a key: the entrypoint's loopback proxy replaces it upstream, and
+# the real key belongs to a root-only file this process cannot read. Checked here so a wiring
+# mistake (`GOBY_MODEL_KEY` missing from `goby_run_as_agent`) fails by name, before pi starts,
+# rather than as a 401 partway through the run. The provider prefix itself needs no case: the
+# proxy already decided which upstream it forwards to.
+: "${GOBY_MODEL_KEY:?GOBY_MODEL_KEY must be set; the entrypoint passes the dummy key the proxy swaps}"
 # Checked here rather than left to a traceback: a missing brief is a wiring error, and a
 # traceback would exit non-zero and be retried as if the model call had failed.
 if [[ ! -f "$CHARTER" ]]; then
