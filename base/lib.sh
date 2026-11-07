@@ -41,7 +41,10 @@ goby_key_to_file() {
 # `x-api-key` and no scheme, so the default would forward the agent's *dummy* there while adding
 # the real key to an `authorization` header the API ignores. Callers pass theirs.
 goby_proxy_start() {
-  local upstream="$1" header="${2:-authorization}" scheme="${3:-Bearer }"
+  # `-`, not `:-`: an empty scheme is a *value* — Anthropic sends `x-api-key` with no prefix —
+  # and `:-` would replace it with `Bearer `, so the proxy would forward `x-api-key: Bearer <key>`
+  # and the provider would reject its own credential. Only an absent argument takes the default.
+  local upstream="$1" header="${2-authorization}" scheme="${3-Bearer }"
   mkdir -p "$(dirname "$GOBY_PROXY_PID")"
   GOBY_PROXY_PORT="$GOBY_PROXY_PORT" GOBY_UPSTREAM="$upstream" GOBY_KEY_FILE="$GOBY_KEY_FILE" \
     GOBY_KEY_HEADER="$header" GOBY_KEY_SCHEME="$scheme" \
