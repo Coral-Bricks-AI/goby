@@ -154,6 +154,9 @@ def test_the_untested_stage_recipe_removes_the_files_it_added():
     files only. The prompt then left untested modules in the sandbox, the harness attached them, and
     the model was told the revert had undone "everything you have not decided to keep"."""
     prompt = (HERE / "prompt.md").read_text()
-    assert "checkout -- ." in prompt, "the trap is named, so the model knows the shortcut"
-    assert "status --short" in prompt, "the model checks what is actually there"
+    # The old claim is the bug: it says the shortcut is complete, and a model that reads only the
+    # setup paragraph performs the incomplete revert the issue is about.
+    assert "undoes everything you did" not in prompt
+    assert "discards your edits to *tracked*" in prompt
     assert "clean -fdq" in prompt, "added files have to go too"
+    assert "status --short" in prompt, "the model checks what is actually there"
