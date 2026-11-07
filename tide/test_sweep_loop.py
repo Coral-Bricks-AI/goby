@@ -59,20 +59,25 @@ def test_a_zero_budget_falls_back_to_the_image_default(tmp_path):
                         ': "${TIDE_MAX_TEST_FILE_LINES:=1500}"\n'
                         ': "${TIDE_MAX_DIR_FILES:=30}"\n: "${TIDE_MAX_FILE_IMPORTS:=40}"\n'
                         ': "${TIDE_MAX_TODOS:=10}"\n: "${TIDE_MAX_TODO_AGE_DAYS:=365}"\n'
-                        ': "${TIDE_MAX_TOOLS:=120}"\n: "${TIDE_HISTORY_DEPTH:=200}"\n')
+                        ': "${TIDE_MAX_TOOLS:=120}"\n: "${TIDE_HISTORY_DEPTH:=200}"\n'
+                        ': "${TIDE_BASH_TIMEOUT_S:=1200}"\n')
     script = tmp_path / "guard.sh"
     script.write_text(guard_block(defaults) + '\necho '
                       '"lines=$TIDE_MAX_FILE_LINES depth=$TIDE_HISTORY_DEPTH '
-                      'items=$TIDE_MAX_ITEMS per_day=$TIDE_ISSUES_PER_DAY"\n')
+                      'items=$TIDE_MAX_ITEMS per_day=$TIDE_ISSUES_PER_DAY '
+                      'bash=$TIDE_BASH_TIMEOUT_S"\n')
     done = subprocess.run(["bash", str(script)], capture_output=True, text=True,
                           env={"TIDE_MAX_FILE_LINES": "0", "TIDE_HISTORY_DEPTH": "0",
                                "TIDE_MAX_ITEMS": "0", "TIDE_ISSUES_PER_DAY": "0",
+                               "TIDE_BASH_TIMEOUT_S": "0",
                                "PATH": "/usr/local/bin:/usr/bin:/bin"})
     assert done.returncode == 0, done.stderr
     # A threshold of 0 is nonsense and is replaced; 0 items and 0 issues-per-day are real choices.
     assert "lines=800" in done.stdout and "depth=200" in done.stdout, (done.stdout, done.stderr)
     assert "items=0" in done.stdout and "per_day=0" in done.stdout, done.stdout
-    assert done.stdout.count("is not a positive integer") == 2, done.stdout
+    # pi refuses a command timeout of 0 outright, so an empty dispatch input must not reach it.
+    assert "bash=1200" in done.stdout, done.stdout
+    assert done.stdout.count("is not a positive integer") == 3, done.stdout
 
 
 def test_a_chosen_threshold_is_kept(tmp_path):

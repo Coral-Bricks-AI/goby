@@ -4,8 +4,9 @@
 # Started by the scheduled workflow as a container job, or by `docker run`, with these in the
 # environment:
 #   REPO SHA MODEL FALLBACK_MODEL GITHUB_TOKEN CORALBRICKS_API_KEY
-# Budgets (TIDE_MAX_ITEMS, TIDE_MAX_TOOLS, TIDE_ISSUES_PER_DAY, and the three thresholds) default
-# from /opt/tide/defaults.env; a same-named workflow variable overrides one.
+# Budgets (TIDE_MAX_ITEMS, TIDE_MAX_TOOLS, TIDE_BASH_TIMEOUT_S, TIDE_ISSUES_PER_DAY, and the
+# three thresholds) default from /opt/tide/defaults.env; a same-named workflow variable
+# overrides one.
 #
 # There is no diff here, and no push: this is the one goby product that looks at the whole
 # repository on a clock. A detector measures the tree first — no model, no tokens, no opinion —
@@ -49,7 +50,7 @@ must_be_positive() {
 }
 for knob in TIDE_MAX_FILE_LINES TIDE_MAX_TEST_FILE_LINES TIDE_MAX_DIR_FILES \
             TIDE_MAX_FILE_IMPORTS TIDE_MAX_TODOS TIDE_MAX_TODO_AGE_DAYS \
-            TIDE_MAX_TOOLS TIDE_HISTORY_DEPTH; do
+            TIDE_MAX_TOOLS TIDE_HISTORY_DEPTH TIDE_BASH_TIMEOUT_S; do
   must_be_positive "$knob"
 done
 # `0` is a real request here — "measure, pick nothing, still close what is gone" is how the
@@ -243,7 +244,7 @@ run_scan() {
     "${key_env[@]}" \
     GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 \
     PI_CODING_AGENT_DIR="$agent_home" PI_OFFLINE=1 PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 \
-    TIDE_JSON=1 TIDE_MAX_TOOLS="$TIDE_MAX_TOOLS" \
+    TIDE_JSON=1 TIDE_MAX_TOOLS="$TIDE_MAX_TOOLS" TIDE_BASH_TIMEOUT_S="$TIDE_BASH_TIMEOUT_S" \
     GOBY_SESSION_ID="tide-$slug-${HEAD_SHA:0:10}" \
     REPO="$REPO" \
     TIDE_OUT="$agent_out" TIDE_SANDBOX="$SANDBOX" TIDE_SCRATCH="$agent_out/scratch" \
@@ -256,8 +257,10 @@ run_scan() {
   status=$?
   set -e
   # The change the agent left behind is evidence, and it is read here rather than pasted by the
-  # model: what a reviewer reads is what the after-run actually tested. `-N` stages new files
-  # without running filters, so a refactor that adds a module shows up in the diff.
+  # model: what a reviewer reads is the state the sandbox was left in. Whether that is the state
+  # the after-run tested is the one thing this cannot see — the proposal says so, and the issue
+  # prints the answer (`final_state_tested`). `-N` stages new files without running filters, so a
+  # refactor that adds a module shows up in the diff.
   if [[ -d "$SANDBOX/.git" ]]; then
     if ! runuser -u agent -- git -C "$SANDBOX" add -A > /dev/null 2>&1 \
        || ! runuser -u agent -- git -C "$SANDBOX" diff --cached --no-color \
@@ -295,11 +298,15 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
   [[ -n "${check:-}" ]] || continue
   SCANNED=$((SCANNED + 1))
   facts="$OUT/facts/$slug.json"
-  log "scan $check on $path (model=$MODEL max_tools=$TIDE_MAX_TOOLS)"
+  log "scan $check on $path (model=$MODEL max_tools=$TIDE_MAX_TOOLS bash_timeout=${TIDE_BASH_TIMEOUT_S}s)"
   status=0
   run_scan "$check" "$path" "$facts" "$slug" "$MODEL" "$OUT/agent/$slug" || status=$?
   log "scan exit=$status events=$(count_lines "$OUT/agent/$slug/events.jsonl") proposals=$(count_lines "$OUT/agent/$slug/proposals.jsonl")"
   tail -20 "$OUT/agent.log" || true
+  # A command that hits the wall is a tool error the model sees, not an exit status: pi finishes the
+  # run and exits 0, so without this the scan looks exactly like one that found nothing. Counted
+  # from the event stream, which is the run's own record, after the run rather than during it.
+  TIMEOUTS=$(python3 /opt/common/summarize_run.py --timeouts "$OUT/agent/$slug/events.jsonl")
 
   # `summarize_run.py --status` is the only thing that can say the *model* failed: pi exits 0
   # with stopReason=error even on a 401 or a refused connection.
@@ -332,6 +339,8 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
     run_scan "$check" "$path" "$facts" "$slug" "$FALLBACK_MODEL" "$OUT/agent/$slug-retry" || status=$?
     log "retry exit=$status proposals=$(count_lines "$OUT/agent/$slug-retry/proposals.jsonl")"
     tail -20 "$OUT/agent.log" || true
+    TIMEOUTS=$((TIMEOUTS + $(python3 /opt/common/summarize_run.py --timeouts \
+      "$OUT/agent/$slug-retry/events.jsonl")))
     if [[ $status -ne 0 ]] || ! python3 /opt/common/summarize_run.py --status \
          "$OUT/agent/$slug-retry/events.jsonl"; then
       log "error: the retry failed too; nothing filed for $check on $path"
@@ -343,6 +352,20 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
 
   if [[ $model_error -eq 1 ]]; then
     log "error: the model call failed for $check; nothing filed for it"
+    FAILED_SCANS=$((FAILED_SCANS + 1))
+    continue
+  fi
+  # A scan that spent its time on the wall says so, and one that filed nothing after it was cut
+  # short rather than quiet — the distinction invariant 6 draws for a failed measurement. It costs
+  # a failed scan, so a sweep whose only candidate hangs exits non-zero instead of filing nothing
+  # and looking green.
+  if [[ "$TIMEOUTS" -gt 0 ]]; then
+    log "warn: $check on $path hit the ${TIDE_BASH_TIMEOUT_S}s command wall $TIMEOUTS time(s); those commands were killed"
+  fi
+  EMITTED=$(( $(count_lines "$OUT/agent/$slug/proposals.jsonl") \
+             + $(count_lines "$OUT/agent/$slug-retry/proposals.jsonl") ))
+  if [[ "$TIMEOUTS" -gt 0 && "$EMITTED" -eq 0 ]]; then
+    log "error: $check on $path hit the command wall and produced no proposal; it was cut short, not quiet"
     FAILED_SCANS=$((FAILED_SCANS + 1))
     continue
   fi

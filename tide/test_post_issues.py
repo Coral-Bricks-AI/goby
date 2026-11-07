@@ -32,6 +32,7 @@ def proposal(path="src/cli/entry.ts", check="max_file_lines", metric=1432, thres
         "tests_output_after": "412 passing (11.9s)",
         "unverified_reason": "", "risk": "the public `main()` signature and its exit codes",
         "confidence": "high", "diff": "--- a/src/cli/entry.ts\n+++ b/src/cli/flags.ts\n",
+        "final_state_tested": True, "untested_changes": "",
     }
     base.update(kw)
     return base
@@ -239,6 +240,43 @@ def test_an_unverified_proposal_says_so_and_says_why():
     assert "**Not verified in a container**" in body
     assert "the suite needs postgres" in body
     assert "Verified in a container" not in body
+
+
+def test_the_diff_is_folded_away_but_the_claim_is_not():
+    """A 12k-character diff at the top of a body is one nobody reads, so it folds. What must not
+    fold is the sentence saying which state it is: that is what a reader decides on."""
+    _, body = pi.render_issue(proposal(), "a" * 40)
+    assert "<details>" in body and "</details>" in body
+    start = body.index("<details>")
+    assert "this is what the after-run tested" in body[:start], "the claim stays visible"
+    assert "--- a/src/cli/entry.ts" in body[start:], "the diff is inside the fold"
+    # The blank lines are what make GitHub render the fence as code inside `<details>`.
+    assert "<summary>diff — 2 lines</summary>\n\n```diff\n" in body
+    assert "the plan is the deliverable" not in body[start:], "only the diff is folded"
+
+
+def test_a_sandbox_that_changed_after_the_report_is_not_called_tested():
+    """#118: the agent applied two stages, verified the first, and said so — and the attached diff
+    was both. The harness cannot see the difference, so the emit tool asks, and this is the answer
+    being told to the reader instead of hidden."""
+    _, body = pi.render_issue(proposal(final_state_tested=False,
+                                       untested_changes="the second half of the split, in "
+                                                        "`cli/flags.ts`, was applied after the run"),
+                              "a" * 40)
+    assert "this is what the after-run tested" not in body
+    assert "different state from the one the after-run tested" in body
+    assert "the second half of the split" in body
+    assert "--- a/src/cli/entry.ts" in body, "the change is still attached, and still labelled"
+
+
+def test_a_proposal_from_before_the_question_is_not_presented_as_unverified():
+    """A record with no `final_state_tested` predates the field; it gets the old sentence rather
+    than the alarming one, because there is no evidence it was untested."""
+    record = proposal()
+    del record["final_state_tested"]
+    _, body = pi.render_issue(record, "a" * 40)
+    assert "this is what the after-run tested" in body
+    assert "different state from the one the after-run tested" not in body
 
 
 def test_a_verified_proposal_with_no_diff_is_not_dressed_up_as_a_change():

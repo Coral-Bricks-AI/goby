@@ -63,6 +63,9 @@ on:
       max-tools:
         description: Tool calls one scan may make; empty uses the image default.
         type: number
+      bash-timeout-s:
+        description: Wall clock for one shell command, in seconds; empty uses the image default.
+        type: number
       issues-per-day:
         description: Issues this repo may receive from the tide in 24h; empty uses the default.
         type: number
@@ -114,6 +117,9 @@ on:
         type: number
       max-tools:
         description: Tool calls one scan may make; empty uses the image default.
+        type: number
+      bash-timeout-s:
+        description: Wall clock for one shell command, in seconds; empty uses the image default.
         type: number
       issues-per-day:
         description: Issues this repo may receive from the tide in 24h; empty uses the default.
@@ -181,6 +187,7 @@ jobs:
       FALLBACK_MODEL: ${{ inputs.fallback-model || 'coral/deepseek-v4.1-flash-fast' }}
       TIDE_MAX_ITEMS: ${{ inputs.max-items }}
       TIDE_MAX_TOOLS: ${{ inputs.max-tools }}
+      TIDE_BASH_TIMEOUT_S: ${{ inputs.bash-timeout-s }}
       TIDE_ISSUES_PER_DAY: ${{ inputs.issues-per-day }}
       TIDE_MAX_FILE_LINES: ${{ inputs.max-file-lines }}
       TIDE_MAX_DIR_FILES: ${{ inputs.max-dir-files }}

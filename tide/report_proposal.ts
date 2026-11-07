@@ -12,7 +12,13 @@
  * only if the agent says why, and the issue says "not verified" in the same words.
  *
  * The diff is deliberately NOT an argument: the harness reads it out of the sandbox with
- * `git diff` after the run, so the change a reviewer reads is the change that was tested.
+ * `git diff` after the run, and the proposal says whether that state is the one the after-run
+ * tested (`final_state_tested`), so the change a reviewer reads is never presented as verified
+ * on the strength of the model's silence.
+ *
+ * The second thing this file owns is the command wall clock. pi gives a bash command no timeout
+ * of its own — the model may pass one, and without it the process runs until the job dies — so
+ * every command gets a ceiling here, image-owned like the rest of the budgets.
  */
 
 import { appendFileSync, mkdirSync } from "node:fs";
@@ -20,6 +26,7 @@ import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import {
 	createBashTool,
+	createLocalBashOperations,
 	defineTool,
 	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
@@ -70,6 +77,13 @@ function requiredInt(name: string): number {
 const CHECK = process.env.TIDE_CHECK ?? "";
 const PATH_UNDER_TEST = process.env.TIDE_PATH ?? "";
 
+// A shell with no wall clock is how one command eats a whole sweep: the model asks for something
+// that waits, and nothing interrupts it until the job's own `timeout-minutes`. Every command gets
+// a ceiling, and it is a ceiling rather than a default — a `timeout` the model passes is a
+// request, and `??` would let the sweep's wall clock be whatever the model typed. The unit is
+// seconds because that is what pi's bash operations take and convert themselves.
+const COMMAND_TIMEOUT_S = requiredInt("TIDE_BASH_TIMEOUT_S");
+
 function emit(kind: string, record: unknown) {
 	mkdirSync(OUT_DIR, { recursive: true });
 	appendFileSync(join(OUT_DIR, `${kind}.jsonl`), JSON.stringify(record) + "\n");
@@ -90,6 +104,17 @@ const ProposalShape = {
 		description:
 			"true when you actually made the change in the sandbox and ran the suite after it.",
 	}),
+	final_state_tested: Type.Optional(Type.Boolean({
+		description:
+			"When applied is true: true when the sandbox is left exactly as the after-run tested " +
+			"it. If you changed anything after the last test run, pass false — the diff attached " +
+			"to the issue is whatever is in the sandbox when the run ends.",
+	})),
+	untested_changes: Type.Optional(Type.String({
+		description:
+			"Required when final_state_tested is false: what is in the sandbox that the last test " +
+			"run did not cover, and why it is there anyway.",
+	})),
 	tests_command: Type.String({
 		description: "The command that runs the project's own suite. Same command before and after.",
 	}),
@@ -145,6 +170,23 @@ const reportProposal = defineTool({
 						"compare against.",
 				);
 			}
+			// The issue presents the attached diff as the change the suite ran against. That is only
+			// true when the sandbox is left in the tested state, and the harness cannot see which it
+			// is — so the answer is required, and "I changed more afterwards" has to be said out loud.
+			if (p.final_state_tested === undefined) {
+				throw new Error(
+					"applied is true, so final_state_tested is required: true when the sandbox is " +
+						"exactly what the after-run tested, false when you changed anything after that " +
+						"run. Reverting untested work is better than answering false.",
+				);
+			}
+			if (!p.final_state_tested && !(p.untested_changes ?? "").trim()) {
+				throw new Error(
+					"final_state_tested is false, so untested_changes is required: say what is in the " +
+						"sandbox that the last test run did not cover. An issue that attaches a diff it " +
+						"presents as tested must not hide the part that is not.",
+				);
+			}
 		} else if (!p.unverified_reason.trim()) {
 			throw new Error(
 				"applied is false, so unverified_reason is required: an issue that says 'not " +
@@ -169,7 +211,17 @@ const reportProposal = defineTool({
 export default function (pi: ExtensionAPI) {
 	pi.registerTool(reportProposal);
 
+	// The reviewer's shell shape, for the reviewer's reason: `cwd` is the first argument, the
+	// environment is filtered by the spawn hook, and the command's own `timeout` is capped rather
+	// than trusted.
+	const local = createLocalBashOperations();
 	const sanitizedBash = createBashTool(process.cwd(), {
+		operations: {
+			exec: (command, cwd, options) => local.exec(command, cwd, {
+				...options,
+				timeout: Math.min(options.timeout ?? COMMAND_TIMEOUT_S, COMMAND_TIMEOUT_S),
+			}),
+		},
 		spawnHook: ({ command, cwd, env }) => ({
 			command,
 			cwd,

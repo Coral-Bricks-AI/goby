@@ -13,10 +13,24 @@ contains the entire conversation including the system prompt.
 429/402 arrives as a message with `stopReason=error` and the run then looks exactly like a
 clean scan that found nothing. Only the *last* assistant message decides — pi retries a
 failed turn, and an error that was recovered from must not fail a completed scan.
+
+`--timeouts` exists because pi exits 0 after a *tool* error too. A shell command that hits the
+harness's wall clock is killed and reported to the model as `Command timed out after N seconds`;
+the run then finishes normally, so a scan that was cut short is otherwise indistinguishable from
+one that looked and found nothing. The count is read from the event stream's tool results, which
+is the run's own record. The string is pi's wording, and the base image pins pi — a bump that
+rewords it would make this count zero, which the test beside this file pins against.
 """
 import json
+import re
 import sys
 from pathlib import Path
+
+# pi's message for a command the harness killed, from `createShellToolDefinition`. It is the last
+# thing appended to the output, which is what makes it a signature rather than a substring: this
+# repository's own source contains the phrase, so a `read` of `summarize_run.py` must not look
+# like a killed command.
+TIMEOUT_MARKER = re.compile(r"Command timed out after \d+ seconds\s*$")
 
 
 def read_events(path: Path) -> list[dict]:
@@ -64,6 +78,31 @@ def status(path: Path) -> int:
     return 3
 
 
+def timeouts(events: list[dict]) -> int:
+    """How many shell commands the harness killed at its wall clock.
+
+    `tool_execution_end` carries the tool result, which is where the text the model saw lives.
+    Counting it here rather than writing a file from the extension keeps the verdict on the run's
+    own record: the same stream `--status` reads, and the one the log summarises.
+
+    Three conditions, because the phrase also appears in this repository's source (and a tide
+    sweeps this repository): the call was `bash`, it failed, and the message is the one pi appends
+    when it kills a command. A file whose contents happen to contain the sentence is a `read`, and
+    a `bash` command that printed it and then failed is neither an ordinary failure nor a timeout.
+    """
+    count = 0
+    for ev in events:
+        if ev.get("type") != "tool_execution_end" or not ev.get("isError"):
+            continue
+        if ev.get("toolName") != "bash":
+            continue
+        for item in ((ev.get("result") or {}).get("content") or []):
+            if isinstance(item, dict) and TIMEOUT_MARKER.search(str(item.get("text") or "")):
+                count += 1
+                break
+    return count
+
+
 def summary(path: Path) -> int:
     events = read_events(path)
     if not events:
@@ -85,11 +124,15 @@ def summary(path: Path) -> int:
 
 def main(argv: list[str]) -> int:
     wanted_status = "--status" in argv
+    wanted_timeouts = "--timeouts" in argv
     paths = [a for a in argv if not a.startswith("--")]
     if len(paths) != 1:
-        print("usage: summarize_run.py [--status] <events.jsonl>", file=sys.stderr)
+        print("usage: summarize_run.py [--status|--timeouts] <events.jsonl>", file=sys.stderr)
         return 2
     path = Path(paths[0])
+    if wanted_timeouts:
+        print(timeouts(read_events(path)))
+        return 0
     return status(path) if wanted_status else summary(path)
 
 
