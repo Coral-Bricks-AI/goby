@@ -98,6 +98,31 @@ def test_a_command_the_wall_clock_killed_is_counted(tmp_path):
     assert out.stdout.strip() == "1", out.stdout
 
 
+def test_the_marker_in_a_file_is_not_a_command_that_hit_the_wall(tmp_path):
+    """The tide sweeps this repository, and this file contains the phrase it counts. A read of
+    `summarize_run.py` — the one that found this — must not look like a killed command, or a scan
+    that legitimately found nothing fails the sweep."""
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        json.dumps({"type": "tool_execution_end", "toolName": "read",
+                    "result": {"content": [{"type": "text",
+                                            "text": 'TIMEOUT_MARKER = "Command timed out after 1200 seconds"'}]}}) + "\n"
+        # A command that printed a file containing the phrase and then failed is a failure, not a
+        # timeout: pi appends its message at the end, so a signature is what distinguishes them.
+        + json.dumps({"type": "tool_execution_end", "toolName": "bash", "isError": True,
+                      "result": {"content": [{"type": "text",
+                                             "text": "Command timed out after 1200 seconds\n\n"
+                                                     "Command exited with code 1"}]}}) + "\n"
+        # The same phrase in a *successful* bash result is not a kill either.
+        + json.dumps({"type": "tool_execution_end", "toolName": "bash", "isError": False,
+                      "result": {"content": [{"type": "text",
+                                             "text": "grep hit: Command timed out after 1200 seconds"}]}}) + "\n"
+    )
+    out = run("--timeouts", str(path))
+    assert out.returncode == 0
+    assert out.stdout.strip() == "0", out.stdout
+
+
 def test_no_event_stream_has_no_timeouts(tmp_path):
     out = run("--timeouts", str(tmp_path / "missing.jsonl"))
     assert out.returncode == 0 and out.stdout.strip() == "0"
