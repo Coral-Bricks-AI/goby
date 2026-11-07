@@ -25,11 +25,18 @@ whole design exists to prevent.
    an issue that a human checks may come from the model's prose: a title a model wrote would
    drift between sweeps, and a diff a model pasted is a diff nobody tested.
 
+   The harness can read the sandbox, not what ran against it, so the diff is labelled with the
+   one thing it cannot see: `report_proposal` requires `final_state_tested` when `applied` is
+   true, and an issue whose sandbox changed after the after-run says so instead of calling the
+   attachment tested. The claim and the diff are never folded together.
+
 2. **A proposal without evidence says so.** `report_proposal` requires `tests_command`,
    `tests_output_before` and `tests_output_after` when `applied` is true, and a non-empty
    `unverified_reason` when it is false — in the tool's own `execute`, not in the prompt. An
    issue that claims verification it does not have is worse than one that admits the plan is
-   untried.
+   untried. The same applies to the change: `final_state_tested: false` requires an
+   `untested_changes` reason, because a diff larger than the tested one is a proposal, not a
+   verified refactor.
 
 3. **A smell is filed at most once, and the two close reasons are not the same.** The fingerprint
    is `check|path` — no model wording, so a re-titled report of the same file is the same

@@ -31,8 +31,9 @@ own tests around it.
    refactor in a sandbox copy, runs the project's suite before and after, and reports through a
    tool that refuses a proposal with no runs behind it (or no reason for having none).
 4. **File.** One issue per proposal, labelled `goby-tide` and `goby`. The diff the agent left in
-   the sandbox is attached by the harness — not pasted by the model — and the measurement in the
-   title is the detector's.
+   the sandbox is attached by the harness — not pasted by the model — folded away so the plan is
+   what a reader sees first, and labelled with whether that state is the one the after-run tested.
+   The measurement in the title is the detector's.
 
 Nothing is opened as a pull request. The issue is the deliverable; a human or another agent
 takes it from there.
@@ -86,6 +87,7 @@ A workflow input overrides one for that repository.
 | `history-depth` | 200 | commits fetched; below 2, `todo_age` is skipped and logged |
 | `max-items` | 3 | agent runs one sweep may spend on smells |
 | `max-tools` | 120 | tool calls one agent run may make |
+| `bash-timeout-s` | 1200 | wall clock for one shell command in one scan; a command with none can run until the job timeout |
 | `issues-per-day` | 5 | issues this repository may receive from the tide in 24h |
 | `model` / `fallback-model` | `coral/deepseek-v4.1-flash-fast` | provider and model |
 | `label` | `goby-tide` | label to file under, *and* the one dedupe reads |

@@ -257,12 +257,40 @@ def render_issue(proposal: dict, sha: str) -> tuple[str, str]:
             "",
         ]
     if proposal.get("diff"):
+        # The claim and the evidence are kept separate: the sentence says which state the diff is,
+        # and only the diff itself folds away. A reader deciding whether to open it needs the claim.
+        diff = _clip(proposal.get("diff"), 12000, "diff", follows_from_plan=True)
+        if proposal.get("applied") and proposal.get("final_state_tested") is False:
+            # `applied: true` plus untested leftovers is the failure #118 describes: the sandbox at
+            # the end is not the sandbox the after-run tested, and the issue must not present it as
+            # one. The model is asked this in the emit tool, where it is the only one who knows.
+            body += [
+                "**The change the sweep applied** — the sandbox was left in a different state from "
+                "the one the after-run tested:",
+                "",
+                "**Not covered by the runs above** — changed after the last test run, so this part "
+                "is a proposal rather than a tested change:",
+                "",
+                _clip(proposal.get("untested_changes"), 2000, "untested changes")
+                or "(no reason given)",
+                "",
+            ]
+        else:
+            body += [
+                "**The change the sweep applied** — this is what the after-run tested:",
+                "",
+            ]
         body += [
-            "**The change the sweep applied** — this is what the after-run tested:",
+            # Folded: an issue is a plan, not a patch, and a thousand-line diff in the body is one
+            # nobody reads. The blank lines are load-bearing — GitHub renders the fence inside
+            # `<details>` only when it is separated from the tags by one.
+            "<details>",
+            f"<summary>diff — {diff.count(chr(10)) + 1:,} lines</summary>",
             "",
-            # The cap stays at 12k characters: an issue is a plan, not a patch. A cut is now
-            # visible and says where the rest comes from.
-            f"```diff\n{_clip(proposal.get('diff'), 12000, 'diff', follows_from_plan=True)}\n```",
+            # The cap stays at 12k characters; a cut is visible and says where the rest comes from.
+            f"```diff\n{diff}\n```",
+            "",
+            "</details>",
             "",
         ]
     elif proposal.get("applied"):

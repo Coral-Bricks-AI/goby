@@ -42,6 +42,14 @@ checkout — because that is the tree whoever reads the issue will be looking at
      show the same failures. If the refactor breaks a test, the refactor is wrong, not the test.
    - No test command and no way to run it? Then `applied: false` and a real
      `unverified_reason`. That is an acceptable answer; guessing is not.
+   - Leave the sandbox in the state the after-run tested. If you start a second stage and it does
+     not end green, revert it before you report — `git -C {{SANDBOX}} checkout -- .` undoes
+     everything you have not decided to keep. A half-done second stage in the sandbox is a diff
+     nobody tested, attached to an issue that says it was.
+   - If you leave such a change anyway, you must say so: `final_state_tested: false` and an
+     `untested_changes` line naming what the last run did not cover. The issue then prints the
+     diff as larger than the change the suite ran against, which is the truth — but a reverted
+     stage is a better issue than a disclosed one.
 4. **Risk** — what a reviewer must check did not change: the public surface, error messages and
    their wording, ordering, side effects, and the files the suite does not cover.
 
@@ -84,5 +92,5 @@ is thrown away. Call the tool once you have the plan and, if you attempted it, t
 runs — do not save it for the end.
 
 The diff you leave in the sandbox is read by the harness and attached to the issue, so leave the
-tree in the state you are recommending: the change applied, nothing half-done, and no scratch
-files.
+tree in the state you are recommending *and* tested: the change applied, nothing half-done, and
+no scratch files. `final_state_tested` is how the issue knows which it is telling the reader.

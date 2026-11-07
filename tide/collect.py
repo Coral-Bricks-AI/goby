@@ -12,7 +12,9 @@ Two things happen here that the agent cannot do for itself:
   words that flatter it ("very long file" instead of 1,432 lines).
 - **The diff is the harness's, not the model's.** The agent's refactor is read out of the
   sandbox with `git diff` after the run, so "0 functionality change" is a diff a reviewer can
-  read, rather than a claim the model made about itself.
+  read, rather than a claim the model made about itself. What the harness cannot see is whether
+  that final state is the one the tests ran against, so the proposal carries
+  `final_state_tested` and the issue says which it is.
 
 `classify` is the same five-case rule as `cleaners/plan.py`, kept here next to the sweep it
 decides for. It is eight lines and it differs in what it counts (proposals, not findings); the

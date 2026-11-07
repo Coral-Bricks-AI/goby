@@ -18,7 +18,8 @@ def test_the_defaults_live_in_the_image():
     defaults = (HERE / "defaults.env").read_text()
     for name, value in (("TIDE_MAX_FILE_LINES", 800), ("TIDE_MAX_DIR_FILES", 30),
                         ("TIDE_MAX_FILE_IMPORTS", 40), ("TIDE_MAX_ITEMS", 3),
-                        ("TIDE_MAX_TOOLS", 120), ("TIDE_ISSUES_PER_DAY", 5)):
+                        ("TIDE_MAX_TOOLS", 120), ("TIDE_BASH_TIMEOUT_S", 1200),
+                        ("TIDE_ISSUES_PER_DAY", 5)):
         assert f': "${{{name}:={value}}}"' in defaults, name
 
 
@@ -26,6 +27,7 @@ def test_the_entrypoint_sources_the_defaults_and_never_restates_a_number():
     entrypoint = (HERE / "entrypoint.sh").read_text()
     assert "source /opt/tide/defaults.env" in entrypoint
     for name, value in (("TIDE_MAX_ITEMS", 3), ("TIDE_MAX_TOOLS", 120),
+                        ("TIDE_BASH_TIMEOUT_S", 1200),
                         ("TIDE_ISSUES_PER_DAY", 5), ("TIDE_MAX_FILE_LINES", 800),
                         ("TIDE_MAX_DIR_FILES", 30), ("TIDE_MAX_FILE_IMPORTS", 40)):
         assert f'{name}="${{{name}:-{value}}}"' not in entrypoint, name
@@ -47,11 +49,14 @@ def test_the_emit_tool_has_no_numeric_fallback():
     extension = (HERE / "report_proposal.ts").read_text()
     assert 'requiredInt("TIDE_MAX_TOOLS")' in extension
     assert "?? 60" not in extension and "?? 120" not in extension
+    assert 'requiredInt("TIDE_BASH_TIMEOUT_S")' in extension
+    assert "?? 600" not in extension and "?? 1200" not in extension
 
 
 def test_the_workflow_passes_overrides_and_does_not_restate_the_numbers():
     workflow = WORKFLOW.read_text()
     for name, value in (("TIDE_MAX_ITEMS", 3), ("TIDE_MAX_TOOLS", 120),
+                        ("TIDE_BASH_TIMEOUT_S", 1200),
                         ("TIDE_ISSUES_PER_DAY", 5), ("TIDE_MAX_FILE_LINES", 800),
                         ("TIDE_MAX_DIR_FILES", 30), ("TIDE_MAX_FILE_IMPORTS", 40)):
         assert f"{name}: ${{{{ inputs." in workflow, name
@@ -111,3 +116,34 @@ def test_the_clone_is_deep_enough_for_todo_age():
     entrypoint = (HERE / "entrypoint.sh").read_text()
     assert '--depth "$TIDE_HISTORY_DEPTH"' in entrypoint
     assert entrypoint.count('--depth "$TIDE_HISTORY_DEPTH"') == 2, "clone and fetch"
+
+
+def test_every_shell_command_has_a_wall_clock():
+    """pi gives a bash command no timeout of its own, and the model may pass any number it likes:
+    without a ceiling in the harness, one `pytest` over a monorepo or one stalled `pip install`
+    runs until the job's `timeout-minutes` and the sweep files nothing from the candidates it
+    already finished. The reviewer's 120 assumes a diff-sized command; the tide runs a suite."""
+    entrypoint = (HERE / "entrypoint.sh").read_text()
+    # The value reaches pi's own process — and only there: the agent's shell has no use for it, so
+    # it stays out of the extension's environment allowlist.
+    assert 'TIDE_JSON=1 TIDE_MAX_TOOLS="$TIDE_MAX_TOOLS" TIDE_BASH_TIMEOUT_S="$TIDE_BASH_TIMEOUT_S"' \
+        in entrypoint
+    assert "TIDE_BASH_TIMEOUT_S" in entrypoint.split("for knob in")[1].split("do")[0], \
+        "0 from an empty dispatch input must fall back to the image default"
+    assert "bash_timeout=${TIDE_BASH_TIMEOUT_S}s" in entrypoint, "the log says the ceiling"
+    extension = (HERE / "report_proposal.ts").read_text()
+    assert "createLocalBashOperations" in extension
+    # A ceiling, not a default: `??` would let the model's own `timeout` be the sweep's wall clock.
+    assert "Math.min(options.timeout ?? COMMAND_TIMEOUT_S, COMMAND_TIMEOUT_S)" in extension
+    assert "TIDE_BASH_TIMEOUT_S" not in extension.split("ENV_ALLOW = new Set([")[1].split("]);")[0], \
+        "the agent's shell does not need the knob"
+
+
+def test_a_command_that_hit_the_wall_clock_is_loud():
+    """pi exits 0 after a tool error, so a scan cut short by the timeout finishes like any other.
+    The count comes from the run's event stream, and a scan that filed nothing was not quiet."""
+    entrypoint = (HERE / "entrypoint.sh").read_text()
+    assert 'summarize_run.py --timeouts "$OUT/agent/$slug/events.jsonl"' in entrypoint
+    assert "hit the ${TIDE_BASH_TIMEOUT_S}s command wall" in entrypoint
+    assert "produced no proposal; it was cut short, not quiet" in entrypoint
+    assert entrypoint.index("produced no proposal") < entrypoint.index('log "done"')
