@@ -52,6 +52,13 @@ for knob in TIDE_MAX_FILE_LINES TIDE_MAX_TEST_FILE_LINES TIDE_MAX_DIR_FILES \
             TIDE_MAX_TOOLS TIDE_HISTORY_DEPTH; do
   must_be_positive "$knob"
 done
+# `0` is a real request here — "measure, pick nothing, still close what is gone" is how the
+# `--close-gone` path was verified — so it is honoured rather than replaced. It is also the value a
+# `workflow_dispatch` input can carry when the field was left blank, and a sweep that picks nothing
+# must never look like a sweep that found nothing: say so in the one log line everybody reads.
+if [[ "$TIDE_MAX_ITEMS" -eq 0 ]]; then
+  log "warn: TIDE_MAX_ITEMS=0 — this sweep will pick no candidates and spend no model calls"
+fi
 
 # A provider is usable when every *credential* its models file interpolates is set. The check
 # lives in common/model_check.py, because it decides whether the system does anything at all.
