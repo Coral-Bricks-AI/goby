@@ -80,6 +80,25 @@ def test_a_zero_budget_falls_back_to_the_image_default(tmp_path):
     assert done.stdout.count("is not a positive integer") == 3, done.stdout
 
 
+def test_a_timeout_above_pis_maximum_falls_back_to_the_image_default(tmp_path):
+    """pi rejects a per-command timeout above 2,147,483,647 ms with "Invalid timeout: maximum ..."
+    and the command never runs. That message is not the timeout marker, so the cut-short check
+    cannot see it: the knob that exists to bound a hang would silently stop every command in every
+    scan. A huge number is the natural way to ask for "no ceiling", since 0 falls back and warns."""
+    import subprocess
+
+    defaults = tmp_path / "defaults.env"
+    defaults.write_text(': "${TIDE_BASH_TIMEOUT_S:=1200}"\n')
+    script = tmp_path / "guard.sh"
+    script.write_text(guard_block(defaults) + '\necho "bash=$TIDE_BASH_TIMEOUT_S"\n')
+    done = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                          env={"TIDE_BASH_TIMEOUT_S": "99999999",
+                               "PATH": "/usr/local/bin:/usr/bin:/bin"})
+    assert done.returncode == 0, done.stderr
+    assert "bash=1200" in done.stdout, (done.stdout, done.stderr)
+    assert "is above pi's" in done.stdout, done.stdout
+
+
 def test_a_chosen_threshold_is_kept(tmp_path):
     import subprocess
 

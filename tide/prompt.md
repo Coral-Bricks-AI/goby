@@ -22,7 +22,8 @@ about it, and what would break if someone did.
 You are in the checkout of the pushed commit, and it is read-only: reads, `rg`, `ls`, `find`
 and read-only `git` (`diff`, `log`, `blame`) work, writes fail. `{{SANDBOX}}` is a full copy of
 the same tree with its own `.git`, and it is yours to write: do the split there, and run the
-project's tests there. `git -C {{SANDBOX}} checkout -- .` undoes everything you did.
+project's tests there. `git -C {{SANDBOX}} checkout -- .` discards your edits to *tracked*
+files; it does not remove files you added — see "The change, tested" below.
 
 Paths and line numbers in a proposal are relative to the repository root — the read-only
 checkout — because that is the tree whoever reads the issue will be looking at.
@@ -43,9 +44,13 @@ checkout — because that is the tree whoever reads the issue will be looking at
    - No test command and no way to run it? Then `applied: false` and a real
      `unverified_reason`. That is an acceptable answer; guessing is not.
    - Leave the sandbox in the state the after-run tested. If you start a second stage and it does
-     not end green, revert it before you report — `git -C {{SANDBOX}} checkout -- .` undoes
-     everything you have not decided to keep. A half-done second stage in the sandbox is a diff
-     nobody tested, attached to an issue that says it was.
+     not end green, revert it before you report. `git -C {{SANDBOX}} checkout -- .` is **not**
+     enough: it restores tracked files from the index and leaves every file the later stage
+     *added* — which is most of a file split. `git -C {{SANDBOX}} status --short` lists what is
+     actually there; anything you did not test has to go, including added files
+     (`git -C {{SANDBOX}} clean -fdq -- <path>`, or `rm`), one path at a time so the files you did
+     test stay. A half-done second stage in the sandbox is a diff nobody tested, attached to an
+     issue that says it was.
    - If you leave such a change anyway, you must say so: `final_state_tested: false` and an
      `untested_changes` line naming what the last run did not cover. The issue then prints the
      diff as larger than the change the suite ran against, which is the truth — but a reverted

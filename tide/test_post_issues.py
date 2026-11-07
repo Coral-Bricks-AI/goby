@@ -269,6 +269,28 @@ def test_a_sandbox_that_changed_after_the_report_is_not_called_tested():
     assert "--- a/src/cli/entry.ts" in body, "the change is still attached, and still labelled"
 
 
+def test_a_diff_from_a_run_that_never_happened_is_not_called_tested():
+    """#121/#122: the prompt's own escape hatch is `applied: false` with a reason, and the sandbox
+    still holds the change. The body said "not verified" and "this is what the after-run tested"
+    four lines apart."""
+    _, body = pi.render_issue(proposal(applied=False, unverified_reason="no test command",
+                                       tests_output_before="", tests_output_after=""),
+                              "a" * 40)
+    assert "**Not verified in a container**" in body
+    assert "this is what the after-run tested" not in body
+    assert "nothing ran against it, so this is a proposal" in body
+    assert "--- a/src/cli/entry.ts" in body, "the change is still attached, and still labelled"
+
+
+def test_the_folded_summary_counts_the_change_not_the_clipping():
+    """#123/#124: the summary is the only size signal before the fold is opened, and it counted
+    the clipped text — 424 lines for a 500-line change, next to a note saying 500."""
+    body = "\n".join(f"+ line {n} of the refactor" for n in range(500))
+    _, rendered = pi.render_issue(proposal(diff=body), "a" * 40)
+    assert "<summary>diff — 500 lines</summary>" in rendered
+    assert "…diff truncated: showing" in rendered
+
+
 def test_a_proposal_from_before_the_question_is_not_presented_as_unverified():
     """A record with no `final_state_tested` predates the field; it gets the old sentence rather
     than the alarming one, because there is no evidence it was untested."""
