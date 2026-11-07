@@ -32,6 +32,34 @@ OUT="$WORK/out"
 log() { printf '%s goby-tide %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 count_lines() { if [[ -f "$1" ]]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
 
+# `workflow_dispatch` can hand a numeric input the user left empty a value of `0`, and the
+# defaults file's `:=` keeps it — `0` is not empty. A threshold of zero makes every file in the
+# repository a candidate, and `git clone --depth 0` fails the clone outright, so the first manual
+# run of a brand-new install can die before it measures anything. Anything that must be positive
+# falls back to the image default and says so; the two knobs where `0` is a real choice
+# (`TIDE_MAX_ITEMS`, `TIDE_ISSUES_PER_DAY`) keep it.
+must_be_positive() {
+  local name="$1" value="${!1}"
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    log "warn: $name=$value is not a positive integer; using the image default"
+    unset "$name"
+    # shellcheck source=/dev/null
+    source /opt/tide/defaults.env
+  fi
+}
+for knob in TIDE_MAX_FILE_LINES TIDE_MAX_TEST_FILE_LINES TIDE_MAX_DIR_FILES \
+            TIDE_MAX_FILE_IMPORTS TIDE_MAX_TODOS TIDE_MAX_TODO_AGE_DAYS \
+            TIDE_MAX_TOOLS TIDE_HISTORY_DEPTH; do
+  must_be_positive "$knob"
+done
+# `0` is a real request here — "measure, pick nothing, still close what is gone" is how the
+# `--close-gone` path was verified — so it is honoured rather than replaced. It is also the value a
+# `workflow_dispatch` input can carry when the field was left blank, and a sweep that picks nothing
+# must never look like a sweep that found nothing: say so in the one log line everybody reads.
+if [[ "$TIDE_MAX_ITEMS" -eq 0 ]]; then
+  log "warn: TIDE_MAX_ITEMS=0 — this sweep will pick no candidates and spend no model calls"
+fi
+
 # A provider is usable when every *credential* its models file interpolates is set. The check
 # lives in common/model_check.py, because it decides whether the system does anything at all.
 MODELS_DIR=/opt/tide/models
