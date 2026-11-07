@@ -223,7 +223,8 @@ run_scan() {
       --repo-dir "$REPO_DIR" --sandbox "$SANDBOX" \
       --check "$check" --path "$path" --facts "$facts" --sha "$HEAD_SHA" \
       --model "$model" --out "$agent_out" \
-      --config "$REPO_DIR/.goby/tide.json" "${RULES[@]}" > "$OUT/agent.log" 2>&1
+      --config "$REPO_DIR/.goby/tide.json" "${RULES[@]}" \
+      > "$OUT/agent.log" 2>&1 < /dev/null
   status=$?
   set -e
   # The change the agent left behind is evidence, and it is read here rather than pasted by the
@@ -254,8 +255,17 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     || log "warn: could not write the job summary header"
 fi
 
-while IFS=$'\t' read -r check path slug; do
+# An array, not a redirect on the loop. A child that reads stdin — `pi` does — used to eat the
+# remaining rows, so the first candidate scanned and the rest were silently dropped while the
+# sweep still reported `failed_scans=0`. Reading the rows first, and giving each child `/dev/null`,
+# is what makes "picked N" and "scanned N" the same number.
+mapfile -t ROWS < "$OUT/picked.tsv"
+PICKED_COUNT=${#ROWS[@]}
+SCANNED=0
+for row in ${ROWS[@]+"${ROWS[@]}"}; do
+  IFS=$'\t' read -r check path slug <<< "$row"
   [[ -n "${check:-}" ]] || continue
+  SCANNED=$((SCANNED + 1))
   facts="$OUT/facts/$slug.json"
   log "scan $check on $path (model=$MODEL max_tools=$TIDE_MAX_TOOLS)"
   status=0
@@ -328,7 +338,14 @@ while IFS=$'\t' read -r check path slug; do
       fi
     fi
   fi
-done < "$OUT/picked.tsv"
+done
+
+# Structural: it can only fire if this loop goes back to reading the file directly, which is the
+# shape that lost candidates.
+if [[ $SCANNED -ne $PICKED_COUNT ]]; then
+  log "error: picked $PICKED_COUNT candidate(s) but scanned $SCANNED; that is not a sweep"
+  exit 4
+fi
 
 # --- file ----------------------------------------------------------------------------
 PROPOSALS="$(python3 /opt/tide/collect.py collect --agent-dir "$OUT/agent" \

@@ -269,7 +269,8 @@ run_scan() {
     bash /opt/cleaners/cleaner.sh \
       --repo-dir "$REPO_DIR" --component "$dir" --sha "$HEAD_SHA" --before "$BEFORE" \
       --charter "$charter" --model "$model" --out "$agent_out" \
-      --changed "$CHANGED_FILE" "${RULES[@]}" > "$OUT/agent.log" 2>&1
+      --changed "$CHANGED_FILE" "${RULES[@]}" \
+      > "$OUT/agent.log" 2>&1 < /dev/null
   status=$?
   set -e
   # Sealed the moment the scan ends: the agent owns its run directory while it works, and
