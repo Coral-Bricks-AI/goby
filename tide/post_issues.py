@@ -259,8 +259,18 @@ def render_issue(proposal: dict, sha: str) -> tuple[str, str]:
     if proposal.get("diff"):
         # The claim and the evidence are kept separate: the sentence says which state the diff is,
         # and only the diff itself folds away. A reader deciding whether to open it needs the claim.
-        diff = _clip(proposal.get("diff"), 12000, "diff", follows_from_plan=True)
-        if proposal.get("applied") and proposal.get("final_state_tested") is False:
+        full_diff = str(proposal.get("diff") or "").strip()
+        diff = _clip(full_diff, 12000, "diff", follows_from_plan=True)
+        if not proposal.get("applied"):
+            # The plan was never run, so nothing about this diff was tested — and the body says so
+            # four lines up. Calling it "what the after-run tested" contradicted the only claim
+            # the record actually makes (#121/#122).
+            body += [
+                "**The change in the sandbox** — nothing ran against it, so this is a proposal, "
+                "not a tested change:",
+                "",
+            ]
+        elif proposal.get("final_state_tested") is False:
             # `applied: true` plus untested leftovers is the failure #118 describes: the sandbox at
             # the end is not the sandbox the after-run tested, and the issue must not present it as
             # one. The model is asked this in the emit tool, where it is the only one who knows.
@@ -285,7 +295,10 @@ def render_issue(proposal: dict, sha: str) -> tuple[str, str]:
             # nobody reads. The blank lines are load-bearing — GitHub renders the fence inside
             # `<details>` only when it is separated from the tags by one.
             "<details>",
-            f"<summary>diff — {diff.count(chr(10)) + 1:,} lines</summary>",
+            # The *unclipped* count: the summary is the only size signal a reader gets before
+            # opening the fold, and counting the clipped text understated a 500-line change as 424
+            # — contradicting the truncation note inside it (#123/#124).
+            f"<summary>diff — {full_diff.count(chr(10)) + 1:,} lines</summary>",
             "",
             # The cap stays at 12k characters; a cut is visible and says where the rest comes from.
             f"```diff\n{diff}\n```",

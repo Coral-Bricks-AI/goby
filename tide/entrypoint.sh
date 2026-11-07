@@ -53,6 +53,18 @@ for knob in TIDE_MAX_FILE_LINES TIDE_MAX_TEST_FILE_LINES TIDE_MAX_DIR_FILES \
             TIDE_MAX_TOOLS TIDE_HISTORY_DEPTH TIDE_BASH_TIMEOUT_S; do
   must_be_positive "$knob"
 done
+# pi refuses a timeout above 2,147,483,647 ms *per command* -> "Invalid timeout: maximum is
+# 2147483.647 seconds" before the command runs. That failure is not the timeout marker, so the
+# cut-short check cannot see it: a sweep whose knob asked for "no ceiling" (the natural way to say
+# it, since 0 falls back and warns) would run nothing and exit green. Bounded here, where a bad
+# input is one log line.
+TIDE_BASH_TIMEOUT_MAX_S=2147483
+if [[ "$TIDE_BASH_TIMEOUT_S" -gt "$TIDE_BASH_TIMEOUT_MAX_S" ]]; then
+  log "warn: TIDE_BASH_TIMEOUT_S=$TIDE_BASH_TIMEOUT_S is above pi's ${TIDE_BASH_TIMEOUT_MAX_S}s maximum; using the image default"
+  unset TIDE_BASH_TIMEOUT_S
+  # shellcheck source=/dev/null
+  source /opt/tide/defaults.env
+fi
 # `0` is a real request here — "measure, pick nothing, still close what is gone" is how the
 # `--close-gone` path was verified — so it is honoured rather than replaced. It is also the value a
 # `workflow_dispatch` input can carry when the field was left blank, and a sweep that picks nothing

@@ -147,3 +147,13 @@ def test_a_command_that_hit_the_wall_clock_is_loud():
     assert "hit the ${TIDE_BASH_TIMEOUT_S}s command wall" in entrypoint
     assert "produced no proposal; it was cut short, not quiet" in entrypoint
     assert entrypoint.index("produced no proposal") < entrypoint.index('log "done"')
+
+
+def test_the_untested_stage_recipe_removes_the_files_it_added():
+    """#120: a split's second stage mostly *adds* files, and `git checkout -- .` restores tracked
+    files only. The prompt then left untested modules in the sandbox, the harness attached them, and
+    the model was told the revert had undone "everything you have not decided to keep"."""
+    prompt = (HERE / "prompt.md").read_text()
+    assert "checkout -- ." in prompt, "the trap is named, so the model knows the shortcut"
+    assert "status --short" in prompt, "the model checks what is actually there"
+    assert "clean -fdq" in prompt, "added files have to go too"
