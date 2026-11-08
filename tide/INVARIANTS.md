@@ -67,9 +67,11 @@ whole design exists to prevent.
    failed exits non-zero, so silence is never indistinguishable from "no smells".
 
 7. **The agent cannot reach a credential, and the sweep cannot reach the network it was not
-   given.** The agent runs as uid 10001 under `env -i` with one provider key; the GitHub token is
-   a root-only file. On a GitHub-hosted runner the sweep sees the repository and nothing else,
-   and no code path may widen that without the workflow asking for a self-hosted runner.
+   given.** The agent runs as uid 10001 under `env -i`; its models file points every provider at
+   loopback with a dummy credential, and the real key lives in a root-only file the key proxy
+   reads. The GitHub token is a root-only file too. On a GitHub-hosted runner the sweep sees the
+   repository and nothing else, and no code path may widen that without the workflow asking for a
+   self-hosted runner.
 
 ## What cannot be demonstrated here
 
