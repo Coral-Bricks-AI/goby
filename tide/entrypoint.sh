@@ -14,10 +14,14 @@
 # refactor in a sandbox. `detect.py` owns what a smell is; `prompt.md` and `report_proposal.ts`
 # own what a proposal must prove.
 #
-# Runs as root; each scan runs as the unprivileged `agent` user with an empty environment, so
-# neither the token nor the Coral key is reachable from the agent. A non-zero exit is visible as
-# a failed task, and nothing retries it: the next tick is the retry.
+# Runs as root; each scan runs as the unprivileged `agent` user with an empty environment. The
+# agent gets a dummy credential in a models file that points at loopback, and the real key lives in
+# a root-only file the loopback proxy reads (base/lib.sh, docs/trust-model.md) — so neither the
+# token nor the model key is reachable from the agent. A non-zero exit is visible as a failed task,
+# and nothing retries it: the next tick is the retry.
 set -euo pipefail
+# shellcheck source=/dev/null
+source /opt/goby/lib.sh
 # shellcheck source=/dev/null
 source /opt/tide/defaults.env
 
@@ -30,7 +34,11 @@ REPO_DIR="$WORK/repo"
 SANDBOX="$WORK/sandbox"
 OUT="$WORK/out"
 
-log() { printf '%s goby-tide %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+# The log lines stay byte-identical to what this script wrote before it sourced the base:
+# "timestamp goby-tide message" is what a consumer greps for.
+# shellcheck disable=SC2034
+export GOBY_LOG_NAME=goby-tide
+log() { goby_log "$*"; }
 count_lines() { if [[ -f "$1" ]]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
 
 # `workflow_dispatch` can hand a numeric input the user left empty a value of `0`, and the
@@ -83,6 +91,37 @@ if ! MODEL="$(python3 /opt/common/model_check.py --models-dir "$MODELS_DIR" \
 fi
 log "model $MODEL"
 
+# --- the key, and the proxy that holds it ----------------------------------------------
+# The agent calls the model, so it cannot be denied one — but it can be denied the *key*. Root
+# writes the selected provider's key to a root-only file that the proxy reads, and the agent's
+# models file carries a dummy. A retry may land on a different provider, and the proxy reads its
+# upstream once at startup, so switching provider means restarting it; `ensure_proxy` remembers
+# which provider is up rather than restarting per scan.
+PROXY_PROVIDER=""
+ensure_proxy() {
+  local provider="$1" key upstream header="authorization" scheme="Bearer "
+  if [[ "$PROXY_PROVIDER" == "$provider" ]]; then return 0; fi
+  goby_proxy_stop
+  case "$provider" in
+    # The upstream is the host only: the path comes from the agent's models file, so a provider
+    # whose API lives under a prefix (deepinfra's `/v1/openai`) forwards the same path the
+    # unsanitized file names. The proxy prepends `upstream.pathname` to the request path.
+    coral)     key="${CORALBRICKS_API_KEY:-}"; upstream="https://inference.coralbricks.ai" ;;
+    # Anthropic authenticates with `x-api-key` and no scheme. A proxy that only rewrites
+    # `authorization` would forward the agent's dummy and add the real key where nothing reads it.
+    anthropic) key="${ANTHROPIC_API_KEY:-}";   upstream="https://api.anthropic.com"
+               header="x-api-key"; scheme="" ;;
+    openai)    key="${OPENAI_API_KEY:-}";      upstream="https://api.openai.com" ;;
+    deepinfra) key="${DEEPINFRA_API_KEY:-}";   upstream="https://api.deepinfra.com" ;;
+    *) log "error: no upstream known for provider $provider"; return 2 ;;
+  esac
+  [[ -n "$key" ]] || { log "error: no key for provider $provider"; return 2; }
+  goby_key_to_file "$key" || return 2
+  goby_proxy_start "$upstream" "$header" "$scheme" || return 2
+  PROXY_PROVIDER="$provider"
+}
+trap goby_proxy_stop EXIT
+
 mkdir -p "$WORK"
 rm -rf "$REPO_DIR" "$SANDBOX" "$OUT"
 mkdir -p "$OUT"
@@ -120,12 +159,10 @@ if [[ -z "${GOBY_MODELS_JSON:-}" && -f "$REPO_DIR/.goby/models.json" ]]; then
 fi
 
 # The sweep runs as another uid, but it shares this container: keep the token off this process's
-# environment entirely while the agent is working.
-TOKEN_FILE=/root/.tide-token
-umask 077
-printf '%s' "$GITHUB_TOKEN" > "$TOKEN_FILE"
+# environment entirely while the agent is working. `goby_token_to_file` owns the convention — a
+# root-only file the agent cannot read — so the path is not restated here.
+goby_token_to_file
 unset GITHUB_TOKEN
-umask 022
 
 # --- measure -------------------------------------------------------------------------
 # No model call yet. This is the cheap step, and it is also the one that decides whether the
@@ -225,37 +262,28 @@ run_scan() {
       log "warn: could not reset $SANDBOX before scanning $check on $path"
     fi
   fi
+  # The proxy reads its upstream once, so a retry on another provider has to restart it before pi
+  # starts. Failing here is a wiring error, not a model error, and must not be retried as one.
+  ensure_proxy "$provider" || return 2
   # pi writes auth.json in its agent dir at startup even when the key comes from the models file,
-  # so that dir has to belong to the agent. The image's copy stays root-owned and read-only; only
-  # the selected provider file is copied across.
-  if [[ ! -f "$MODELS_DIR/$provider.json" ]]; then
-    log "error: no $MODELS_DIR/$provider.json for $model"
+  # so that dir has to belong to the agent. The image's copy stays root-owned and read-only; the
+  # agent gets the sanitized file every provider points through loopback with a dummy credential.
+  if [[ ! -f /opt/goby/models/models.json ]]; then
+    log "error: /opt/goby/models/models.json is missing from goby-base"
     return 2
   fi
-  cp "$MODELS_DIR/$provider.json" "$agent_home/models.json"
+  cp /opt/goby/models/models.json "$agent_home/models.json"
   chown -R agent:agent "$agent_out" "$agent_home"
   chmod 700 "$agent_home"
 
-  # Only the credential this model actually uses is handed over: the agent's process holds one
-  # key, never the full set, and its shell sees none of them (see report_proposal.ts).
-  local -a key_env=()
-  case "$provider" in
-    coral) key_env=(CORALBRICKS_API_KEY="$CORALBRICKS_API_KEY") ;;
-    anthropic) key_env=(ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}") ;;
-    openai) key_env=(OPENAI_API_KEY="${OPENAI_API_KEY:-}") ;;
-    deepinfra) key_env=(DEEPINFRA_API_KEY="${DEEPINFRA_API_KEY:-}") ;;
-    *) log "error: no credential name known for provider $provider"; return 2 ;;
-  esac
-
-  # Empty environment on purpose: nothing from this shell leaks into the agent's process. REPO
-  # is on the list because the prompt renders it.
+  # Empty environment on purpose: nothing from this shell leaks into the agent's process. The one
+  # model credential is the dummy the proxy replaces; the real key never enters this env. REPO is
+  # on the list because the prompt renders it.
   set +e
-  runuser -u agent -- env -i \
-    PATH=/usr/local/bin:/usr/bin:/bin \
-    HOME=/home/agent TMPDIR=/tmp \
-    "${key_env[@]}" \
+  goby_run_as_agent \
     GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 \
     PI_CODING_AGENT_DIR="$agent_home" PI_OFFLINE=1 PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 \
+    GOBY_MODEL_KEY=dummy-proxy-key \
     TIDE_JSON=1 TIDE_MAX_TOOLS="$TIDE_MAX_TOOLS" TIDE_BASH_TIMEOUT_S="$TIDE_BASH_TIMEOUT_S" \
     GOBY_SESSION_ID="tide-$slug-${HEAD_SHA:0:10}" \
     REPO="$REPO" \
@@ -415,8 +443,8 @@ PROPOSALS="$(python3 /opt/tide/collect.py collect --agent-dir "$OUT/agent" \
   --candidates "$OUT/picked.jsonl" --out "$OUT/proposals.jsonl")"
 log "proposals=$PROPOSALS failed_scans=$FAILED_SCANS"
 
-GITHUB_TOKEN="$(cat "$TOKEN_FILE")"
-rm -f "$TOKEN_FILE"
+GITHUB_TOKEN="$(cat "$GOBY_TOKEN_FILE")"
+rm -f "$GOBY_TOKEN_FILE"
 export GITHUB_TOKEN
 
 # `--close-gone` only when the whole tree was measured. What decides "gone" is the measurement,

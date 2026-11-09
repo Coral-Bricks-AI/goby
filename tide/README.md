@@ -56,7 +56,9 @@ on:
 ```
 
 Add `CORALBRICKS_API_KEY` as a repository secret. That is the whole install: no registry of
-components, no config file required, no extra credentials.
+components, no config file required, no extra credentials. The key is read by the entrypoint and
+held by a loopback proxy; the agent gets a dummy credential, so code the sweep runs cannot read
+the real one.
 
 Run it by hand whenever you like: **Actions → Goby tide → Run workflow**. The dispatch form
 mirrors every input the reusable workflow takes, so a manual run can pin an image digest, a model

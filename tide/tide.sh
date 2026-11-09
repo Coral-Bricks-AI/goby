@@ -29,14 +29,12 @@ done
 
 : "${REPO_DIR:?}"; : "${SANDBOX:?}"; : "${CHECK:?}"; : "${PATH_UNDER_TEST:?}"
 : "${FACTS:?}"; : "${SHA:?}"; : "${MODEL:?}"; : "${OUT:?}"
-# The credential the selected provider needs, and no other: the models file interpolates it, and
-# pi refuses to start on an unset variable. Checked per provider so a sweep on Claude or GPT does
-# not demand our Coral key — the entrypoint already resolved which one is usable.
+# The agent's models file is the base image's sanitized one: every provider points at loopback and
+# interpolates this dummy, which the proxy replaces with the real key. pi refuses to start on an
+# unset variable, so a missing dummy is a wiring error and fails by name before the model runs.
+: "${GOBY_MODEL_KEY:?GOBY_MODEL_KEY must be set to the dummy credential the proxy replaces}"
 case "${MODEL%%/*}" in
-  coral)     : "${CORALBRICKS_API_KEY:?CORALBRICKS_API_KEY must be set for a coral model}" ;;
-  anthropic) : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY must be set for an anthropic model}" ;;
-  openai)    : "${OPENAI_API_KEY:?OPENAI_API_KEY must be set for an openai model}" ;;
-  deepinfra) : "${DEEPINFRA_API_KEY:?DEEPINFRA_API_KEY must be set for a deepinfra model}" ;;
+  coral|anthropic|openai|deepinfra) ;;
   *) echo "unknown provider in --model $MODEL" >&2; exit 2 ;;
 esac
 # A missing measurement is a wiring error, not a model error, and a traceback would exit

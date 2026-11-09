@@ -101,8 +101,8 @@ def test_the_shipped_models_files_only_ask_for_credentials(tmp_path):
 
 def test_the_sanitized_models_file_declares_every_shipped_provider():
     """An agent is handed `base/models/models.json`, not the per-provider files, so a provider
-    missing from it is a model pi refuses to load. Review, cleaners and (soon) the tide all read
-    this one file; `common/models/` is the list of providers that have to work."""
+    missing from it is a model pi refuses to load. Review, cleaners and the tide all read this
+    one file; `common/models/` is the list of providers that have to work."""
     catalog = json.loads((HERE.parent / "base" / "models" / "models.json").read_text())
     shipped = {path.stem for path in (HERE / "models").glob("*.json")}
     assert shipped == set(catalog["providers"]), (sorted(shipped), sorted(catalog["providers"]))
@@ -128,9 +128,10 @@ def test_every_shipped_provider_is_one_the_shell_can_run():
         # the models files are shared, so every product must know every provider. Both of these
         # pick the upstream the proxy forwards to, so both need a `case` arm per provider.
         # `cleaner.sh` is deliberately absent: since cleaners moved onto the key proxy it holds no
-        # key at all, so the provider no longer reaches the scan's process.
+        # key at all, so the provider no longer reaches the scan's process. The tide's arm lives in
+        # its entrypoint for the same reason, now that it holds the key behind the proxy too.
         for script in (HERE.parent / "cleaners" / "entrypoint.sh",
-                       HERE.parent / "tide" / "tide.sh"):
+                       HERE.parent / "tide" / "entrypoint.sh"):
             text = pathlib.Path(script).read_text()
             assert f"{provider})" in text, f"{script} does not know provider {provider}"
             assert credential in text, f"{script} never mentions {credential}"

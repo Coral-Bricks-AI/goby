@@ -22,8 +22,9 @@ COPY tide/tide.sh tide/entrypoint.sh /opt/tide/
 COPY tide/defaults.env tide/prompt.md tide/report_proposal.ts /opt/tide/
 RUN chmod 0755 /opt/tide/*.sh /opt/tide/*.py
 
-# The agent's own pi config lives here; the image copy stays read-only, so a missing key fails
-# loudly instead of half-working from a baked file.
+# Defaults for the image; the entrypoint points PI_CODING_AGENT_DIR at a per-run directory that
+# holds the base image's sanitized models file (loopback plus a dummy credential). No key is baked
+# into this image.
 ENV PI_CODING_AGENT_DIR=/opt/tide \
     PI_OFFLINE=1 \
     PI_TELEMETRY=0 \
