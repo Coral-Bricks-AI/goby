@@ -5,6 +5,7 @@ side is the wall clock the caller measured minus that, and a number is reported 
 sides are real. A split that quietly credits the model with a shell command's time would send
 somebody optimising the wrong half.
 """
+import itertools
 import json
 import subprocess
 import sys
@@ -25,18 +26,26 @@ def stream(tmp_path, *events) -> Path:
     return path
 
 
+IDS = itertools.count()
+
+
 def tool(name, ms=None, **args):
-    event = {"type": "tool_execution_end", "toolName": name, "args": args, "isError": False}
+    """One call as pi writes it: the arguments on `start`, the clock on `end`, and an id joining
+    the two. `tool_execution_end` carries no `args` at all — a fixture that puts them there tests
+    a stream pi never emits, which is how the first version of this file shipped with every slow
+    call named "bash". """
+    call_id = f"call_{next(IDS)}"
+    end = {"type": "tool_execution_end", "toolCallId": call_id, "toolName": name, "isError": False}
     if ms is not None:
-        event["durationMs"] = ms
-    return event
+        end["durationMs"] = ms
+    return [{"type": "tool_execution_start", "toolCallId": call_id, "toolName": name, "args": args},
+            end]
 
 
 def test_the_model_share_is_the_agent_wall_clock_minus_the_tools(tmp_path):
     """The whole reason the line exists: 100s of agent, 60.7s of it inside tools."""
-    path = stream(tmp_path, {"type": "turn_start"},
-                  tool("bash", 60200, command="uv run pytest tests/x -q"),
-                  tool("read", 500, path="src/a.ts"))
+    path = stream(tmp_path, {"type": "turn_start"}, *tool("bash", 60200, command="uv run pytest tests/x -q"),
+                  *tool("read", 500, path="src/a.ts"))
     result = run(str(path), "--agent-seconds", "100")
     assert result.returncode == 0, result.stderr
     assert "agent=100s" in result.stdout
@@ -45,18 +54,29 @@ def test_the_model_share_is_the_agent_wall_clock_minus_the_tools(tmp_path):
 
 
 def test_the_slowest_calls_are_named_with_what_they_were_pointed_at(tmp_path):
-    """`bash 38.9s` invites a guess; the command ends the argument about what to cut."""
+    """`bash 38.9s` invites a guess; the command ends the argument about what to cut. The command
+    is on the `start` event, not the `end` one, so this pins the pairing by call id."""
     path = stream(tmp_path, {"type": "turn_start"},
-                  tool("bash", 60000, command="uv run pytest tests/x -q\n  && echo done"),
-                  tool("bash", 3000, command="rg -n TODO src"))
+                  *tool("bash", 60000, command="uv run pytest tests/x -q\n  && echo done"),
+                  *tool("bash", 3000, command="rg -n TODO src"))
     out = run(str(path), "--agent-seconds", "70").stdout
     assert 'slowest: "uv run pytest tests/x -q && echo done" 60.0s, "rg -n TODO src" 3.0s' in out
+
+
+def test_a_call_with_no_start_keeps_its_name_and_loses_only_the_subject(tmp_path):
+    """A stream can be cut short at any point. An end with no matching start still has its clock
+    and its tool name, and must not take the line down or invent a subject."""
+    path = stream(tmp_path, {"type": "turn_start"},
+                  {"type": "tool_execution_end", "toolCallId": "orphan", "toolName": "bash",
+                   "durationMs": 2000, "isError": False})
+    out = run(str(path), "--agent-seconds", "10").stdout
+    assert 'slowest: "bash" 2.0s' in out
 
 
 def test_a_call_with_no_clock_is_not_folded_into_the_model(tmp_path):
     """A tool that recorded no time puts time into neither side. Subtracting the measured calls
     from the wall clock would have made the model look 90s slower than it was."""
-    path = stream(tmp_path, {"type": "turn_start"}, tool("bash", command="sleep 1"))
+    path = stream(tmp_path, {"type": "turn_start"}, *tool("bash", command="sleep 1"))
     out = run(str(path), "--agent-seconds", "100").stdout
     assert "model=?" in out
     assert "no clock on 1 call(s)" in out
@@ -75,11 +95,13 @@ def test_a_stream_with_no_turn_is_not_all_model_time(tmp_path):
 def test_the_timeouts_are_counted_at_the_bash_wall_clock(tmp_path):
     """One killed `pytest` and forty fast reads look identical in a total; that is the reading
     this count prevents."""
-    killed = {"type": "tool_execution_end", "toolName": "bash", "durationMs": 120000,
-              "args": {"command": "uv run pytest -q"}, "isError": True,
+    killed = {"type": "tool_execution_end", "toolCallId": "c1", "toolName": "bash",
+              "durationMs": 120000, "isError": True,
               "result": {"content": [{"type": "text",
                                       "text": "Command timed out after 120 seconds"}]}}
-    path = stream(tmp_path, {"type": "turn_start"}, killed)
+    path = stream(tmp_path, {"type": "turn_start"},
+                  {"type": "tool_execution_start", "toolCallId": "c1", "toolName": "bash",
+                   "args": {"command": "uv run pytest -q"}}, killed)
     assert "timeouts=1" in run(str(path), "--agent-seconds", "130").stdout
 
 
@@ -98,7 +120,7 @@ def test_tokens_are_summed_across_every_message(tmp_path):
 def test_per_turn_latency_says_whether_the_turns_or_the_model_is_the_problem(tmp_path):
     """The actionable number: 31 turns at 2.5s is too many turns, at 9s it is the model."""
     path = stream(tmp_path, *[{"type": "turn_start"} for _ in range(4)],
-                  tool("read", 1000, path="a"))
+                  *tool("read", 1000, path="a"))
     assert ", 7.2s/turn" in run(str(path), "--agent-seconds", "30").stdout
 
 
@@ -109,7 +131,7 @@ def test_the_line_never_echoes_the_prompt_or_the_diff(tmp_path):
     path = stream(tmp_path, {"type": "turn_start"}, {
         "type": "message_end", "message": {"role": "user", "usage": {},
                                            "content": [{"type": "text", "text": secret}]}},
-        tool("bash", 10, command="cat"))
+        *tool("bash", 10, command="cat"))
     result = run(str(path), "--agent-seconds", "5")
     assert secret not in result.stdout + result.stderr
     assert secret not in run(str(path), "--agent-seconds", "5", "--json").stdout
@@ -127,7 +149,7 @@ def test_garbage_in_the_stream_is_skipped_rather_than_fatal(tmp_path):
     """A jsonl file can end mid-line if the container dies; the readable part is still evidence."""
     path = tmp_path / "events.jsonl"
     path.write_text(json.dumps({"type": "turn_start"}) + "\n{not json\n"
-                    + json.dumps(tool("bash", 2000, command="ls")) + "\n")
+                    + "".join(json.dumps(e) + "\n" for e in tool("bash", 2000, command="ls")))
     result = run(str(path), "--agent-seconds", "4")
     assert result.returncode == 0
     assert "tools=2.0s (1 calls: bash 2.0s/1)" in result.stdout
@@ -136,9 +158,9 @@ def test_garbage_in_the_stream_is_skipped_rather_than_fatal(tmp_path):
 def test_the_json_carries_every_tool_not_just_the_named_ones(tmp_path):
     """The line stops at three tool names so it stays readable; a longer list has to be reachable
     without a second measurement."""
-    path = stream(tmp_path, {"type": "turn_start"}, tool("read", 100, path="a"),
-                  tool("grep", 200, pattern="b"), tool("find", 300, path="c"),
-                  tool("ls", 400, path="d"))
+    path = stream(tmp_path, {"type": "turn_start"}, *tool("read", 100, path="a"),
+                  *tool("grep", 200, pattern="b"), *tool("find", 300, path="c"),
+                  *tool("ls", 400, path="d"))
     summary = json.loads(run(str(path), "--agent-seconds", "10", "--json").stdout)
     assert [name for name in summary["tool_time"]] == ["ls", "find", "grep", "read"]
     assert summary["tool_time"]["ls"] == {"calls": 1, "s": 0.4, "unmeasured": 0}

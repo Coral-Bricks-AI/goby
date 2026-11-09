@@ -50,9 +50,8 @@ def _seconds(event: dict) -> float | None:
     return ms / 1000
 
 
-def _subject(event: dict) -> str:
+def _subject(args: dict) -> str:
     """What the call was pointed at, on one line: the command, the path, the pattern."""
-    args = event.get("args") or {}
     for name in SUBJECT_ARGS:
         value = args.get(name)
         if isinstance(value, str) and value.strip():
@@ -67,11 +66,21 @@ def summarise(events: list[dict], agent_s: float | None = None,
     turns = 0
     tools: dict[str, dict] = {}
     calls: list[tuple[str, float | None, str]] = []
+    # What each call was pointed at, keyed by the id both events share. pi splits one call across
+    # two records and neither carries both halves: `tool_execution_start` has the arguments,
+    # `tool_execution_end` has the clock and no arguments at all (`emitToolExecutionStart` and
+    # `emitToolExecutionEnd` in pi's agent loop). Reading `args` off the end event, as the first
+    # version of this file did, names every slow call "bash" and answers nothing.
+    subjects: dict[str, str] = {}
     tokens = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
     for event in events:
         kind = event.get("type")
         if kind == "turn_start":
             turns += 1
+        elif kind == "tool_execution_start":
+            call_id = event.get("toolCallId")
+            if isinstance(call_id, str):
+                subjects[call_id] = _subject(event.get("args") or {})
         elif kind == "tool_execution_end":
             name = event.get("toolName") or "?"
             seconds = _seconds(event)
@@ -81,7 +90,9 @@ def summarise(events: list[dict], agent_s: float | None = None,
                 row["unmeasured"] += 1
             else:
                 row["s"] += seconds
-            calls.append((name, seconds, _subject(event)))
+            # Popped, not read: a stream can be long, and an id is used once. An end with no start
+            # (a truncated stream) keeps the tool's name and loses only its subject.
+            calls.append((name, seconds, subjects.pop(event.get("toolCallId"), "")))
         elif kind == "message_end":
             usage = (event.get("message") or {}).get("usage") or {}
             for key in tokens:
