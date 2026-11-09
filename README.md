@@ -11,7 +11,9 @@ schedule, measures the code that has become hard to work in, and files one issue
 plan to remove it — see [`tide/README.md`](tide/README.md).
 
 The two that file issues put two labels on each: their own (`goby-cleaners`, `goby-tide`) and the
-general `goby`, so `label:goby` lists everything goby filed in a repository.
+general `goby`, so `label:goby` lists everything goby filed in a repository. The cleaners add the
+severity it measured — `Severity:high`, `Severity:medium`, `Severity:low` — because a label is
+the one field an issue list can be sorted by: `label:"Severity:high"` is the list to read first.
 
 Licensed under [Apache-2.0](LICENSE).
 

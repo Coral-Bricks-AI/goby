@@ -306,7 +306,10 @@ def file_findings(repo: str, token: str, sha: str, filed: list[dict]) -> tuple[l
     reproduced finding was rejected by GitHub is a finding lost with nobody told.
 
     Each issue carries two labels — `goby-cleaners` and the general `goby` — so a repository
-    can filter for one product or for everything goby filed.
+    can filter for one product or for everything goby filed. `decide()` also puts `severity` on
+    every item it files, so the shared filer adds `Severity:high|medium|low`: what a human sorts
+    by is the same fact the marker and the body line already carry, and the dedupe read still
+    asks for `goby-cleaners` alone.
     """
     return common.file_issues(
         repo, token, product(), filed,

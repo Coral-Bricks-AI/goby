@@ -1,4 +1,4 @@
-"""The shared filing machinery: two labels, one read, and a marker only at the top.
+"""The shared filing machinery: the label stack, one read, and a marker only at the top.
 
 No network: `_http` is never called directly here; every function takes the http callable it
 should use, which is also how the products stub it in their own tests.
@@ -98,6 +98,32 @@ def test_both_labels_are_created_and_an_existing_one_is_not_an_error():
     assert gh.created_labels == ["goby-test", "goby"]
 
 
+def test_a_severity_label_sits_between_the_product_and_goby():
+    """Second, because it is the field a human sorts by and GitHub shows these in order."""
+    assert product("goby-cleaners").labels_for("high") == [
+        "goby-cleaners", "Severity:high", "goby"]
+    assert product("goby-cleaners").labels_for("low") == [
+        "goby-cleaners", "Severity:low", "goby"]
+
+
+def test_a_product_that_measured_no_severity_files_exactly_as_before():
+    """`goby-tide` files smells and says a smell has no severity: its items carry none, so its
+    issues keep the two labels they had."""
+    assert product("goby-tide").labels_for(None) == product("goby-tide").labels
+
+
+def test_a_severity_outside_the_vocabulary_is_no_label_and_a_warning(capsys):
+    """Inventing `Severity:critical` would put a word in the repository nobody chose; the finding
+    is filed without it and the run says why."""
+    assert issues.severity_label("critical") is None
+    assert issues.severity_label(None) is None and issues.severity_label(7) is None
+    gh = FakeGitHub()
+    issues.file_issues("o/r", "tok", product(), [{"severity": "critical"}],
+                       lambda item: ("t", "b"), http=gh)
+    assert gh.created[0]["labels"] == ["goby-test", "goby"]
+    assert "warning: severity" in capsys.readouterr().err
+
+
 def test_a_label_that_cannot_be_created_is_a_warning_not_a_failure(capsys):
     issues.ensure_labels("o/r", "tok", product(), http=lambda *a, **k: (500, "boom"))
     assert "warning: label" in capsys.readouterr().err
@@ -166,6 +192,21 @@ def test_one_issue_per_item_under_both_labels_and_no_assignee():
                                        "https://github.com/o/r/issues/2"]
     assert [c["labels"] for c in gh.created] == [["goby-tide", "goby"], ["goby-tide", "goby"]]
     assert all("assignees" not in c for c in gh.created), "humans route issues"
+
+
+def test_only_the_severity_labels_a_run_files_under_are_created():
+    """A repository that only ever receives `low` should not sprout `Severity:high`, and the
+    severity is created beside the product label and `goby`, once per repository (422 is not an
+    error)."""
+    gh = FakeGitHub()
+    items = [{"severity": "medium"}, {"severity": "medium"}, {"severity": "high"}]
+    issues.file_issues("o/r", "tok", product("goby-cleaners"), items,
+                       lambda item: ("t", "b"), http=gh)
+    assert gh.created_labels == ["goby-cleaners", "goby", "Severity:medium", "Severity:high"]
+    assert [c["labels"] for c in gh.created] == [
+        ["goby-cleaners", "Severity:medium", "goby"],
+        ["goby-cleaners", "Severity:medium", "goby"],
+        ["goby-cleaners", "Severity:high", "goby"]]
 
 
 def test_nothing_is_filed_and_no_label_is_created_for_an_empty_batch():

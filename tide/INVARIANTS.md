@@ -79,7 +79,7 @@ whole design exists to prevent.
   tick or the 60-day disable.
 - **A model call that fails with a specific provider error.** `summarize_run.py` is testable
   against a recorded event stream; the provider is not reachable from the scan.
-- **The two-label convention against the real API.** `common/issues.py` is tested with a stubbed
+- **The label convention against the real API.** `common/issues.py` is tested with a stubbed
   `_http`; label creation returns 422 for "already exists" and no test can prove GitHub's
   behaviour, only ours.
 

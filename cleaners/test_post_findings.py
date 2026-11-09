@@ -271,11 +271,35 @@ def test_one_issue_per_finding_and_no_assignee(monkeypatch):
              {"fingerprint": "e" * 12, "finding": finding(title="b"), "severity": "high"}]
     urls, failures = pf.file_findings("o/r", "tok", "c" * 40, items)
     assert failures == [] and len(urls) == 2
-    # Two labels per issue: the product's own, then the general one, so `label:goby` finds
-    # everything goby filed and `label:goby-cleaners` finds only this product.
+    # Three labels per issue: the product's own, the severity it measured, then the general one.
+    # `label:goby` finds everything goby filed, `label:goby-cleaners` only this product, and
+    # `label:"Severity:high"` what a human should look at first.
     assert [c["labels"] for c in gh.created] == [
-        ["goby-cleaners", "goby"], ["goby-cleaners", "goby"]]
+        ["goby-cleaners", "Severity:medium", "goby"],
+        ["goby-cleaners", "Severity:high", "goby"]]
     assert all("assignees" not in c for c in gh.created), "humans route issues"
+
+
+def test_the_severity_labels_used_are_created_and_the_third_goby_label_is_not(monkeypatch):
+    """A repository that only ever receives `low` findings should not sprout a
+    `Severity:high` label; the labels a run creates are the labels it files under."""
+    gh = FakeGitHub()
+    monkeypatch.setattr(pf, "_http", gh)
+    items = [{"fingerprint": "d" * 12, "finding": finding(title="a"), "severity": "low"}]
+    pf.file_findings("o/r", "tok", "c" * 40, items)
+    assert gh.labels == ["goby-cleaners", "goby", "Severity:low"]
+
+
+def test_a_severity_outside_the_vocabulary_files_without_the_label(monkeypatch, capsys):
+    """The tool schema allows three values, so a fourth means hand-written or legacy JSONL.
+    Inventing `Severity:critical` would put a word in the repository nobody chose."""
+    gh = FakeGitHub()
+    monkeypatch.setattr(pf, "_http", gh)
+    items = [{"fingerprint": "d" * 12, "finding": finding(title="a"), "severity": "critical"}]
+    urls, failures = pf.file_findings("o/r", "tok", "c" * 40, items)
+    assert failures == [] and len(urls) == 1, "the defect is still filed"
+    assert gh.created[0]["labels"] == ["goby-cleaners", "goby"]
+    assert "not one of Severity:high" in capsys.readouterr().err
 
 
 def test_both_labels_are_created_and_the_general_one_is_shared(monkeypatch):
@@ -285,7 +309,7 @@ def test_both_labels_are_created_and_the_general_one_is_shared(monkeypatch):
     monkeypatch.setattr(pf, "_http", gh)
     items = [{"fingerprint": "d" * 12, "finding": finding(title="a"), "severity": "low"}]
     pf.file_findings("o/r", "tok", "c" * 40, items)
-    assert gh.labels == ["goby-cleaners", "goby"]
+    assert gh.labels == ["goby-cleaners", "goby", "Severity:low"]
 
 
 def test_a_rejected_filing_fails_the_task(monkeypatch, tmp_path, capsys):
@@ -390,6 +414,22 @@ def test_the_dedupe_read_reaches_issues_past_three_pages(monkeypatch):
     assert got is not None and len(got) == 349
     assert state["requested"] == [1, 2, 3, 4]
     assert any(i["number"] == 1 for i in got), "the oldest verdict must be in the read"
+
+
+def test_the_dedupe_read_asks_for_the_product_label_and_never_a_severity_one(monkeypatch):
+    """The severity label is for humans and nothing reads it back. Filtering the history read by
+    it would hide every issue filed before the label existed — the whole back catalogue — and
+    re-file each one, which is #42/#47 in a new coat."""
+    seen: list[str] = []
+
+    def fake(method, path, token, payload=None):
+        seen.append(path)
+        return 200, []
+
+    monkeypatch.setattr(pf, "_http", fake)
+    pf.list_labelled("o/r", "tok")
+    assert "labels=goby-cleaners" in seen[0]
+    assert "Severity" not in seen[0]
 
 
 def test_an_exactly_full_last_page_is_not_mistaken_for_the_end(monkeypatch):
