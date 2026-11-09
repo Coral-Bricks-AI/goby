@@ -114,6 +114,11 @@ hidden marker already carry, written where a human can sort on it — `label:"Se
 the list to attack first. Nothing reads it back: dedupe and the daily cap read the marker, so
 relabelling an issue changes your view of it and never what the next scan files.
 
+Issues filed before the label existed can be backfilled: `python3 scripts/backfill_severity.py
+--repo <owner>/<name>` prints the plan, `--apply` writes it. It reads the severity out of each
+filing's marker, skips anything that has none (a tide's smells), and never overrules a label a
+human already set — it reports the disagreement instead.
+
 ## Models
 
 `MODEL=provider/name` picks the provider: `coral/…` (our gateway, the default), `anthropic/…`,

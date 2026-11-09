@@ -36,7 +36,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --quiet pytest
       - name: Harness tests
-        run: python -m pytest -q cleaners common
+        run: python -m pytest -q cleaners common scripts
 
   dockerfile:
     runs-on: ubuntu-latest
