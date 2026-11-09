@@ -19,6 +19,12 @@
    A base branch that moved on would otherwise appear as reversed changes in the review.
 5. The receipt binds what the gate will re-read: GitHub's diff digest, the full head, the base ref.
    A receipt the gate can never match refuses every merge.
+6. The agent's stdout is the event stream, and nothing decides on it. `--mode json` is what makes
+   the run's cost readable — `/opt/common/timing.py` splits the agent's wall clock into model turns
+   and tool calls — so a change that goes back to `--print`, or that reads the timing line into a
+   verdict, breaks the only measurement there is of where a review spends its time. Neither the
+   stream nor the line may change how a review ends: `report_findings` is the verdict, and a
+   missing or unparseable stream only makes the log say the split is unavailable.
 
 ## Known-fragile areas
 
