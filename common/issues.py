@@ -13,13 +13,18 @@ Nothing here branches on which product is calling. A product is a value — its 
 marker, its colour — and it is passed in. If a future product needs a different *decision*,
 that decision belongs in its own `decide()` next to this module, not as an `if` in here.
 
-Two conventions worth stating once, because both were learned the hard way:
+Three conventions worth stating once, because each was learned the hard way:
 
-- **Two labels, one read.** An issue carries the product's own label *and* the general
-  `goby` label, so `label:goby` finds everything goby filed and `label:goby-tide` finds one
-  product. Dedupe reads the product's own label only: the two products file findings of
-  different kinds, so they never collide, and reading the general label would make one
-  product's page budget and fingerprints depend on the other's history.
+- **Labels for humans, one read for dedupe.** An issue carries the product's own label *and*
+  the general `goby` label, so `label:goby` finds everything goby filed and `label:goby-tide`
+  finds one product. A product that measured a severity adds `Severity:high|medium|low`
+  between them: a label is the only field an issue list can be filtered or sorted by, and the
+  body line the cleaner already writes is neither. Dedupe reads the product's own label only:
+  the two products file findings of different kinds, so they never collide, and reading the
+  general label would make one product's page budget and fingerprints depend on the other's
+  history. **No label is ever read back** — the read stays on the product label alone, because
+  a filing made before a label existed carries no such label and would drop out of the history
+  and be filed again.
 - **The marker is the only record of a filing.** It is the first thing in the body and
   nowhere else; a marker quoted later is evidence someone pasted (a scan of this repository
   has markers in its issue bodies). Each product's grammar is its own, next to the code that
@@ -49,6 +54,32 @@ class Label:
     name: str
     color: str = "0e8a16"
     description: str = ""
+
+
+# The severity a product files under when it measured one. A label, not a body line, because a
+# label is the only field an issue list can be filtered or sorted by. The name carries both
+# halves (`Severity:high`), so a repository's own `high` label stays free and
+# `label:"Severity:high"` cannot pick up somebody else's issues.
+SEVERITY: tuple[Label, ...] = (
+    Label("Severity:high", "b60205", "act on it: wrong output, lost data, a broken path"),
+    Label("Severity:medium", "d93f0b", "schedule it: wrong behaviour on a narrow path"),
+    Label("Severity:low", "fbca04", "worth knowing: naming, docs, dead code"),
+)
+
+
+def severity_label(severity: object) -> Label | None:
+    """The label for a severity value, or None when the value is not one of ours.
+
+    A value outside the vocabulary is not a severity anybody defined, and inventing
+    `Severity:critical` would put a word in the repository's label list that no reader chose,
+    so the filing goes out without a severity label and the caller says so.
+    """
+    if not isinstance(severity, str):
+        return None
+    for label in SEVERITY:
+        if label.name == f"Severity:{severity}":
+            return label
+    return None
 
 
 @dataclass
@@ -92,7 +123,19 @@ class Product:
         Order is not decoration. GitHub's issue list defaults to the first, and a human
         scanning a repo should see which product filed it before they see that goby did.
         """
-        return [self.label.name, *(label.name for label in self.extras)]
+        return self.labels_for(None)
+
+    def labels_for(self, severity: object) -> list[str]:
+        """The same list for one filing, with its severity between the product and `goby`.
+
+        Second, because it is the field a human sorts by and GitHub shows these in order. It is
+        presentation only: `marker_index` and every `decide()` read the body and the state, never
+        the labels, so a person who relabels an issue changes what they see and not what the
+        next run files.
+        """
+        label = severity_label(severity)
+        return [self.label.name, *([label.name] if label else []),
+                *(extra.name for extra in self.extras)]
 
     def all_labels(self) -> tuple[Label, ...]:
         return (self.label, *self.extras)
@@ -183,15 +226,40 @@ def list_labelled(repo: str, token: str, label: str, *, state: str = "all",
     return None
 
 
-def ensure_labels(repo: str, token: str, product: Product, http=None) -> None:
-    """Create the product's label and the general one. 422 is "already exists"."""
+def ensure_labels(repo: str, token: str, product: Product, *,
+                  severities: tuple[Label, ...] = (), http=None) -> None:
+    """Create the product's label, the general one, and the severities this run files under.
+
+    Only the severities actually filed: a repository that never receives a `low` should not
+    sprout a label for one, and the other two are created the first time they are needed. 422 is
+    "already exists".
+    """
     http = http or _http
-    for label in product.all_labels():
+    for label in (*product.all_labels(), *severities):
         st, _ = http("POST", f"/repos/{repo}/labels", token,
                      {"name": label.name, "color": label.color,
                       "description": label.description})
         if st not in (201, 422):
             print(f"warning: label {label.name} -> HTTP {st}", file=sys.stderr)
+
+
+def _severity_of(item: object) -> str | None:
+    """The severity an item carries, or None when it carries none we can file under.
+
+    `severity` is the vocabulary's own name, not one product's field: a product that ranks what
+    it files puts it on the item in its own `decide()` (`cleaners/post_findings.py`), and one
+    that does not (`goby-tide`, where the threshold is the filter) leaves it off and files
+    without the label. Nothing here branches on which product is calling.
+    """
+    value = item.get("severity") if isinstance(item, dict) else None
+    if value is None:
+        return None
+    if isinstance(value, str) and severity_label(value):
+        return value
+    print(f"warning: severity {value!r} is not one of "
+          f"{', '.join(label.name for label in SEVERITY)}; filing without it",
+          file=sys.stderr)
+    return None
 
 
 def file_issues(repo: str, token: str, product: Product,
@@ -201,18 +269,28 @@ def file_issues(repo: str, token: str, product: Product,
     reproduced finding was rejected by GitHub is a finding lost with nobody told.
 
     `render` is the product's own body: the facts differ per product, so the writer is passed
-    in rather than switched on here.
+    in rather than switched on here. Each issue carries the product label, the item's severity
+    when it has one, and `goby` — in that order.
     """
     http = http or _http
     urls: list[str] = []
     failures: list[str] = []
     if not items:
         return urls, failures
-    ensure_labels(repo, token, product, http=http)
-    for item in items:
+    # Resolved once per item: a value outside the vocabulary is a warning, not a second one per
+    # request, and the labels this run needs are the labels it is about to write.
+    sized = [(item, _severity_of(item)) for item in items]
+    used: dict[str, Label] = {}
+    for _, severity in sized:
+        label = severity_label(severity)
+        if label:
+            used[label.name] = label
+    ensure_labels(repo, token, product, severities=tuple(used.values()), http=http)
+    for item, severity in sized:
         title, body = render(item)
         st, resp = http("POST", f"/repos/{repo}/issues", token,
-                        {"title": title, "body": body, "labels": product.labels})
+                        {"title": title, "body": body,
+                         "labels": product.labels_for(severity)})
         if st == 201 and isinstance(resp, dict):
             urls.append(resp["html_url"])
             continue

@@ -100,7 +100,9 @@ A workflow input overrides one for that repository.
 
 Every issue carries two: the product's own (`goby-tide`) and the general `goby`. So
 `label:goby` lists everything goby filed in a repository — reviews, cleaners, tides — and
-`label:goby-tide` lists only the scheduled ones. Cleaners issues are `goby-cleaners` + `goby`.
+`label:goby-tide` lists only the scheduled ones. Cleaners issues are `goby-cleaners` + `goby`, plus
+the `Severity:high|medium|low` label the cleaner files under; a tide carries no severity, because
+the threshold is the filter (see `post_issues.py`).
 
 ### `.goby/tide.json` (optional)
 

@@ -108,6 +108,12 @@ everything goby filed in your repository — cleaners and [tide](../tide/README.
 `label:goby-cleaners` lists only the post-merge ones. The dedupe read uses `goby-cleaners` alone:
 the tide files smells, not defects, so the two have nothing in common to dedupe against.
 
+A third label is the severity the finding was filed under: `Severity:high`, `Severity:medium` or
+`Severity:low`, between the product label and `goby`. It is the same fact the body header and the
+hidden marker already carry, written where a human can sort on it — `label:"Severity:high"` is
+the list to attack first. Nothing reads it back: dedupe and the daily cap read the marker, so
+relabelling an issue changes your view of it and never what the next scan files.
+
 ## Models
 
 `MODEL=provider/name` picks the provider: `coral/…` (our gateway, the default), `anthropic/…`,
