@@ -31,6 +31,13 @@ COPY review/prompt.md /opt/goby/prompt.md
 COPY review/report_findings.ts /opt/goby/report_findings.ts
 RUN chmod 0755 /opt/goby/entrypoint.sh
 
+# The run's own record, from `common/` beside the product that reads it: `summarize_run.py` is the
+# one log line every goby product prints, and `timing.py` turns the same stream into the model/tool
+# split. Both are copied rather than reimplemented, so the wording and the arithmetic stay in one
+# file; `timing.py` imports the timeout marker from `summarize_run.py`, which is why the pair ships
+# together.
+COPY common/summarize_run.py common/timing.py /opt/common/
+
 # The agent's own pi config lives here; the image copy stays read-only, so a missing key fails
 # loudly instead of half-working from a baked file.
 ENV GOBY_HOME=/opt/goby \

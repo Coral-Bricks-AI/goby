@@ -182,14 +182,21 @@ chown -R "$GOBY_AGENT_USER:$GOBY_AGENT_USER" "$AGENT_OUT"
 chmod 700 "$AGENT_OUT"
 
 # One script, so the unprivileged side is not assembled out of nested quotes.
+#
+# `--mode json`, not `--print`: the event stream is the only record of where the run's wall clock
+# went, and it is written by the agent itself, into the one directory it owns. Its stderr is pi's
+# own diagnostics, kept because a refusal to start (a bad flag, a rejected key) leaves no events at
+# all and this file would then be the only evidence of why. Neither stream decides the verdict —
+# `report_findings` does, as before.
 cat > "$OUT/run-agent.sh" <<RUN
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$SANDBOX"
-exec pi --print --model "$PROVIDER/$MODEL" --no-session --no-extensions \
+exec pi --mode json --model "$PROVIDER/$MODEL" --no-session --no-extensions \
   --extension /opt/goby/report_findings.ts \
   --tools bash,read,grep,find,ls,report_findings --exclude-tools edit,write \
-  "Read your brief at $OUT/prompt.md. It is the whole task: $GOBY_REPO#$GOBY_PR at $(printf '%s' "$GOBY_HEAD" | cut -c1-10). Do it, then call report_findings."
+  "Read your brief at $OUT/prompt.md. It is the whole task: $GOBY_REPO#$GOBY_PR at $(printf '%s' "$GOBY_HEAD" | cut -c1-10). Do it, then call report_findings." \
+  > "$AGENT_OUT/events.jsonl" 2> "$AGENT_OUT/stderr.log"
 RUN
 chmod 755 "$OUT/run-agent.sh"
 
@@ -206,11 +213,35 @@ goby_run_as_agent \
   GOBY_MAX_TOOL_CALLS="$GOBY_MAX_TOOL_CALLS" \
   GOBY_MAX_TURNS="$GOBY_MAX_TURNS" \
   GOBY_BASH_TIMEOUT_S="$GOBY_BASH_TIMEOUT_S" \
-  bash "$OUT/run-agent.sh" > "$OUT/agent.log" 2>&1
+  bash "$OUT/run-agent.sh"
 AGENT_STATUS=$?
 AGENT_ELAPSED=$((SECONDS - AGENT_STARTED))
 set -e
-tail -20 "$OUT/agent.log" || true
+
+# What the run did, from its own record. All of it is instrumentation: every call is `|| true`,
+# because an instrument that can end a review is a new way for a review to fail. The timing line is
+# the one that answers "where did the agent's two minutes go" — model turns, the tool calls' own
+# clocks, and the calls that took the longest — and it goes to the log and to the job summary, so a
+# review that reports its own cost needs no second mechanism.
+EVENTS="$AGENT_OUT/events.jsonl"
+if [[ -s "$EVENTS" ]]; then
+  SUMMARY="$(python3 /opt/common/summarize_run.py "$EVENTS" || true)"
+  if [[ -n "$SUMMARY" ]]; then goby_log "$SUMMARY"; fi
+  # Printed only when the model call failed: pi exits 0 with stopReason=error, so the exit code
+  # above cannot carry it. Not a verdict here — a missing findings record is what fails a review.
+  MODEL_ERROR="$(python3 /opt/common/summarize_run.py --status "$EVENTS" || true)"
+  if [[ -n "$MODEL_ERROR" ]]; then goby_log "warn: $MODEL_ERROR"; fi
+  TIMING="$(python3 /opt/common/timing.py "$EVENTS" --agent-seconds "$AGENT_ELAPSED" || true)"
+  if [[ -n "$TIMING" ]]; then
+    goby_log "$TIMING"
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] \
+       && ! printf -- '- %s\n' "${TIMING#timing }" >> "$GITHUB_STEP_SUMMARY"; then
+      goby_log "warn: could not write the timing line to the job summary"
+    fi
+  fi
+else
+  goby_log "warn: the agent produced no event stream"
+fi
 goby_log "agent exit=$AGENT_STATUS findings=$(grep -c '"kind":"findings"' "$AGENT_OUT/findings.jsonl" 2>/dev/null || echo 0)"
 
 # A review that produced no findings record did not answer. Treat it as a failed review rather
@@ -219,6 +250,10 @@ if ! grep -q '"kind":"findings"' "$AGENT_OUT/findings.jsonl" 2>/dev/null; then
   # Not "no bugs": the reviewer never answered. Both statuses have to resolve, or the gate stays
   # pending forever and the pull request is blocked with nothing to read.
   goby_log "error: the reviewer never reported (exit $AGENT_STATUS)"
+  # pi's own diagnostics, which is where the reason is when it never got as far as a turn: a key
+  # the provider rejected writes a session header and nothing else, so the stream above says the
+  # split is unavailable without saying why.
+  if [[ -f "$AGENT_OUT/stderr.log" ]]; then tail -20 "$AGENT_OUT/stderr.log"; fi
   GOBY_REPO="$GOBY_REPO" GOBY_HEAD="$GOBY_HEAD" GITHUB_TOKEN="$GITHUB_TOKEN" \
   GOBY_FAIL_REASON="the reviewer exited without reporting (exit $AGENT_STATUS)" \
     node /opt/goby/reviewRun.js fail || true

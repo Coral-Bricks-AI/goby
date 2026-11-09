@@ -80,6 +80,36 @@ tests need Go, Rust or a system library, should build its own image `FROM goby-b
 toolchain, and point the workflow at its digest. That also pre-bakes dependencies: the job can
 install packages, but a warm image is faster than an install on every review.
 
+## Where a review's time goes
+
+A review prints its phases to the job log with a UTC timestamp, so the log is the trace: `clone`,
+`merge base`, `diff`, `prepare` (the GitHub reads and the image digest), and `agent exit`. What is
+between two of those lines is what that phase cost.
+
+Inside the agent there is one line more, and it is the one to read first when a review feels slow:
+
+```
+timing agent=118s model=77s, 2.5s/turn tools=41.1s (62 calls: bash 38.9s/44, read 1.8s/12) \
+  turns=31 timeouts=2 tokens in=31k out=48k cache-read=1.2M cache-write=9k \
+  slowest: "uv run pytest tests/x -q" 60.0s, "rg -n reauth" 3.1s
+```
+
+- `model` is the agent's wall clock minus the tools' own clocks — the time spent in turns, waiting
+  on the provider. The per-turn figure is the decision: many cheap turns says the reviewer is
+  taking too many trips, a few expensive ones says the model or the prompt size is the cost.
+- `tools` is measured by pi around each tool's own execution, so it is not an estimate. The slowest
+  calls are named with the command that took the time: one killed `pytest` is not forty reads.
+- `timeouts` counts shell commands killed at `GOBY_BASH_TIMEOUT_S`. A review that spent a minute at
+  that wall clock is a review whose probe was cut off, which reads very differently from one that
+  thought for a minute.
+- `tokens` is the whole run's spend, in the four classes the provider reports. Cache-read against
+  input is the interesting pair: a turn that re-reads the context is the slow kind.
+
+The line is instrumentation, never a verdict: it is printed whatever the review concluded, and
+`--json` on `/opt/common/timing.py` carries every tool rather than the three the line names. The
+one thing it cannot give is a per-turn distribution — pi's stream carries a clock per tool call,
+not per turn — so per-turn latency is an average.
+
 ## Stable contracts
 
 `src/identity.ts` holds the two status contexts (`Goby Review`, `Goby Gate`), the marker, the bot
