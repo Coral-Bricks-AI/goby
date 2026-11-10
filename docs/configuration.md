@@ -112,6 +112,12 @@ timing agent=118s model=77s, 2.5s/turn tools=41.1s (62 calls: bash 38.9s/44, rea
   kept — without them, whether a nudge fired is unknowable after the container exits.
 - `tokens` is the whole run's spend, in the four classes the provider reports. Cache-read against
   input is the interesting pair: a turn that re-reads the context is the slow kind.
+- `output` splits those written tokens by what the model was writing — `thinking`, `toolCall`,
+  `text` — read from the final assistant messages, in characters. The shares are exact in
+  characters and approximate in tokens (four characters per token), which is why the total carries
+  the `~`. Where the visible tokens fall short of `out=`, the line says how much of the output is
+  **not in the content at all**: a reasoning model bills thinking tokens it never streams back, and
+  rounding those into "text" would invert the answer to "what is it spending time on".
 
 Before that line the log carries one line per tool call, in order:
 

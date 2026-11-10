@@ -262,3 +262,65 @@ def test_the_json_carries_the_sequence_and_the_batching(tmp_path):
     assert summary["calls_per_turn"] == {"0": 0, "1": 0, "2+": 1}
     assert summary["batched_turns"] == 1
     assert [(call["turn"], call["tool"], call["s"]) for call in summary["calls"]] == [(1, "bash", 0.01), (1, "bash", 0.02)]
+
+
+def assistant(chars, out_tokens=None, **blocks):
+    """One final assistant message: the record, which is what the split is read from."""
+    content = []
+    for kind, text in blocks.items():
+        if kind == "toolCall":
+            content.append({"type": "toolCall", "id": "c1", "name": "bash", "arguments": text})
+        else:
+            content.append({"type": kind, "text": text} if kind == "text"
+                           else {"type": "thinking", "thinking": text})
+    usage = {"input": 0, "output": out_tokens if out_tokens is not None else chars // 4,
+             "cacheRead": 42000, "cacheWrite": 100}
+    return {"type": "message_end",
+            "message": {"role": "assistant", "content": content, "usage": usage}}
+
+
+def test_the_output_is_split_by_what_the_model_was_writing(tmp_path):
+    """The question this answers: is the wall clock going on deliberation, on the command, or on the
+    answer? Read from the final message, not the deltas — pi's docs say a delta stream is for live
+    rendering and the completed content replaces it, so counting deltas can double or miss a block."""
+    path = stream(tmp_path, {"type": "turn_start"},
+                  assistant(0, 2500, thinking="t" * 8000, text="x" * 1000,
+                            toolCall={"command": "a" * 987}))
+    out = run(str(path), "--agent-seconds", "4").stdout
+    assert "output ~2.5k tok (" in out
+    # Shares, not an order: two kinds writing the same number of characters may come either way.
+    for share in ("thinking 80%", "text 10%", "toolCall 10%"):
+        assert share in out, out
+
+
+def test_the_brief_the_agent_reads_is_not_counted_as_output(tmp_path):
+    """A user message carries the prompt and the whole diff; counting it would drown the one number
+    this split exists to report, in the direction that makes the reviewer look chatty."""
+    path = stream(tmp_path, {"type": "turn_start"},
+                  {"type": "message_end", "message": {
+                      "role": "user", "content": [{"type": "text", "text": "z" * 50000}]}},
+                  assistant(0, 100, text="y" * 400))
+    out = run(str(path), "--agent-seconds", "2").stdout
+    assert "output ~100 tok (text 100%)" in out
+
+
+def test_output_a_provider_does_not_send_back_is_named_not_rounded_into_text(tmp_path):
+    """A reasoning model bills output tokens it never streams as content. Without this the split
+    would read "text 100%" for a run that spent its time thinking — the opposite of the truth."""
+    path = stream(tmp_path, {"type": "turn_start"},
+                  assistant(0, 10000, text="y" * 40))
+    out = run(str(path), "--agent-seconds", "10").stdout
+    assert "not in content" in out
+    assert "100% not in content" in out
+
+
+def test_a_run_with_no_content_does_not_claim_a_split(tmp_path):
+    """A stream whose messages carry usage and no blocks is not a run whose output was zero."""
+    path = stream(tmp_path, {"type": "turn_start"},
+                  {"type": "message_end", "message": {
+                      "role": "assistant", "content": [],
+                      "usage": {"input": 0, "output": 500, "cacheRead": 10, "cacheWrite": 0}}})
+    out = run(str(path), "--agent-seconds", "2").stdout
+    assert "out=500" in out
+    assert "output ~" not in out
+    assert "not in content" not in out
