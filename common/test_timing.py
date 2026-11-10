@@ -117,11 +117,65 @@ def test_tokens_are_summed_across_every_message(tmp_path):
     assert "tokens in=1.5k out=500 cache-read=110.0k cache-write=10" in out
 
 
-def test_per_turn_latency_says_whether_the_turns_or_the_model_is_the_problem(tmp_path):
-    """The actionable number: 31 turns at 2.5s is too many turns, at 9s it is the model."""
-    path = stream(tmp_path, *[{"type": "turn_start"} for _ in range(4)],
-                  *tool("read", 1000, path="a"))
-    assert ", 7.2s/turn" in run(str(path), "--agent-seconds", "30").stdout
+def response(ms, out=200, **extra):
+    """One assistant response as pi finalises it: `durationMs` is pi's own monotonic timing of the
+    request, so a distribution built from it is measured, not subtracted."""
+    message = {"role": "assistant", "timestamp": 1, "durationMs": ms, "stopReason": "toolUse",
+               "usage": {"input": 0, "output": out, "cacheRead": 42000, "cacheWrite": 10},
+               "content": [{"type": "text", "text": "x" * 40}]}
+    message.update(extra)
+    return {"type": "message_end", "message": message}
+
+
+def test_the_model_time_is_a_distribution_not_only_an_average(tmp_path):
+    """What a change can act on is the shape. 43 requests at 1.3s and one at 9s are different
+    problems, and their mean hides both."""
+    path = stream(tmp_path, {"type": "turn_start"}, response(900, 200),
+                  {"type": "turn_start"}, response(1200, 250),
+                  {"type": "turn_start"}, response(1400, 300),
+                  {"type": "turn_start"}, response(2500, 500),
+                  {"type": "turn_start"}, response(6100, 900))
+    out = run(str(path), "--agent-seconds", "12.3").stdout
+    # Nearest rank: p50 is the 3rd of 5 measurements, p95 is the 5th — never an interpolation.
+    assert "requests=5 p50=1.4s p95=6.1s max=6.1s" in out
+    # The old single average is gone: every `/turn` left in the line is `calls/turn`.
+    assert out.count("s/turn") == out.count("calls/turn")
+
+
+def test_the_slowest_turn_says_how_much_it_wrote(tmp_path):
+    """A slow request that wrote a lot is throughput; one that wrote little is latency. Without the
+    token count beside it the two read the same."""
+    path = stream(tmp_path, {"type": "turn_start"}, response(1000, 100),
+                  {"type": "turn_start"}, response(6000, 950))
+    out = run(str(path), "--agent-seconds", "8").stdout
+    assert "max=6.0s (turn 2: 950 out)" in out
+
+
+def test_a_request_pi_did_not_time_is_counted_not_assumed(tmp_path):
+    """pi leaves `durationMs` off a response it did not see start, such as a deferred result. The
+    distribution is over the timed ones and says so, rather than treating the gap as zero seconds."""
+    path = stream(tmp_path, {"type": "turn_start"}, response(1000),
+                  {"type": "turn_start"}, response(3000),
+                  {"type": "turn_start"}, response(None))
+    out = run(str(path), "--agent-seconds", "6").stdout
+    assert "requests=2/3 p50=1.0s" in out
+
+
+def test_time_in_the_agent_that_is_neither_a_request_nor_a_tool_is_named(tmp_path):
+    """The two measurements are independent — pi times the request, the shell times the agent — so a
+    gap between them is a fact, not a rounding error. Large is worth printing; small is noise."""
+    path = stream(tmp_path, {"type": "turn_start"}, response(1000),
+                  {"type": "turn_start"}, response(1000))
+    # 10s of agent, 2s of requests, no tools: 8s unaccounted, which somebody should be able to explain.
+    assert "unaccounted=+8.0s" in run(str(path), "--agent-seconds", "10").stdout
+    # The same stream against a wall clock that agrees with it prints nothing.
+    assert "unaccounted" not in run(str(path), "--agent-seconds", "2.1").stdout
+
+
+def test_a_stream_with_no_response_does_not_invent_a_distribution(tmp_path):
+    path = stream(tmp_path, {"type": "turn_start"}, *tool("bash", 10, command="ls"))
+    out = run(str(path), "--agent-seconds", "1").stdout
+    assert "requests=" not in out
 
 
 def test_the_line_never_echoes_the_prompt_or_the_diff(tmp_path):
@@ -165,6 +219,8 @@ def test_the_json_carries_every_tool_not_just_the_named_ones(tmp_path):
     assert [name for name in summary["tool_time"]] == ["ls", "find", "grep", "read"]
     assert summary["tool_time"]["ls"] == {"calls": 1, "s": 0.4, "unmeasured": 0}
     assert summary["model_s"] == 9.0
+    assert summary["requests"]["count"] == 0
+    assert summary["unaccounted_s"] is None
 
 
 def test_calls_per_turn_says_whether_the_probes_shared_a_round_trip(tmp_path):

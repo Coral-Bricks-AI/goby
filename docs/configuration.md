@@ -89,20 +89,31 @@ between two of those lines is what that phase cost.
 Inside the agent there is one line more, and it is the one to read first when a review feels slow:
 
 ```
-timing agent=118s model=77s, 2.5s/turn tools=41.1s (62 calls: bash 38.9s/44, read 1.8s/12) \
+timing agent=118s model=77s requests=43 p50=1.3s p95=2.9s max=6.1s (turn 12: 890 out) \
+  tools=41.1s (62 calls: bash 38.9s/44, read 1.8s/12) \
   turns=31 calls/turn=2.0 (12/31 ran 2+) timeouts=2 notices=3 \
   tokens in=31k out=48k cache-read=1.2M cache-write=9k \
+  output ~40k tok (thinking 89%, toolCall 7%, text 4%) \
   slowest: "uv run pytest tests/x -q" 60.0s, "rg -n reauth" 3.1s
 ```
 
-- `model` is the agent's wall clock minus the tools' own clocks — the time spent in turns, waiting
-  on the provider. The per-turn figure is the decision: many cheap turns says the reviewer is
-  taking too many trips, a few expensive ones says the model or the prompt size is the cost.
+- `model` is the agent's wall clock minus the tools' own clocks — the time spent waiting on the
+  provider. `requests`, `p50`, `p95`, `max` are that same time cut per response, and they are
+  **measured, not derived**: pi stamps `durationMs` on every assistant message, a monotonic clock
+  from the request starting to the response ending. A slow request that wrote a lot of tokens is
+  throughput; one that wrote little is latency, so the slowest turn is named with its output size.
+  Percentiles are nearest-rank, so every number printed is one pi observed.
+- `requests=41/43` means pi did not time every response (it leaves `durationMs` off a response it
+  did not see start, such as a deferred result); the distribution is over the timed ones, and the
+  gap is shown rather than filled with zeros.
+- `unaccounted=+2.4s` is printed only when it is large: time inside the agent that was neither a
+  request pi timed nor a tool. The two are independent measurements, so a gap is a fact — small is
+  pi's own startup, large means one of them is wrong and is worth reading.
 - `tools` is measured by pi around each tool's own execution, so it is not an estimate. The slowest
   calls are named with the command that took the time: one killed `pytest` is not forty reads.
 - `calls/turn` is how many probes shared a round trip, and `(n/m ran 2+)` how many turns ran more
-  than one. Every turn is a model round trip whatever it does, so this is the number that says
-  whether anything can be won by batching.
+  than one. It says how the reviewer spends its turns; it does **not** promise a speed-up, because a
+  turn costs what its tokens cost (see below).
 - `timeouts` counts shell commands killed at `GOBY_BASH_TIMEOUT_S`. A review that spent a minute at
   that wall clock is a review whose probe was cut off, which reads very differently from one that
   thought for a minute.
@@ -131,9 +142,10 @@ The same turn number on several `call` lines is one round trip; one call per tur
 that costs a review its wall clock. A `!` marks a command that failed.
 
 The line is instrumentation, never a verdict: it is printed whatever the review concluded, and
-`--json` on `/opt/common/timing.py` carries every call and the per-turn histogram. The one thing it
-cannot give is a per-turn distribution of model latency — pi's stream carries a clock per tool call,
-not per turn — so per-turn latency is an average.
+`--json` on `/opt/common/timing.py` carries every call, every response's timing, and the per-turn
+histogram. What it still cannot give is time-to-first-token — pi times a whole response, so a slow
+start and a slow write are one number here, and separating them would mean reading the event stream
+as it arrives.
 
 ## Stable contracts
 

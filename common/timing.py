@@ -10,11 +10,12 @@ A review used to be timed by two shell counters — seconds around the agent, an
 there. That is not enough to answer the first question anyone asking for a faster review has:
 whether those two minutes were model round trips or shell commands.
 
-Nothing new has to be measured for it. `tool_execution_end` carries `durationMs`, pi's monotonic
-clock around the tool's own `execute`, so the tool share is a sum and the model share is what is
-left of the wall clock the caller measured. The stream carries no wall time of its own — a message
-timestamp is per message — so `--agent-seconds` supplies the total; without it the line still
-reports the tool side rather than inventing the other.
+Nothing new has to be measured for it. Two clocks are already in the stream: `tool_execution_end`
+carries `durationMs`, pi's monotonic time around the tool's own `execute`, and every assistant
+message carries its own `durationMs` — the request's start to its end, on the same monotonic clock
+(`pi-ai/utils/event-stream.js`). So the tool share is a sum, the model share is what is left of the
+wall clock the caller measured, and the per-request distribution is pi's own measurement rather than
+a difference of wall clocks that a clock adjustment could bend.
 
 Two things make the total readable rather than merely large:
 
@@ -48,6 +49,7 @@ a missing line must not be mistaken for a fast run.
 """
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -129,6 +131,34 @@ def _block_chars(message: dict) -> dict[str, int]:
     return counts
 
 
+def _percentile(values: list[float], fraction: float) -> float | None:
+    """Nearest-rank percentile, so the number is always one of the measurements.
+
+    An interpolated percentile of 43 requests invents a latency nothing observed, and the point of
+    reporting p95 here is to name the slow tail, not to smooth it.
+    """
+    if not values:
+        return None
+    ordered = sorted(values)
+    rank = max(1, math.ceil(fraction * len(ordered)))
+    return ordered[rank - 1]
+
+
+def _request_seconds(message: dict) -> float | None:
+    """pi's own monotonic timing of one request, or None when pi did not time it.
+
+    `AssistantMessage.durationMs` is set by pi's `AssistantMessageEventStream`: milliseconds from the
+    request starting to the response ending (`pi-ai/dist/utils/event-stream.js`). So this is not a
+    subtraction — no tool time to take out, no difference of two wall clocks. It is absent when pi
+    forwards a response that started elsewhere (a deferred result), which is why the timed count is
+    reported next to the request count rather than assumed.
+    """
+    ms = message.get("durationMs")
+    if isinstance(ms, bool) or not isinstance(ms, (int, float)):
+        return None
+    return ms / 1000
+
+
 def summarise(events: list[dict], agent_s: float | None = None,
               slowest: int = 2, findings: Path | None = None) -> dict:
     turns = 0
@@ -145,6 +175,8 @@ def summarise(events: list[dict], agent_s: float | None = None,
     # version of this file did, names every slow call "bash" and answers nothing.
     subjects: dict[str, str] = {}
     tokens = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+    # One entry per assistant response, with pi's timing of that request where it has one.
+    requests: list[dict] = []
     output_chars = {name: 0 for name, _field in BLOCK_FIELDS}
     output_chars["other"] = 0
     for event in events:
@@ -181,11 +213,17 @@ def summarise(events: list[dict], agent_s: float | None = None,
             if message.get("role") == "assistant":
                 for name, chars in _block_chars(message).items():
                     output_chars[name] += chars
+                requests.append({"turn": len(per_turn), "s": _request_seconds(message),
+                                 "out": usage.get("output") or 0,
+                                 "stop": message.get("stopReason")})
 
     tool_calls = sum(row["calls"] for row in tools.values())
     unmeasured = sum(row["unmeasured"] for row in tools.values())
     tools_s = round(sum(row["s"] for row in tools.values()), 1)
     batched = sum(1 for count in per_turn if count >= 2)
+    timed = [request for request in requests if request["s"] is not None]
+    request_seconds = [request["s"] for request in timed]
+    slowest_request = max(timed, key=lambda request: request["s"], default=None)
     # Only a stream that fully accounts for the run can be subtracted. Reporting a model share
     # computed as `agent_s - (the calls that happened to have a clock)` would credit the model
     # with a tool's time — wrong in the one direction this line exists to get right. A stream with
@@ -195,6 +233,12 @@ def summarise(events: list[dict], agent_s: float | None = None,
         model_s = None
     else:
         model_s = round(agent_s - tools_s, 1)
+    # What the model share does *not* account for: time inside the agent that was neither a request
+    # pi timed nor a tool. Small (pi's own startup, the sandbox copy) is expected; large or negative
+    # means one of the two measurements is wrong, and saying so is cheaper than suspecting it.
+    # Unknowable when any request went untimed, so it is absent then rather than misattributed.
+    unaccounted = (round(model_s - sum(request_seconds), 1)
+                   if model_s is not None and len(timed) == len(requests) and requests else None)
     return {
         "agent_s": agent_s,
         "model_s": model_s,
@@ -208,6 +252,17 @@ def summarise(events: list[dict], agent_s: float | None = None,
             "2+": sum(1 for count in per_turn if count >= 2),
         },
         "batched_turns": batched,
+        "requests": {
+            "count": len(requests),
+            "timed": len(timed),
+            "s": round(sum(request_seconds), 1),
+            "p50_s": _percentile(request_seconds, 0.50),
+            "p95_s": _percentile(request_seconds, 0.95),
+            "max_s": max(request_seconds, default=None),
+            "slowest_turn": slowest_request["turn"] if slowest_request else None,
+            "slowest_out_tokens": slowest_request["out"] if slowest_request else None,
+        },
+        "unaccounted_s": unaccounted,
         "calls": [{"turn": turn, "tool": name,
                    "s": None if seconds is None else round(seconds, 2),
                    "error": error, "subject": subject}
@@ -243,11 +298,26 @@ def line(summary: dict) -> str:
     tool_calls = summary["tool_calls"]
     parts = ["agent=?" if agent_s is None else f"agent={agent_s:.0f}s"]
     if summary["model_s"] is not None:
-        # Per turn, because that is the number a change can act on: 31 turns at 2.5s says the
-        # turns are cheap and there are too many, where 31 at 9s says the opposite. `turns` is
-        # non-zero here by construction — a stream with no turn has no model share to divide.
-        per_turn = summary["model_s"] / summary["turns"]
-        parts.append(f"model={summary['model_s']:.0f}s, {per_turn:.1f}s/turn")
+        parts.append(f"model={summary['model_s']:.0f}s")
+        # The distribution, not the average: what a change can act on is the shape — 43 requests at
+        # 1.3s is many cheap round trips, one at 9s is a different problem — and a mean of two
+        # clusters hides both.
+        served = summary["requests"]
+        if served["timed"]:
+            spread = f"requests={served['timed']}"
+            if served["timed"] != served["count"]:
+                spread += f"/{served['count']}"
+            spread += (f" p50={served['p50_s']:.1f}s p95={served['p95_s']:.1f}s"
+                       f" max={served['max_s']:.1f}s")
+            if served["slowest_turn"] is not None:
+                spread += (f" (turn {served['slowest_turn']}: "
+                           f"{_compact(served['slowest_out_tokens'] or 0)} out)")
+            parts.append(spread)
+            # A slow request that wrote a lot is throughput; one that wrote little is latency. Only
+            # worth printing where it would change what somebody does next.
+            unaccounted = summary["unaccounted_s"]
+            if unaccounted is not None and abs(unaccounted) > max(1.0, 0.1 * summary["model_s"]):
+                parts.append(f"unaccounted={unaccounted:+.1f}s")
     elif not summary["turns"]:
         parts.append("model=?(no turn ever started)")
     elif summary["unmeasured_calls"]:
