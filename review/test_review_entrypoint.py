@@ -49,22 +49,24 @@ def test_the_agent_streams_go_where_the_agent_can_write_them():
 
 
 def test_the_timing_line_is_printed_and_cannot_end_a_review():
-    """A review must not fail because an instrument did. Every call in this block is `|| true`:
-    the verdict is the findings record, and it is read after all of them."""
+    """A review must not fail because an instrument did. Every one of these commands ends in
+    `|| true`: the verdict is the findings record, and it is read after all of them."""
     block = after_agent()
-    for line in block.splitlines():
-        if "/opt/common/" in line and "python3" in line:
-            assert "|| true" in line, line
     assert "timing.py" in block
-    assert "--agent-seconds" in block
+    # The trace is one command, wrapped over lines; the guard has to be on it.
+    trace = block[block.index("TIMING="):block.index("# One log line per tool call")]
+    assert "|| true" in trace, trace
+    for argument in ("--agent-seconds", "--findings", "--calls"):
+        assert argument in trace, argument
 
 
-def test_the_timing_line_reaches_the_job_summary_and_the_log():
-    """Two readers: the log for whoever is looking at the run, the job summary for whoever is
-    looking at the pipeline. A line that lands in only one of them is a line half the audience
-    never sees."""
+def test_the_trace_reaches_the_log_and_the_summary_line_reaches_the_job_summary():
+    """Two readers and two shapes: every line of the trace goes to the log — that is where the
+    sequence of calls is read — and only the last line, the summary, goes to the job summary,
+    because sixty call lines would bury the pipeline page."""
     block = after_agent()
-    assert "goby_log \"$TIMING\"" in block
+    assert 'while IFS= read -r trace_line; do goby_log "$trace_line"; done' in block
+    assert 'tail -n 1' in block
     assert "GITHUB_STEP_SUMMARY" in block
 
 

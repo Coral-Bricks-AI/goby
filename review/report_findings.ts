@@ -80,6 +80,19 @@ function record(kind: string, payload: unknown) {
 	appendFileSync(FINDINGS, JSON.stringify({ kind, ...(payload as object) }) + '\n');
 }
 
+// A notice that reached the model is otherwise unobservable: it is a conversation entry, and the
+// conversation is not kept — the container that held it is gone before anyone reads the review.
+// So each one leaves a record beside the findings, which is what lets a review's log say whether
+// the nudge fired at all, and at which turn. Never fatal: an instrument that can end a review is
+// a new way for a review to fail, and this one is written mid-run.
+function record_notice(payload: Record<string, unknown>) {
+	try {
+		record('budget', payload);
+	} catch {
+		// The findings write at the end of the run still reports the truth about the run.
+	}
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.on('turn_start', () => {
 		turns += 1;
@@ -97,6 +110,9 @@ export default function (pi: ExtensionAPI) {
 			const threshold = [10, 5, 2].find(value => remaining <= value && !warned.has(value));
 			if (threshold !== undefined) {
 				warned.add(threshold);
+				// Recorded before the message is built: `remaining` is the number the model was told,
+				// and a record that disagrees with the prompt would make the log lie about the run.
+				record_notice({ turns, remaining, threshold });
 				entries.push({
 					type: 'custom_message' as const,
 					customType: 'goby-budget',

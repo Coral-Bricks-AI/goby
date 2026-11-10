@@ -25,6 +25,11 @@
    verdict, breaks the only measurement there is of where a review spends its time. Neither the
    stream nor the line may change how a review ends: `report_findings` is the verdict, and a
    missing or unparseable stream only makes the log say the split is unavailable.
+7. A notice the reviewer is given leaves a record. The budget nudges and the wrap-up are
+   conversation entries, and the conversation is not kept — the container is gone before anyone
+   reads the review, so nothing else could say whether the reviewer was warned before its cap.
+   `report_findings.ts` writes a `budget` record for each nudge and a `blocked` record for each
+   cut-off; `/opt/common/timing.py` is what reads them.
 
 ## Known-fragile areas
 

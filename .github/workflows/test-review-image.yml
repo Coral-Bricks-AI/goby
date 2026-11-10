@@ -73,6 +73,21 @@ jobs:
           docker run --rm --entrypoint bash goby-review:test -lc \
             'pi --version && node --version && python3 --version && git --version && jq --version && rg --version | head -1'
 
+      # `report_findings.ts` is copied as source and loaded by pi at run time, so nothing compiles
+      # it: a syntax error would pass every build and then fail every review, because the emit tool
+      # the reviewer must call would never be there to call. pi names a file it cannot load, and
+      # names the environment variable an extension is missing.
+      - name: The emit extension loads
+        run: |
+          set -euo pipefail
+          out="$(docker run --rm \
+            -e GOBY_MAX_TURNS=50 -e GOBY_MAX_TOOL_CALLS=80 -e GOBY_BASH_TIMEOUT_S=120 \
+            -e GOBY_AGENT_OUT=/tmp/agent \
+            --entrypoint bash goby-review:test -lc \
+              'pi --mode json --extension /opt/goby/report_findings.ts "hi" 2>&1 || true' \
+            | grep -Ei 'failed to load extension|is required' || true)"
+          if [[ -n "$out" ]]; then echo "$out" >&2; exit 1; fi
+
       # The timing line is the only way to see inside the agent segment, so a missing file here
       # would be discovered by reading a real review's log weeks later. Run it against a stream
       # that does not exist: it answers instead of failing.

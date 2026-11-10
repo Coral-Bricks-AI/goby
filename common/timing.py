@@ -2,7 +2,8 @@
 """Where one agent run spent its wall clock, from the event stream pi already writes.
 
     timing.py /workspace/out/agent/events.jsonl --agent-seconds 118
-    timing.py … --slowest 3
+    timing.py … --calls --findings …/findings.jsonl   # one line per tool call, then the summary
+    timing.py … --json                              # the whole summary, for anything deeper
 
 A review used to be timed by two shell counters — seconds around the agent, and a grep of
 `findings.jsonl` for the call count — which separates "the agent" from "everything else" and stops
@@ -22,6 +23,11 @@ Two things make the total readable rather than merely large:
   read in one place;
 - the slowest calls are named with the command that took the time, because "bash 38.9s" invites a
   guess and `uv run pytest tests/x -q 60.0s` ends the argument.
+
+And two things say what the run *did* with that time, which is the question behind "can we make a
+review faster": `calls/turn` counts how many probes shared a round trip, and the budget notices the
+reviewer was given are read from the records `report_findings.ts` leaves beside the findings — the
+conversation those nudges went into is not kept, so without them whether a nudge fired is unknowable.
 
 Never a verdict. A stream that is missing, empty or truncated exits 0 with a line saying the split
 is unavailable, instead of printing nothing: a review must not fail because an instrument did, and
@@ -56,16 +62,41 @@ def _subject(args: dict) -> str:
         value = args.get(name)
         if isinstance(value, str) and value.strip():
             # Collapsed, not truncated per line: a heredoc's useful part is its opening line, and
-            # a blank line at the top would otherwise produce an empty label.
-            return " ".join(value.split())[:80]
+            # a blank line at the top would otherwise produce an empty label. Wide enough for the
+            # usual `cd <sandbox> && grep -n <pattern> <path>`, because the path is at the end.
+            return " ".join(value.split())[:110]
     return ""
 
 
+def _findings(path: Path | None) -> dict:
+    """What the reviewer recorded about its own budget.
+
+    A budget notice is a conversation entry and the conversation is not kept, so the record beside
+    the findings (`report_findings.ts`) is the only evidence that a nudge fired. `notices` is None
+    when there is no record at all — a review that died before writing one — never 0.
+    """
+    if path is None or not path.is_file():
+        return {"notices": None, "notice_turns": [], "blocked": None}
+    notice_turns: list[int | None] = []
+    blocked = None
+    for record in read_events(path):
+        kind = record.get("kind")
+        if kind == "budget":
+            notice_turns.append(record.get("turns"))
+        elif kind == "blocked" and blocked is None:
+            blocked = str(record.get("reason") or "?")
+    return {"notices": len(notice_turns), "notice_turns": notice_turns, "blocked": blocked}
+
+
 def summarise(events: list[dict], agent_s: float | None = None,
-              slowest: int = 2) -> dict:
+              slowest: int = 2, findings: Path | None = None) -> dict:
     turns = 0
     tools: dict[str, dict] = {}
-    calls: list[tuple[str, float | None, str]] = []
+    calls: list[tuple[int, str, float | None, str, bool]] = []
+    # How many tool calls each turn ran. One call per turn is the loop this line exists to make
+    # visible: every turn is a round trip to the model, so batching three probes into one turn is
+    # two round trips saved at no cost in work done.
+    per_turn: list[int] = []
     # What each call was pointed at, keyed by the id both events share. pi splits one call across
     # two records and neither carries both halves: `tool_execution_start` has the arguments,
     # `tool_execution_end` has the clock and no arguments at all (`emitToolExecutionStart` and
@@ -77,6 +108,7 @@ def summarise(events: list[dict], agent_s: float | None = None,
         kind = event.get("type")
         if kind == "turn_start":
             turns += 1
+            per_turn.append(0)
         elif kind == "tool_execution_start":
             call_id = event.get("toolCallId")
             if isinstance(call_id, str):
@@ -92,7 +124,10 @@ def summarise(events: list[dict], agent_s: float | None = None,
                 row["s"] += seconds
             # Popped, not read: a stream can be long, and an id is used once. An end with no start
             # (a truncated stream) keeps the tool's name and loses only its subject.
-            calls.append((name, seconds, subjects.pop(event.get("toolCallId"), "")))
+            calls.append((len(per_turn), name, seconds, subjects.pop(event.get("toolCallId"), ""),
+                          event.get("isError") is True))
+            if per_turn:
+                per_turn[-1] += 1
         elif kind == "message_end":
             usage = (event.get("message") or {}).get("usage") or {}
             for key in tokens:
@@ -101,6 +136,7 @@ def summarise(events: list[dict], agent_s: float | None = None,
     tool_calls = sum(row["calls"] for row in tools.values())
     unmeasured = sum(row["unmeasured"] for row in tools.values())
     tools_s = round(sum(row["s"] for row in tools.values()), 1)
+    batched = sum(1 for count in per_turn if count >= 2)
     # Only a stream that fully accounts for the run can be subtracted. Reporting a model share
     # computed as `agent_s - (the calls that happened to have a clock)` would credit the model
     # with a tool's time — wrong in the one direction this line exists to get right. A stream with
@@ -117,15 +153,26 @@ def summarise(events: list[dict], agent_s: float | None = None,
         "turns": turns,
         "tool_calls": tool_calls,
         "unmeasured_calls": unmeasured,
+        "calls_per_turn": {
+            "0": sum(1 for count in per_turn if count == 0),
+            "1": sum(1 for count in per_turn if count == 1),
+            "2+": sum(1 for count in per_turn if count >= 2),
+        },
+        "batched_turns": batched,
+        "calls": [{"turn": turn, "tool": name,
+                   "s": None if seconds is None else round(seconds, 2),
+                   "error": error, "subject": subject}
+                  for turn, name, seconds, subject, error in calls],
         "tokens": tokens,
         "timeouts": timeouts(events),
+        **(_findings(findings)),
         "tool_time": {name: {"calls": row["calls"], "s": round(row["s"], 1),
                              "unmeasured": row["unmeasured"]}
                       for name, row in sorted(tools.items(), key=lambda kv: -kv[1]["s"])},
         "slowest": [{"tool": name, "s": round(seconds, 1), "subject": subject}
-                    for name, seconds, subject in sorted(
-                        (call for call in calls if call[1] is not None),
-                        key=lambda call: -call[1])[:slowest]],
+                    for _turn, name, seconds, subject, _error in sorted(
+                        (call for call in calls if call[2] is not None),
+                        key=lambda call: -call[2])[:slowest]],
     }
 
 
@@ -160,8 +207,22 @@ def line(summary: dict) -> str:
         parts.append(f"tools={summary['tools_s']:.1f}s ({tool_calls} calls: {breakdown}"
                      + (f", +{hidden} more" if hidden > 0 else "") + ")")
     parts.append(f"turns={summary['turns']}")
+    if summary["turns"]:
+        # The number that decides whether anything can be won from batching: one call per turn is a
+        # round trip per probe, and each round trip is a model turn whatever it does.
+        batching = f"calls/turn={tool_calls / summary['turns']:.1f}"
+        if summary["batched_turns"]:
+            batching += f" ({summary['batched_turns']}/{summary['turns']} ran 2+)"
+        parts.append(batching)
     if summary["timeouts"]:
         parts.append(f"timeouts={summary['timeouts']}")
+    if summary["notices"] is not None:
+        # How many budget nudges the reviewer was given, and whether it was cut off at the cap.
+        # Both are recorded by the emit extension; the conversation they were injected into is not
+        # kept, so this is the only place the answer survives.
+        parts.append(f"notices={summary['notices']}")
+    if summary["blocked"]:
+        parts.append(f"blocked={summary['blocked']}")
     spent = summary["tokens"]
     if any(spent.values()):
         parts.append("tokens " + " ".join(f"{name}={_compact(value)}" for name, value in (
@@ -173,6 +234,22 @@ def line(summary: dict) -> str:
     return "timing " + " ".join(parts)
 
 
+def call_lines(summary: dict) -> list[str]:
+    """One line per tool call, in order, with the turn it belonged to.
+
+    The line above says the ratio; this says what the reviewer did with it. Reading the sequence is
+    how "is it batching?" stops being an inference from averages: three calls under one `turn=`
+    were one round trip, three turns of one call were three.
+    """
+    out = []
+    for call in summary["calls"]:
+        spent = "?" if call["s"] is None else f"{call['s']:.2f}s"
+        flag = " !" if call["error"] else ""
+        subject = f" {call['subject']}" if call["subject"] else ""
+        out.append(f"call {call['turn']:>2} {call['tool']} {spent}{flag}{subject}")
+    return out
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("events", type=Path)
@@ -180,6 +257,10 @@ def main(argv: list[str]) -> int:
                         help="wall clock around the agent, measured by the caller; the stream has none")
     parser.add_argument("--slowest", type=int, default=2,
                         help="how many of the longest calls to name")
+    parser.add_argument("--findings", type=Path, default=None,
+                        help="the run's findings.jsonl, for the budget notices it recorded")
+    parser.add_argument("--calls", action="store_true",
+                        help="print one line per tool call before the summary")
     parser.add_argument("--json", action="store_true",
                         help="the whole summary, for work the one line is too coarse for")
     args = parser.parse_args(argv)
@@ -194,8 +275,13 @@ def main(argv: list[str]) -> int:
             agent = "" if args.agent_seconds is None else f" (agent={args.agent_seconds:.0f}s)"
             print(f"timing no event stream{agent}: the model/tool split is unavailable")
         return 0
-    summary = summarise(events, args.agent_seconds, args.slowest)
-    print(json.dumps(summary, indent=2) if args.json else line(summary))
+    summary = summarise(events, args.agent_seconds, args.slowest, args.findings)
+    if args.json:
+        print(json.dumps(summary, indent=2))
+    elif args.calls:
+        print("\n".join(call_lines(summary) + [line(summary)]))
+    else:
+        print(line(summary))
     return 0
 
 

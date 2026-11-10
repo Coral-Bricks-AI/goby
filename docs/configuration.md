@@ -90,7 +90,8 @@ Inside the agent there is one line more, and it is the one to read first when a 
 
 ```
 timing agent=118s model=77s, 2.5s/turn tools=41.1s (62 calls: bash 38.9s/44, read 1.8s/12) \
-  turns=31 timeouts=2 tokens in=31k out=48k cache-read=1.2M cache-write=9k \
+  turns=31 calls/turn=2.0 (12/31 ran 2+) timeouts=2 notices=3 \
+  tokens in=31k out=48k cache-read=1.2M cache-write=9k \
   slowest: "uv run pytest tests/x -q" 60.0s, "rg -n reauth" 3.1s
 ```
 
@@ -99,15 +100,33 @@ timing agent=118s model=77s, 2.5s/turn tools=41.1s (62 calls: bash 38.9s/44, rea
   taking too many trips, a few expensive ones says the model or the prompt size is the cost.
 - `tools` is measured by pi around each tool's own execution, so it is not an estimate. The slowest
   calls are named with the command that took the time: one killed `pytest` is not forty reads.
+- `calls/turn` is how many probes shared a round trip, and `(n/m ran 2+)` how many turns ran more
+  than one. Every turn is a model round trip whatever it does, so this is the number that says
+  whether anything can be won by batching.
 - `timeouts` counts shell commands killed at `GOBY_BASH_TIMEOUT_S`. A review that spent a minute at
   that wall clock is a review whose probe was cut off, which reads very differently from one that
   thought for a minute.
+- `notices` is how many budget nudges the reviewer was given (at 10, 5 and 2 turns left), and
+  `blocked` names the cap that cut it off, if one did. Both come from the records the emit
+  extension leaves beside the findings, because the conversation a nudge is injected into is not
+  kept — without them, whether a nudge fired is unknowable after the container exits.
 - `tokens` is the whole run's spend, in the four classes the provider reports. Cache-read against
   input is the interesting pair: a turn that re-reads the context is the slow kind.
 
+Before that line the log carries one line per tool call, in order:
+
+```
+call  1 bash 0.02s cd /workspace/sandbox && grep -rn effort_from_thinking ml/infra/effort.py
+call  1 read 0.01s ml/infra/effort.py
+call  2 bash 0.04s cd /workspace/sandbox && sed -n '40,90p' ml/infra/effort.py
+```
+
+The same turn number on several `call` lines is one round trip; one call per turn is the shape
+that costs a review its wall clock. A `!` marks a command that failed.
+
 The line is instrumentation, never a verdict: it is printed whatever the review concluded, and
-`--json` on `/opt/common/timing.py` carries every tool rather than the three the line names. The
-one thing it cannot give is a per-turn distribution — pi's stream carries a clock per tool call,
+`--json` on `/opt/common/timing.py` carries every call and the per-turn histogram. The one thing it
+cannot give is a per-turn distribution of model latency — pi's stream carries a clock per tool call,
 not per turn — so per-turn latency is an average.
 
 ## Stable contracts
