@@ -178,3 +178,20 @@ def test_the_agent_catalog_asks_for_reasoning_the_way_the_responses_api_takes_it
     assert fast["thinkingLevelMap"]["xhigh"] is None
     assert fast["thinkingLevelMap"]["max"] is None
     assert fast["thinkingLevelMap"]["high"] == "high"
+
+
+def test_a_reasoning_model_still_sends_its_prompt_as_a_system_message():
+    """`reasoning: true` has a second effect: pi picks the instruction role with
+    `model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system"`
+    (`pi-ai/dist/api/openai-responses-shared.js:169`), so turning reasoning on would also re-shape
+    the prompt — the whole review contract — from `system` to `developer`.
+
+    The gateway does translate `developer` back to `system` (`api/responses_translate.py:393`),
+    so nothing would break; but a review that changes two things about its request cannot say
+    which one moved the numbers. `supportsDeveloperRole: false` keeps the prompt byte-identical
+    and leaves the reasoning opt-in as the only difference.
+    """
+    catalog = json.loads((HERE.parent / "base" / "models" / "models.json").read_text())
+    fast = next(model for model in catalog["providers"]["coral"]["models"]
+                if model["id"] == "deepseek-v4.1-flash-fast")
+    assert fast["compat"]["supportsDeveloperRole"] is False

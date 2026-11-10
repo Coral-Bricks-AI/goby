@@ -12,6 +12,9 @@
         {
           "id": "deepseek-v4.1-flash-fast",
           "reasoning": true,
+          "compat": {
+            "supportsDeveloperRole": false
+          },
           "thinkingLevelMap": {
             "minimal": "minimal",
             "low": "low",

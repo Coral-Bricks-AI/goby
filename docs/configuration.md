@@ -59,6 +59,12 @@ the opt-in is new. `--thinking <level>` overrides it per run, and `thinkingLevel
 each level becomes; `xhigh` and `max` map to null so they are clamped to `high` instead of being sent
 as an effort the Responses API does not accept.
 
+`compat.supportsDeveloperRole: false` sits beside the flag on purpose. Turning reasoning on also
+flips pi's instruction role from `system` to `developer` (`openai-responses-shared.js:169`); the
+gateway translates that back (`api/responses_translate.py:393`), so it would work — but then a
+review would be changing two things about its request at once, and the numbers could not say which
+mattered. The prompt stays a `system` message, and the reasoning opt-in is the only difference.
+
 What to expect on the next review: thinking blocks in the transcript, so `output ~N tok (thinking …)`
 finally reports something real instead of `not in content`, and — worth watching — reasoning is
 replayed on later turns, so `cache-read` per turn may grow. If it grows more than the visibility is
