@@ -231,11 +231,16 @@ if [[ -s "$EVENTS" ]]; then
   # above cannot carry it. Not a verdict here — a missing findings record is what fails a review.
   MODEL_ERROR="$(python3 /opt/common/summarize_run.py --status "$EVENTS" || true)"
   if [[ -n "$MODEL_ERROR" ]]; then goby_log "warn: $MODEL_ERROR"; fi
-  TIMING="$(python3 /opt/common/timing.py "$EVENTS" --agent-seconds "$AGENT_ELAPSED" || true)"
+  TIMING="$(python3 /opt/common/timing.py "$EVENTS" --agent-seconds "$AGENT_ELAPSED" \
+    --findings "$AGENT_OUT/findings.jsonl" --calls || true)"
   if [[ -n "$TIMING" ]]; then
-    goby_log "$TIMING"
+    # One log line per tool call, then the summary line: the summary says the ratio, the sequence
+    # says what the reviewer did with it, and "is it batching its probes" is only answerable from
+    # the second. Every line is prefixed like the phase checkpoints so the log stays greppable.
+    while IFS= read -r trace_line; do goby_log "$trace_line"; done <<< "$TIMING"
+    SUMMARY_LINE="$(printf '%s\n' "$TIMING" | tail -n 1)"
     if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] \
-       && ! printf -- '- %s\n' "${TIMING#timing }" >> "$GITHUB_STEP_SUMMARY"; then
+       && ! printf -- '- %s\n' "${SUMMARY_LINE#timing }" >> "$GITHUB_STEP_SUMMARY"; then
       goby_log "warn: could not write the timing line to the job summary"
     fi
   fi
