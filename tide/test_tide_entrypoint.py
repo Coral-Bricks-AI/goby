@@ -72,3 +72,16 @@ def test_the_agent_script_requires_the_dummy_not_a_provider_key():
     for credential in ("CORALBRICKS_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
                        "DEEPINFRA_API_KEY"):
         assert f"{credential}:?" not in text, credential
+
+
+def test_every_scan_reports_where_its_wall_clock_went():
+    """The usage line says what a scan cost in tokens; this one says what it spent its time on —
+    the requests pi timed, the calls' own clocks, the output split. Instrumentation only, so it is
+    `|| true`: a sweep must not fail because a report about it did."""
+    text = entrypoint()
+    block = text[text.index('run_scan "$check" "$path"'):]
+    block = block[:block.index("summarize_run.py --timeouts")]
+    assert "/opt/common/timing.py" in block
+    assert '--agent-seconds "$SCAN_ELAPSED"' in block
+    call = block[block.index("SCAN_TIMING="):block.index('if [[ -n "$SCAN_TIMING" ]]')]
+    assert "|| true" in call

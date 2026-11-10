@@ -199,3 +199,22 @@ def test_the_prompt_renders_a_brief_or_rules_file_that_is_not_utf8(tmp_path):
     assert out.returncode == 0, out.stderr
     assert "Caf\ufffd: invariant one" in out.stdout
     assert "r\ufffdgle" in out.stdout
+
+
+def test_every_scan_reports_where_its_wall_clock_went():
+    """The usage line says what a scan cost in tokens; this one says what it spent its time on —
+    the requests pi timed, the calls' own clocks, the output split. A cleaner is the most expensive
+    thing goby runs, and it reported cost with no way to tell thinking from probing."""
+    text = entrypoint()
+    scan_block = text[text.index('run_scan "$dir" "$MODEL"'):]
+    scan_block = scan_block[:scan_block.index("# What to do about this scan")]
+    assert "/opt/common/timing.py" in scan_block
+    assert '--agent-seconds "$SCAN_ELAPSED"' in scan_block
+    # Instrumentation never decides: an unreadable stream must not fail the scan it describes.
+    assert "|| true" in scan_block[scan_block.index("timing.py"):].split("\n")[0] + \
+        scan_block[scan_block.index("timing.py"):].split("\n")[1], scan_block
+    # A retry is its own scan, at fallback cost, and is the one whose findings get filed.
+    retry_block = text[text.index('run_scan "$dir" "$FALLBACK_MODEL"'):]
+    retry_block = retry_block[:retry_block.index("model_error=0")]
+    assert "/opt/common/timing.py" in retry_block
+    assert '$OUT/agent/$SLUG-retry/events.jsonl' in retry_block

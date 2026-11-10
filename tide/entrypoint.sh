@@ -340,9 +340,16 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
   facts="$OUT/facts/$slug.json"
   log "scan $check on $path (model=$MODEL max_tools=$TIDE_MAX_TOOLS bash_timeout=${TIDE_BASH_TIMEOUT_S}s)"
   status=0
+  SCAN_STARTED=$SECONDS
   run_scan "$check" "$path" "$facts" "$slug" "$MODEL" "$OUT/agent/$slug" || status=$?
+  SCAN_ELAPSED=$((SECONDS - SCAN_STARTED))
   log "scan exit=$status events=$(count_lines "$OUT/agent/$slug/events.jsonl") proposals=$(count_lines "$OUT/agent/$slug/proposals.jsonl")"
   tail -20 "$OUT/agent.log" || true
+  # Where that scan's wall clock went: the requests pi timed, the calls' own clocks, the turns and
+  # the output split. Instrumentation, so `|| true` — a scan must not fail because a report did.
+  SCAN_TIMING="$(python3 /opt/common/timing.py "$OUT/agent/$slug/events.jsonl" \
+    --agent-seconds "$SCAN_ELAPSED" || true)"
+  if [[ -n "$SCAN_TIMING" ]]; then log "$SCAN_TIMING"; fi
   # A command that hits the wall is a tool error the model sees, not an exit status: pi finishes the
   # run and exits 0, so without this the scan looks exactly like one that found nothing. Counted
   # from the event stream, which is the run's own record, after the run rather than during it.
