@@ -52,12 +52,31 @@ that did not ask for it. Without the flag the model thinks, is billed for it, an
 nothing a reviewer can read — measured on four reviews that spent 80–90% of their output on thinking
 nobody could see.
 
-The level is pi's own default (`medium`, from pi's settings), so no command line needs to change.
-`medium` reaches the gateway as effort `medium`, which the gateway maps to the same upstream effort
-`high` that the old raw `reasoning_effort` sampling param used to: the intensity is unchanged, only
-the opt-in is new. `--thinking <level>` overrides it per run, and `thinkingLevelMap` decides what
-each level becomes; `xhigh` and `max` map to null so they are clamped to `high` instead of being sent
-as an effort the Responses API does not accept.
+The level is pi's own default (`medium`, from pi's settings), so no command line needs to change,
+and it reaches the gateway as effort `medium`. `--thinking <level>` overrides it per run, and
+`thinkingLevelMap` decides what each level becomes. Every level is declared, including the two that
+have no obvious counterpart: `xhigh` is sent as `max` (there is no `xhigh` effort, and `max` is the
+nearest supported level above `high` — pi would clamp it there anyway, since it scans *forward*
+first, so declaring it keeps the doc and the wire in agreement) . Measured against the gateway on
+2026-11-10, one request per level on one prompt:
+
+| effort | reasoning tokens | thinking characters |
+|---|---|---|
+| none | 0 | 0 |
+| minimal | 371 | 1430 |
+| low | 407 | 1551 |
+| medium | 554 | 2234 |
+| high | 1033 | 3999 |
+| max | 1549 | 6173 |
+
+Read the ends rather than the steps: adjacent levels sit inside the model's own run-to-run variance
+(the same prompt twice gave 1205 and 716 thinking characters at one level). CoralBricks' client
+metadata marks `minimal` and `medium` unsupported and `docs/INTEGRATIONS.md` lists `low, high, max`,
+while the gateway honours all of them — so the catalog passes them through rather than
+second-guessing the vendor, and `max` is open because it demonstrably does more than `high`.
+
+Choosing the default is a speed/depth decision, not a correctness one: `medium` is what runs today,
+and the table is what moving it buys or costs.
 
 `compat.supportsDeveloperRole: false` sits beside the flag on purpose. Turning reasoning on also
 flips pi's instruction role from `system` to `developer` (`openai-responses-shared.js:169`); the

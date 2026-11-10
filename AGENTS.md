@@ -29,3 +29,29 @@ only what you fixed, or reply why it is out of scope.
 When there is no pull request to review, `gh issue list --label goby-cleaners --state open` is the next
 best backlog: those are defects goby cleaners reproduced in this repository, and each one has a
 repro and a flip to start from.
+
+## Testing the container without a pull request
+
+The image is most of the product, and everything inside it runs locally in under a minute: the
+clone, `prepare`, the rendered prompt, the sandbox, the agent and its tools. What still needs a real
+pull request is the Actions side — the runner, the image pull, and publishing the review and its
+statuses — so use the loop below to iterate and a plain PR to confirm the wiring.
+
+```bash
+docker build -t goby-base base
+docker build --build-arg BASE_IMAGE=goby-base -f review/Dockerfile -t goby-review .
+
+# A provider key belongs in a file, never on the command line: argv shows up in `ps` and in history.
+printf 'CORALBRICKS_API_KEY=%s\n' "$KEY" > /tmp/goby.env && chmod 600 /tmp/goby.env
+docker run --rm --env-file /tmp/goby.env -v "$PWD/out:/workspace/out" --entrypoint bash goby-review -lc \
+  'pi --mode json --model coral/deepseek-v4.1-flash-fast --no-session \
+     --extension /opt/goby/report_findings.ts --tools bash,read,grep,find,ls,report_findings \
+     "Read /workspace/out/prompt.md. Do it, then call report_findings." > /workspace/out/events.jsonl'
+```
+
+`base/models/models.json` points at the loopback proxy, so either run the real entrypoint (which
+starts it, and needs `GITHUB_TOKEN` plus the `GOBY_*` inputs) or copy the file and set `baseUrl` to
+the provider directly. `events.jsonl` is the stream the review reads, so
+`python3 common/timing.py events.jsonl --agent-seconds N --json` reproduces the timing line from it:
+that is how the token, character and per-request accounting gets checked without waiting for a PR,
+and how a claim about a provider's behaviour gets settled from the wire rather than from a doc.
