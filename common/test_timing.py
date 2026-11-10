@@ -42,15 +42,30 @@ def tool(name, ms=None, **args):
             end]
 
 
-def test_the_model_share_is_the_agent_wall_clock_minus_the_tools(tmp_path):
-    """The whole reason the line exists: 100s of agent, 60.7s of it inside tools."""
-    path = stream(tmp_path, {"type": "turn_start"}, *tool("bash", 60200, command="uv run pytest tests/x -q"),
-                  *tool("read", 500, path="src/a.ts"))
-    result = run(str(path), "--agent-seconds", "100")
-    assert result.returncode == 0, result.stderr
-    assert "agent=100s" in result.stdout
-    assert "model=39s" in result.stdout
-    assert "tools=60.7s (2 calls: bash 60.2s/1, read 0.5s/1)" in result.stdout
+def test_the_model_share_is_measured_per_request_and_never_subtracted(tmp_path):
+    """The tool sum is *not* taken out of the agent's clock. pi runs a turn's tool calls
+    concurrently, so two overlapping 40s commands add 80s to that sum while occupying 40s of wall
+    clock — and subtracting it invented 35s of model time that never happened (goby review, #148)."""
+    overlap = [*tool("bash", 40000, command="pytest -q"), *tool("bash", 40000, command="ruff check")]
+    path = stream(tmp_path, {"type": "turn_start"}, *overlap, response(3000))
+    out = run(str(path), "--agent-seconds", "45").stdout
+    assert "agent=45s" in out
+    assert "model=3s" in out                      # measured, not 45 - 80
+    assert "other=+42.0s" in out                    # the rest of the wall clock, unnamed
+    assert "tools=80.0s" in out                   # the sum itself, which overstates the wall time
+    assert "unaccounted" not in out
+
+
+def test_the_agent_and_the_model_do_not_have_to_agree(tmp_path):
+    """Two independent measurements: pi times the request, the shell times the agent. A remainder
+    too small to matter is not printed, and the model side is marked as a lower bound when pi did
+    not time every response."""
+    path = stream(tmp_path, {"type": "turn_start"}, response(2000))
+    assert "other=" not in run(str(path), "--agent-seconds", "2.1").stdout
+    path = stream(tmp_path, {"type": "turn_start"}, response(1000), response(None))
+    out = run(str(path), "--agent-seconds", "5").stdout
+    assert "model>=1s" in out
+    assert "other=" not in out
 
 
 def test_the_slowest_calls_are_named_with_what_they_were_pointed_at(tmp_path):
@@ -73,13 +88,12 @@ def test_a_call_with_no_start_keeps_its_name_and_loses_only_the_subject(tmp_path
     assert 'slowest: "bash" 2.0s' in out
 
 
-def test_a_call_with_no_clock_is_not_folded_into_the_model(tmp_path):
-    """A tool that recorded no time puts time into neither side. Subtracting the measured calls
-    from the wall clock would have made the model look 90s slower than it was."""
-    path = stream(tmp_path, {"type": "turn_start"}, *tool("bash", command="sleep 1"))
+def test_a_tool_that_recorded_no_time_does_not_touch_the_model_share(tmp_path):
+    """The model side is pi's own per-request timing now, so a tool without a clock can only make
+    the *tool* number smaller than it was — it cannot move the model one."""
+    path = stream(tmp_path, {"type": "turn_start"}, *tool("bash", command="sleep 1"), response(4000))
     out = run(str(path), "--agent-seconds", "100").stdout
-    assert "model=?" in out
-    assert "no clock on 1 call(s)" in out
+    assert "model=4s" in out
     assert "tools=0.0s (1 calls: bash 0.0s/1)" in out
 
 
@@ -88,8 +102,10 @@ def test_a_stream_with_no_turn_is_not_all_model_time(tmp_path):
     a run that never thought, not a run that spent 90s thinking."""
     path = stream(tmp_path, {"type": "session", "version": 3, "id": "x"})
     out = run(str(path), "--agent-seconds", "90").stdout
-    assert "model=?" in out
-    assert "no turn ever started" in out
+    # No turn, so no request was made and no model share is claimed — only the reason.
+    assert "model=?(no turn ever started)" in out
+    assert "turns=0" in out
+    assert "requests=" not in out
 
 
 def test_the_timeouts_are_counted_at_the_bash_wall_clock(tmp_path):
@@ -161,17 +177,6 @@ def test_a_request_pi_did_not_time_is_counted_not_assumed(tmp_path):
     assert "requests=2/3 p50=1.0s" in out
 
 
-def test_time_in_the_agent_that_is_neither_a_request_nor_a_tool_is_named(tmp_path):
-    """The two measurements are independent — pi times the request, the shell times the agent — so a
-    gap between them is a fact, not a rounding error. Large is worth printing; small is noise."""
-    path = stream(tmp_path, {"type": "turn_start"}, response(1000),
-                  {"type": "turn_start"}, response(1000))
-    # 10s of agent, 2s of requests, no tools: 8s unaccounted, which somebody should be able to explain.
-    assert "unaccounted=+8.0s" in run(str(path), "--agent-seconds", "10").stdout
-    # The same stream against a wall clock that agrees with it prints nothing.
-    assert "unaccounted" not in run(str(path), "--agent-seconds", "2.1").stdout
-
-
 def test_a_stream_with_no_response_does_not_invent_a_distribution(tmp_path):
     path = stream(tmp_path, {"type": "turn_start"}, *tool("bash", 10, command="ls"))
     out = run(str(path), "--agent-seconds", "1").stdout
@@ -218,9 +223,10 @@ def test_the_json_carries_every_tool_not_just_the_named_ones(tmp_path):
     summary = json.loads(run(str(path), "--agent-seconds", "10", "--json").stdout)
     assert [name for name in summary["tool_time"]] == ["ls", "find", "grep", "read"]
     assert summary["tool_time"]["ls"] == {"calls": 1, "s": 0.4, "unmeasured": 0}
-    assert summary["model_s"] == 9.0
+    # No assistant message, so nothing pi timed: the model share is unknown, not zero.
+    assert summary["model_s"] is None
     assert summary["requests"]["count"] == 0
-    assert summary["unaccounted_s"] is None
+    assert summary["other_s"] is None
 
 
 def test_calls_per_turn_says_whether_the_probes_shared_a_round_trip(tmp_path):

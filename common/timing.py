@@ -229,16 +229,19 @@ def summarise(events: list[dict], agent_s: float | None = None,
     # with a tool's time — wrong in the one direction this line exists to get right. A stream with
     # no turn at all is the other end: pi exits 0 when the provider refused the key, emitting a
     # session header and nothing else, and calling that "all model time" would name the wrong bug.
-    if agent_s is None or not turns or (tool_calls and unmeasured):
-        model_s = None
-    else:
-        model_s = round(agent_s - tools_s, 1)
-    # What the model share does *not* account for: time inside the agent that was neither a request
-    # pi timed nor a tool. Small (pi's own startup, the sandbox copy) is expected; large or negative
-    # means one of the two measurements is wrong, and saying so is cheaper than suspecting it.
-    # Unknowable when any request went untimed, so it is absent then rather than misattributed.
-    unaccounted = (round(model_s - sum(request_seconds), 1)
-                   if model_s is not None and len(timed) == len(requests) and requests else None)
+    # The model share is the sum of the requests pi timed, measured directly. It is *not*
+    # `agent_s - tools_s`, which is what an earlier version did and what goby review caught on this
+    # change: pi runs a turn's tool calls concurrently, so the sum of their clocks can exceed the
+    # wall time they occupied — two overlapping 40s commands add 80s to `tools_s` while taking 40s.
+    # Subtracting that from the agent's clock invents model time that never happened.
+    model_s = round(sum(request_seconds), 1) if timed else None
+    # Whatever is left of the agent's wall clock: tool wall time (which the sum overstates when
+    # calls overlap), pi's own startup, the sandbox copy. Two measurements, one subtraction, no
+    # claim about which part is which. Absent when a request went untimed, because then the model
+    # side is a lower bound and the remainder would swallow the difference.
+    other_s = (round(agent_s - model_s, 1)
+               if agent_s is not None and model_s is not None
+               and len(timed) == len(requests) else None)
     return {
         "agent_s": agent_s,
         "model_s": model_s,
@@ -262,7 +265,8 @@ def summarise(events: list[dict], agent_s: float | None = None,
             "slowest_turn": slowest_request["turn"] if slowest_request else None,
             "slowest_out_tokens": slowest_request["out"] if slowest_request else None,
         },
-        "unaccounted_s": unaccounted,
+        "other_s": other_s,
+        "model_complete": bool(requests) and len(timed) == len(requests),
         "calls": [{"turn": turn, "tool": name,
                    "s": None if seconds is None else round(seconds, 2),
                    "error": error, "subject": subject}
@@ -298,7 +302,11 @@ def line(summary: dict) -> str:
     tool_calls = summary["tool_calls"]
     parts = ["agent=?" if agent_s is None else f"agent={agent_s:.0f}s"]
     if summary["model_s"] is not None:
-        parts.append(f"model={summary['model_s']:.0f}s")
+        # A lower bound when pi did not time every response, and marked as one.
+        bound = "" if summary["model_complete"] else ">"
+        parts.append(f"model{bound}={summary['model_s']:.0f}s")
+        if summary["other_s"] is not None and abs(summary["other_s"]) > max(1.0, 0.1 * agent_s):
+            parts.append(f"other={summary['other_s']:+.1f}s")
         # The distribution, not the average: what a change can act on is the shape — 43 requests at
         # 1.3s is many cheap round trips, one at 9s is a different problem — and a mean of two
         # clusters hides both.
@@ -313,15 +321,8 @@ def line(summary: dict) -> str:
                 spread += (f" (turn {served['slowest_turn']}: "
                            f"{_compact(served['slowest_out_tokens'] or 0)} out)")
             parts.append(spread)
-            # A slow request that wrote a lot is throughput; one that wrote little is latency. Only
-            # worth printing where it would change what somebody does next.
-            unaccounted = summary["unaccounted_s"]
-            if unaccounted is not None and abs(unaccounted) > max(1.0, 0.1 * summary["model_s"]):
-                parts.append(f"unaccounted={unaccounted:+.1f}s")
     elif not summary["turns"]:
         parts.append("model=?(no turn ever started)")
-    elif summary["unmeasured_calls"]:
-        parts.append(f"model=?(no clock on {summary['unmeasured_calls']} call(s))")
     if not tool_calls:
         parts.append("tools=0s (no calls)")
     else:

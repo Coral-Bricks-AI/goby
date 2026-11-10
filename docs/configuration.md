@@ -97,18 +97,19 @@ timing agent=118s model=77s requests=43 p50=1.3s p95=2.9s max=6.1s (turn 12: 890
   slowest: "uv run pytest tests/x -q" 60.0s, "rg -n reauth" 3.1s
 ```
 
-- `model` is the agent's wall clock minus the tools' own clocks — the time spent waiting on the
-  provider. `requests`, `p50`, `p95`, `max` are that same time cut per response, and they are
-  **measured, not derived**: pi stamps `durationMs` on every assistant message, a monotonic clock
-  from the request starting to the response ending. A slow request that wrote a lot of tokens is
-  throughput; one that wrote little is latency, so the slowest turn is named with its output size.
-  Percentiles are nearest-rank, so every number printed is one pi observed.
+- `model` is the sum of the requests pi timed — **measured, never subtracted** from the agent's clock.
+  pi stamps `durationMs` on every assistant message: a monotonic clock from the request starting to
+  the response ending. `requests`, `p50`, `p95`, `max` are that same time cut per response. A slow
+  request that wrote a lot of tokens is throughput; one that wrote little is latency, so the slowest
+  turn is named with its output size. Percentiles are nearest-rank, so every number printed is one
+  pi observed.
+- `other=+2.4s` is what is left of the agent's wall clock, and it is printed only when it is large.
+  It is *not* "tool time": pi runs a turn's tool calls concurrently, so the `tools=` sum below can
+  exceed the wall clock they occupied. Leaving the remainder unnamed is the point — it is some mix
+  of tool wall time, pi's startup and the sandbox copy, and this line does not pretend to split it.
 - `requests=41/43` means pi did not time every response (it leaves `durationMs` off a response it
-  did not see start, such as a deferred result); the distribution is over the timed ones, and the
-  gap is shown rather than filled with zeros.
-- `unaccounted=+2.4s` is printed only when it is large: time inside the agent that was neither a
-  request pi timed nor a tool. The two are independent measurements, so a gap is a fact — small is
-  pi's own startup, large means one of them is wrong and is worth reading.
+  did not see start, such as a deferred result); the distribution is over the timed ones, the gap is
+  shown rather than filled with zeros, and `model>=Ns` marks the total as a lower bound.
 - `tools` is measured by pi around each tool's own execution, so it is not an estimate. The slowest
   calls are named with the command that took the time: one killed `pytest` is not forty reads.
 - `calls/turn` is how many probes shared a round trip, and `(n/m ran 2+)` how many turns ran more
