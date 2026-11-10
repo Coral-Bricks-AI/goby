@@ -164,6 +164,15 @@ your own rates if you want a number; without one the price reads `unknown`, neve
 a printed zero reads as a measurement somebody made. The image deliberately carries no rates,
 because a stale rate is a false measurement rather than a missing one.
 
+What the scan spent its *time* on goes to the log, one line per scan, from the same tool the
+reviewer uses (`common/timing.py`, documented in
+[docs/configuration.md](../docs/configuration.md#where-a-reviews-time-goes)): the sum of the
+requests pi timed with p50/p95/max, the tool calls' own clocks, the turns, the output split between
+thinking, tool calls and prose, and the commands that took the longest. It is what says whether a
+scan is slow because it is thinking, because it is running probes, or because a command hit the
+wall clock. The job summary keeps the cost line above; a second line there per component would be
+ten lines for a five-component push.
+
 ## Run one locally
 
 ```bash

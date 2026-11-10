@@ -334,9 +334,16 @@ for dir in "${PICKED[@]}"; do
   # Recorded per component so each issue names the brief it actually read.
   printf '%s\t%s\n' "$dir" "$(basename "$charter")" >> "$BRIEFS_FILE"
   status=0
+  SCAN_STARTED=$SECONDS
   run_scan "$dir" "$MODEL" "$OUT/agent/$SLUG" "$charter" || status=$?
+  SCAN_ELAPSED=$((SECONDS - SCAN_STARTED))
   log "scan exit=$status events=$(count_lines "$OUT/agent/$SLUG/events.jsonl") findings=$(count_lines "$OUT/agent/$SLUG/findings.jsonl")"
   tail -20 "$OUT/agent.log" || true
+  # Where that scan's wall clock went: the requests pi timed, the calls' own clocks, the turns and
+  # the output split. Instrumentation, so `|| true` — a scan must not fail because a report did.
+  SCAN_TIMING="$(python3 /opt/common/timing.py "$OUT/agent/$SLUG/events.jsonl" \
+    --agent-seconds "$SCAN_ELAPSED" || true)"
+  if [[ -n "$SCAN_TIMING" ]]; then log "$SCAN_TIMING"; fi
 
   # What to do about this scan is decided in plan.py, because it is a rule with five cases
   # and shell cannot be tested. `summarize_run.py --status` is the only thing that can say
@@ -369,9 +376,14 @@ for dir in "${PICKED[@]}"; do
           --model "$FALLBACK_MODEL" --fallback "$FALLBACK_MODEL" > /dev/null 2>&1; then
     log "model error on $MODEL for $dir; retrying once on $FALLBACK_MODEL"
     status=0
+    RETRY_STARTED=$SECONDS
     run_scan "$dir" "$FALLBACK_MODEL" "$OUT/agent/$SLUG-retry" "$charter" || status=$?
+    RETRY_ELAPSED=$((SECONDS - RETRY_STARTED))
     log "retry exit=$status findings=$(count_lines "$OUT/agent/$SLUG-retry/findings.jsonl")"
     tail -20 "$OUT/agent.log" || true
+    RETRY_TIMING="$(python3 /opt/common/timing.py "$OUT/agent/$SLUG-retry/events.jsonl" \
+      --agent-seconds "$RETRY_ELAPSED" || true)"
+    if [[ -n "$RETRY_TIMING" ]]; then log "retry $RETRY_TIMING"; fi
     if [[ $status -ne 0 ]] || ! python3 /opt/common/summarize_run.py --status \
          "$OUT/agent/$SLUG-retry/events.jsonl"; then
       log "error: the retry failed too; nothing filed from $dir"

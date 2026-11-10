@@ -38,6 +38,15 @@ own tests around it.
 Nothing is opened as a pull request. The issue is the deliverable; a human or another agent
 takes it from there.
 
+## What it costs, and where the time went
+
+The log carries one `usage` line per scan — tokens, turns, tool calls, wall clock and the price
+when the repository commits a `.goby/models.json` — and one `timing` line per scan with the time
+split: the requests pi timed (`p50`/`p95`/`max`), the tool calls' own clocks, the turns, and the
+output split between thinking, tool calls and prose. The second line is the same one the reviewer
+prints, and it is documented once, in
+[docs/configuration.md](../docs/configuration.md#where-a-reviews-time-goes).
+
 ## Install
 
 Copy the workflow and add the model key:
