@@ -30,6 +30,11 @@
    reads the review, so nothing else could say whether the reviewer was warned before its cap.
    `report_findings.ts` writes a `budget` record for each nudge and a `blocked` record for each
    cut-off; `/opt/common/timing.py` is what reads them.
+8. The reuse decision is made before the clone, and a reuse run needs no working tree. `prepare`
+   answers it from the GitHub API alone — the API's diff digest, the receipt on a previous review,
+   the reviews already posted — so a head that was already reviewed costs a status refresh, not a
+   clone and a diff nothing reads. Anything that makes `prepare` depend on `diff.patch` puts back a
+   cost that most runs pay and no run can use.
 
 ## Known-fragile areas
 

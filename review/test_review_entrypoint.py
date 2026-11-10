@@ -85,3 +85,53 @@ def test_the_verdict_is_still_the_findings_record():
     produced no findings record still fails, whatever the instrumentation said about it."""
     text = entrypoint()
     assert 'if ! grep -q \'"kind":"findings"\' "$AGENT_OUT/findings.jsonl"' in text
+
+
+def test_the_reuse_decision_comes_before_the_clone():
+    """A head that was already reviewed is a status refresh, and the decision needs GitHub, not a
+    working tree. Cloning first made every such run pay ~10s for a diff nothing read — and in a
+    repository that reviews once per pull request, most runs are that kind."""
+    text = entrypoint()
+    prepare = text.index("node /opt/goby/reviewRun.js prepare")
+    assert prepare < text.index('git "${AUTH[@]}"')
+    # The exit belongs to the branch that reads prepare's answer, not somewhere after the clone.
+    reuse_exit = text.index('if grep -q \'"reuse":true\'')
+    assert prepare < reuse_exit < text.index("git \"${AUTH[@]}\"")
+
+
+def test_a_reuse_run_pays_for_nothing_on_the_agent_side():
+    """The proxy, the key file, the sandbox copy, the prompt and the agent all belong after the
+    reuse exit: none of them can change a verdict that is already published."""
+    text = entrypoint()
+    reuse_exit = text.index('if grep -q \'"reuse":true\'')
+    for late in ('goby_proxy_start "$UPSTREAM"', 'goby_key_to_file "$KEY"',
+                 'cp -a "$REPO_DIR/." "$SANDBOX/"', 'bash "$OUT/run-agent.sh"'):
+        assert text.index(late) > reuse_exit, late
+
+
+def test_the_progress_note_starts_only_once_nothing_else_can_fail():
+    """A "Goby is reviewing" note that nothing marks done is worse than no note. A reuse run
+    refreshed a status and a skipped diff posted its verdict, so neither has anything to announce;
+    the clone and the proxy can still fail, and the EXIT trap that marks the note done is installed
+    after the proxy. So the note starts last, immediately before the work it describes."""
+    text = entrypoint()
+    start = text.index("\ngoby_progress start\n")
+    assert start > text.index("node /opt/goby/reviewRun.js skip")
+    assert start > text.index('goby_proxy_start "$UPSTREAM"')
+    assert start > text.index("trap 'goby_progress stop")
+    assert start < text.index('cp -a "$REPO_DIR/." "$SANDBOX/"')
+
+
+def test_a_failure_before_the_agent_resolves_the_statuses_it_opened():
+    """`prepare` declares "Review in progress" before the clone, so anything that stops this shell
+    between them has to say so: a pending status nothing concludes blocks a pull request with
+    nothing to read, which review/INVARIANTS.md 1 forbids. The clone failed by `set -e` before this
+    ordering change and posted no status at all, so the failure was silent but harmless; now it is
+    loud, so it must also be resolved."""
+    text = entrypoint()
+    helper = text[text.index("goby_fail() {"):text.index("PROVIDER=")]
+    assert "reviewRun.js fail" in helper
+    assert "exit 1" in helper
+    for failure in ('goby_fail "the clone of', 'goby_fail "cannot fetch',
+                    'goby_fail "checkout of', 'goby_fail "the diff'):
+        assert failure in text, failure
