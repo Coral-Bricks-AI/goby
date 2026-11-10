@@ -109,13 +109,29 @@ def test_a_reuse_run_pays_for_nothing_on_the_agent_side():
         assert text.index(late) > reuse_exit, late
 
 
-def test_the_progress_note_starts_only_once_a_review_will_run():
+def test_the_progress_note_starts_only_once_nothing_else_can_fail():
     """A "Goby is reviewing" note that nothing marks done is worse than no note. A reuse run
     refreshed a status and a skipped diff posted its verdict, so neither has anything to announce;
-    a clone can fail, and the EXIT trap that marks the note done is set later still (after the
-    proxy starts). So the note starts past the diff, never before."""
+    the clone and the proxy can still fail, and the EXIT trap that marks the note done is installed
+    after the proxy. So the note starts last, immediately before the work it describes."""
     text = entrypoint()
-    start = text.index("goby_progress start")
+    start = text.index("\ngoby_progress start\n")
     assert start > text.index("node /opt/goby/reviewRun.js skip")
-    assert start > text.index('git "${AUTH[@]}"')
-    assert start < text.index('goby_proxy_start "$UPSTREAM"')
+    assert start > text.index('goby_proxy_start "$UPSTREAM"')
+    assert start > text.index("trap 'goby_progress stop")
+    assert start < text.index('cp -a "$REPO_DIR/." "$SANDBOX/"')
+
+
+def test_a_failure_before_the_agent_resolves_the_statuses_it_opened():
+    """`prepare` declares "Review in progress" before the clone, so anything that stops this shell
+    between them has to say so: a pending status nothing concludes blocks a pull request with
+    nothing to read, which review/INVARIANTS.md 1 forbids. The clone failed by `set -e` before this
+    ordering change and posted no status at all, so the failure was silent but harmless; now it is
+    loud, so it must also be resolved."""
+    text = entrypoint()
+    helper = text[text.index("goby_fail() {"):text.index("PROVIDER=")]
+    assert "reviewRun.js fail" in helper
+    assert "exit 1" in helper
+    for failure in ('goby_fail "the clone of', 'goby_fail "cannot fetch',
+                    'goby_fail "checkout of', 'goby_fail "the diff'):
+        assert failure in text, failure
