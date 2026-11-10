@@ -238,3 +238,33 @@ test('the shared filing code exists once, in one directory', () => {
     expect(read(dockerfile)).toContain('ARG BASE_IMAGE=goby-base');
   }
 })
+
+test('an image is republished when anything its Dockerfile copies changes', () => {
+  // The reviewer image copies `common/` (the run summary and the timing tool) and
+  // `review-image.yml` did not watch it, so a change to `common/timing.py` merged and published
+  // nothing: `:latest` kept running the old bytes while the log said the new ones were live. The
+  // paths a workflow watches have to cover every COPY source in the image it publishes.
+  const images: [string, string][] = [
+    ['review/Dockerfile', '.github/workflows/review-image.yml'],
+    ['cleaners/Dockerfile', '.github/workflows/cleaners-image.yml'],
+    ['tide/Dockerfile', '.github/workflows/tide-image.yml'],
+  ];
+  for (const [dockerfile, workflow] of images) {
+    const paths = read(workflow);
+    for (const line of read(dockerfile).split('\n')) {
+      const match = /^COPY\s+(.+)$/.exec(line.trim());
+      // `--from` copies out of a build stage: those bytes come from this repository's own source,
+      // which the workflow already watches through `src/` or the product directory.
+      if (!match || line.includes('--from')) continue;
+      // The last token is the destination.
+      for (const source of match[1].trim().split(/\s+/).slice(0, -1)) {
+        // A directory is watched by its prefix; a file either by its own path or by the glob of
+        // the directory it sits in.
+        const top = source.split('/')[0];
+        const watched = [`"${source}"`, `"${top}/**"`];
+        expect({ dockerfile, source, watches: watched.some(w => paths.includes(w)) })
+          .toEqual({ dockerfile, source, watches: true });
+      }
+    }
+  }
+});
