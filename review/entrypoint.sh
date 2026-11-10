@@ -67,10 +67,30 @@ case "$PROVIDER" in
 esac
 [[ -n "$KEY" ]] || { goby_log "error: no key for provider $PROVIDER"; exit 2; }
 
-mkdir -p "$OUT" "$SANDBOX" "$AGENT_HOME"
-rm -rf "${REPO_DIR:?}" "${SANDBOX:?}"; mkdir -p "$REPO_DIR" "$SANDBOX"
+mkdir -p "$OUT" "$AGENT_HOME"
+
+# --- what this run is -------------------------------------------------------------------
+# Prepare asks GitHub everything the reuse decision needs — the API's diff digest for this head and
+# base, the PR's head and base, the receipt on a previous review of this commit, the reviews this
+# bot already posted — and needs no clone to answer it. So it runs first: a head that was already
+# reviewed is a status refresh, and paying for a full clone and a diff that nothing will read was
+# most of what such a run cost. It still talks to GitHub as root, before any drop, with the token
+# in this process.
+GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
+GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" \
+GOBY_GATE="${GOBY_GATE:-off}" \
+  node /opt/goby/reviewRun.js prepare | tee "$OUT/prepare.json"
+
+if grep -q '"reuse":true' "$OUT/prepare.json"; then
+  goby_log "this head was already reviewed; refreshing the gate only"
+  GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
+  GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" \
+    node /opt/goby/reviewRun.js finish
+  exit $?
+fi
 
 # --- the change -------------------------------------------------------------------------
+rm -rf "${REPO_DIR:?}" "${SANDBOX:?}"; mkdir -p "$REPO_DIR" "$SANDBOX"
 # AUTH goes in a per-command header, never the URL: a URL lands in .git/config inside the tree the
 # reviewer reads, and the sandbox copy would carry it. Not a partial clone either: a blobless clone
 # fetches blobs lazily, and that lazy fetch would go out unauthenticated from inside the sandbox.
@@ -117,31 +137,18 @@ if [[ "$DIFF_LINES" -gt "$MAX_DIFF_LINES" ]]; then
   exit 0
 fi
 
+# Only here, with a diff that will actually be read: a reuse refreshed a status above and a skipped
+# diff posted its verdict, so a "Goby is reviewing" note would be wrong in both. Past this point the
+# note is started and the EXIT trap below owns marking it done, whatever happens next.
+goby_progress start
+
 # --- secrets, then the agent's world -----------------------------------------------------
 goby_key_to_file "$KEY"
 goby_token_to_file
 export GOBY_KEY_FILE GOBY_TOKEN_FILE
 goby_proxy_start "$UPSTREAM" "$KEY_HEADER" "$KEY_SCHEME"
-# The progress stop is a no-op until `goby_progress start` below; it goes first as it cannot fail.
+# The progress stop is a no-op until `goby_progress start` above; it goes first as it cannot fail.
 trap 'goby_progress stop; goby_proxy_stop' EXIT
-
-# Prepare talks to GitHub, so it runs before the drop and while the token is in this process.
-GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
-GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" \
-GOBY_GATE="${GOBY_GATE:-off}" \
-  node /opt/goby/reviewRun.js prepare | tee "$OUT/prepare.json"
-
-if grep -q '"reuse":true' "$OUT/prepare.json"; then
-  goby_log "this head was already reviewed; refreshing the gate only"
-  GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
-  GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" \
-    node /opt/goby/reviewRun.js finish
-  exit $?
-fi
-
-# Only here, past the reuse exit: with the round cap reached a push is not reviewed, and a note
-# saying it is would be wrong.
-goby_progress start
 
 # The reference tree is what findings quote; the sandbox is what the reviewer may change.
 cp -a "$REPO_DIR/." "$SANDBOX/"

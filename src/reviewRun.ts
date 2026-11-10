@@ -41,7 +41,15 @@ interface Job {
   image: string | null;
   image_digest: string | null;
   diff_digest: string;
-  diff_lines: number;
+  /**
+   * Lines in the clone's diff, or null when this run decided not to clone.
+   *
+   * Prepare no longer waits for the clone — the reuse decision needs GitHub, not a working tree —
+   * so the file it used to count may not exist yet. Only the `prepared` log line reads this;
+   * `finish` counts the diff it reads for the review body, so the number a reader sees is
+   * unchanged. Null means "not measured", which is not the same as a zero-line diff.
+   */
+  diff_lines: number | null;
   open_threads: contract.ThreadRecord[];
   resolved_history: ResolvedThread[];
   reuse: boolean;
@@ -85,7 +93,10 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   if (pr < 1) throw new Error('GOBY_PR must be a positive integer');
   const head = env('GOBY_HEAD');
   const base = env('GOBY_BASE');
-  const diff = await readFile(join(out, 'diff.patch'), 'utf8');
+  // Absent by design on the path that decides not to review: the clone happens after this. A
+  // failed read here must not fail the run, or every reuse run would fail on the file it is
+  // about to not need.
+  const diff = await readFile(join(out, 'diff.patch'), 'utf8').catch(() => null);
   // The gate compares this digest against the API's diff for the same head and base, so it is
   // computed from that same call rather than from the clone: a local `git diff` is a different
   // set of bytes, and a receipt the gate can never match would block every merge.
@@ -146,7 +157,7 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
   const job: Job = {
     pr, repo: client.repo, head, base: baseRef, model: env('GOBY_MODEL'), session: `review-pr${pr}-${head.slice(0, 10)}`,
     image, image_digest: imageDigest,
-    diff_digest: digest, diff_lines: lineCount(diff),
+    diff_digest: digest, diff_lines: diff === null ? null : lineCount(diff),
     open_threads: opened, resolved_history: history, reuse, reuse_reason: reuseReason,
     reuse_kind: reuse_evidence(previous?.complete === true, budget.stop), incomplete,
   };
@@ -158,10 +169,12 @@ async function prepare(out: string, client: GitHubClient): Promise<number> {
 async function finish(out: string, client: GitHubClient, warn: (m: string) => void,
                       state: { published: boolean }): Promise<number> {
   const job = JSON.parse(await readFile(join(out, 'job.json'), 'utf8')) as Job;
-  const diff = await readFile(join(out, 'diff.patch'), 'utf8');
   const maxFindings = intEnv('GOBY_MAX_FINDINGS');
 
   if (job.reuse) {
+    // No diff: this run decided before cloning, and a reuse refreshes a status rather than posting
+    // findings. Reading it here is what would have made the cheaper order fail on the file it is
+    // not using.
     await post_status(client, job.head, 'success', job.reuse_reason ?? 'Complete review reused on unchanged head');
     // This branch publishes a verdict too, so a later failure must not rewrite it: the gate
     // refresh below owns the gate status, not the review's.
@@ -177,6 +190,9 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
     return gate.state === 'success' ? 0 : 2;
   }
 
+  // Only a run that is going to publish findings needs the diff, and this one has cloned: the
+  // count it carries is the same file the body always quoted.
+  const diff = await readFile(join(out, 'diff.patch'), 'utf8');
   const agentOut = optionalEnv('GOBY_AGENT_OUT') ?? join(out, 'agent');
   const records = (await readFile(join(agentOut, 'findings.jsonl'), 'utf8').catch(() => ''))
     .split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);

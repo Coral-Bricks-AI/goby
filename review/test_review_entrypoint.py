@@ -85,3 +85,37 @@ def test_the_verdict_is_still_the_findings_record():
     produced no findings record still fails, whatever the instrumentation said about it."""
     text = entrypoint()
     assert 'if ! grep -q \'"kind":"findings"\' "$AGENT_OUT/findings.jsonl"' in text
+
+
+def test_the_reuse_decision_comes_before_the_clone():
+    """A head that was already reviewed is a status refresh, and the decision needs GitHub, not a
+    working tree. Cloning first made every such run pay ~10s for a diff nothing read — and in a
+    repository that reviews once per pull request, most runs are that kind."""
+    text = entrypoint()
+    prepare = text.index("node /opt/goby/reviewRun.js prepare")
+    assert prepare < text.index('git "${AUTH[@]}"')
+    # The exit belongs to the branch that reads prepare's answer, not somewhere after the clone.
+    reuse_exit = text.index('if grep -q \'"reuse":true\'')
+    assert prepare < reuse_exit < text.index("git \"${AUTH[@]}\"")
+
+
+def test_a_reuse_run_pays_for_nothing_on_the_agent_side():
+    """The proxy, the key file, the sandbox copy, the prompt and the agent all belong after the
+    reuse exit: none of them can change a verdict that is already published."""
+    text = entrypoint()
+    reuse_exit = text.index('if grep -q \'"reuse":true\'')
+    for late in ('goby_proxy_start "$UPSTREAM"', 'goby_key_to_file "$KEY"',
+                 'cp -a "$REPO_DIR/." "$SANDBOX/"', 'bash "$OUT/run-agent.sh"'):
+        assert text.index(late) > reuse_exit, late
+
+
+def test_the_progress_note_starts_only_once_a_review_will_run():
+    """A "Goby is reviewing" note that nothing marks done is worse than no note. A reuse run
+    refreshed a status and a skipped diff posted its verdict, so neither has anything to announce;
+    a clone can fail, and the EXIT trap that marks the note done is set later still (after the
+    proxy starts). So the note starts past the diff, never before."""
+    text = entrypoint()
+    start = text.index("goby_progress start")
+    assert start > text.index("node /opt/goby/reviewRun.js skip")
+    assert start > text.index('git "${AUTH[@]}"')
+    assert start < text.index('goby_proxy_start "$UPSTREAM"')

@@ -88,6 +88,25 @@ jobs:
             | grep -Ei 'failed to load extension|is required' || true)"
           if [[ -n "$out" ]]; then echo "$out" >&2; exit 1; fi
 
+      # `prepare` now decides reuse before the clone, so the diff it used to count may not exist
+      # yet. A rejected token fails the API call that comes after that read, which makes this
+      # deterministic: the failure must be GitHub's, never ENOENT on a file the run is not going to
+      # need. A regression here would fail every reuse run and every review with it.
+      - name: Preparing does not need the clone
+        run: |
+          set -euo pipefail
+          out="$(docker run --rm \
+            -e GOBY_REPO=Coral-Bricks-AI/goby -e GOBY_PR=1 \
+            -e GOBY_HEAD=0000000000000000000000000000000000000000 \
+            -e GOBY_BASE=1111111111111111111111111111111111111111 \
+            -e GOBY_MODEL=m -e GITHUB_TOKEN=not-a-token -e GOBY_OUT=/tmp/out \
+            --entrypoint bash goby-review:test -lc \
+              'mkdir -p /tmp/out && node /opt/goby/reviewRun.js prepare || true' 2>&1)"
+          case "$out" in
+            *diff.patch*) echo "prepare still needs the clone: $out" >&2; exit 1 ;;
+            *) printf '%s\n' "$out" | head -3 ;;
+          esac
+
       # The timing line is the only way to see inside the agent segment, so a missing file here
       # would be discovered by reading a real review's log weeks later. Run it against a stream
       # that does not exist: it answers instead of failing.
