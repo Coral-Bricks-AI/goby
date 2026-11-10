@@ -12,9 +12,15 @@ on:
     paths:
       - "base/**"
       - "review/**"
+      # The reviewer image copies the shared run summary and timing tool from here, so a change to
+      # either has to republish it: without this line a merged change to `common/timing.py` built
+      # nothing and `:latest` kept running the old bytes.
+      - "common/**"
       - "src/**"
       - "package.json"
       - "bun.lock"
+      # Compiled into the harness, so a change here changes the published bundle.
+      - "tsconfig.json"
       - ".github/workflows/review-image.yml"
     tags: ["review-v*"]
   workflow_dispatch:
