@@ -25,9 +25,22 @@ Two things make the total readable rather than merely large:
   guess and `uv run pytest tests/x -q 60.0s` ends the argument.
 
 And two things say what the run *did* with that time, which is the question behind "can we make a
-review faster": `calls/turn` counts how many probes shared a round trip, and the budget notices the
+review faster": `calls/turn` counts how many probes shared a round trip, the budget notices the
 reviewer was given are read from the records `report_findings.ts` leaves beside the findings — the
-conversation those nudges went into is not kept, so without them whether a nudge fired is unknowable.
+conversation those nudges went into is not kept, so without them whether a nudge fired is unknowable
+— and the output is split by what the model was writing: thinking, tool calls, final text.
+
+The last one comes from the **final** assistant messages, not from the `message_update` deltas. pi's
+docs are explicit that deltas are for live rendering and that the completed content in
+`*_end` replaces them; a provider that re-sends a cumulative snapshot would be counted twice, and a
+block trimmed on the way in would be counted never. `AssistantMessage.content` is
+`(text | thinking | toolCall)[]`, so the split is read from the record.
+
+It is measured in characters, not tokens, because that is what the stream carries. Four characters
+per token is the usual approximation, so the figure is published as approximate and, where it falls
+short of the billed `out=` count, the line says how much of the output is not in the content at all —
+reasoning tokens a provider does not stream back are exactly the case that has to stay visible
+instead of being rounded into "text".
 
 Never a verdict. A stream that is missing, empty or truncated exits 0 with a line saying the split
 is unavailable, instead of printing nothing: a review must not fail because an instrument did, and
@@ -45,6 +58,11 @@ from summarize_run import read_events, timeouts
 NAMED_TOOLS = 3
 # The argument of a tool call that says what it was pointed at, most specific first.
 SUBJECT_ARGS = ("command", "path", "pattern", "query", "url")
+# pi's `AssistantMessage.content` blocks, and the field in each that carries the text.
+BLOCK_FIELDS = (("thinking", "thinking"), ("text", "text"), ("toolCall", "arguments"))
+# Characters per token, for the one comparison the stream cannot make in tokens. An approximation,
+# and published as one: the split it feeds is a share, which holds because both sides use it.
+CHARS_PER_TOKEN = 4
 
 
 def _seconds(event: dict) -> float | None:
@@ -88,6 +106,29 @@ def _findings(path: Path | None) -> dict:
     return {"notices": len(notice_turns), "notice_turns": notice_turns, "blocked": blocked}
 
 
+def _block_chars(message: dict) -> dict[str, int]:
+    """Characters in one assistant message, by kind of content block.
+
+    `toolCall.arguments` is an object on the final message (it is the serialized string only in
+    `toolcall_delta`), so it is measured serialized: what the model spent writing the call is the
+    arguments it wrote, not the Python repr.
+    """
+    counts = {name: 0 for name, _field in BLOCK_FIELDS}
+    counts["other"] = 0
+    for block in message.get("content") or []:
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type") if isinstance(block.get("type"), str) else "other"
+        field = dict(BLOCK_FIELDS).get(kind)
+        value = block.get(field) if field else None
+        if isinstance(value, str):
+            counts[kind if kind in counts else "other"] += len(value)
+        elif isinstance(value, (dict, list)):
+            counts[kind if kind in counts else "other"] += len(
+                json.dumps(value, separators=(",", ":")))
+    return counts
+
+
 def summarise(events: list[dict], agent_s: float | None = None,
               slowest: int = 2, findings: Path | None = None) -> dict:
     turns = 0
@@ -104,6 +145,8 @@ def summarise(events: list[dict], agent_s: float | None = None,
     # version of this file did, names every slow call "bash" and answers nothing.
     subjects: dict[str, str] = {}
     tokens = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+    output_chars = {name: 0 for name, _field in BLOCK_FIELDS}
+    output_chars["other"] = 0
     for event in events:
         kind = event.get("type")
         if kind == "turn_start":
@@ -129,9 +172,15 @@ def summarise(events: list[dict], agent_s: float | None = None,
             if per_turn:
                 per_turn[-1] += 1
         elif kind == "message_end":
-            usage = (event.get("message") or {}).get("usage") or {}
+            message = event.get("message") or {}
+            usage = message.get("usage") or {}
             for key in tokens:
                 tokens[key] += usage.get(key) or 0
+            # Only the assistant's own messages: a user message carries the whole brief and the diff,
+            # and counting it would drown the one number this split exists to report.
+            if message.get("role") == "assistant":
+                for name, chars in _block_chars(message).items():
+                    output_chars[name] += chars
 
     tool_calls = sum(row["calls"] for row in tools.values())
     unmeasured = sum(row["unmeasured"] for row in tools.values())
@@ -164,6 +213,11 @@ def summarise(events: list[dict], agent_s: float | None = None,
                    "error": error, "subject": subject}
                   for turn, name, seconds, subject, error in calls],
         "tokens": tokens,
+        # Characters, by kind of block, from the final assistant messages. Tokens cannot be split this
+        # way: `usage.output` is the whole response, and a provider that thinks silently reports
+        # thinking there while sending no thinking block back at all.
+        "output_chars": output_chars,
+        "output_visible_tokens": max(0, sum(output_chars.values()) // CHARS_PER_TOKEN),
         "timeouts": timeouts(events),
         **(_findings(findings)),
         "tool_time": {name: {"calls": row["calls"], "s": round(row["s"], 1),
@@ -228,6 +282,21 @@ def line(summary: dict) -> str:
         parts.append("tokens " + " ".join(f"{name}={_compact(value)}" for name, value in (
             ("in", spent["input"]), ("out", spent["output"]),
             ("cache-read", spent["cacheRead"]), ("cache-write", spent["cacheWrite"]))))
+        # What that output was. The share is exact in characters and approximate in tokens — the
+        # same divisor cancels — so only the total carries the approximation mark.
+        chars = {name: value for name, value in summary["output_chars"].items() if value}
+        if chars:
+            total = sum(chars.values())
+            shares = ", ".join(f"{name} {100 * value / total:.0f}%"
+                               for name, value in sorted(chars.items(), key=lambda kv: -kv[1]))
+            visible = summary["output_visible_tokens"]
+            hidden = spent["output"] - visible
+            parts.append(f"output ~{_compact(visible)} tok ({shares})"
+                         # Reasoning a provider does not stream back is real output the content
+                         # cannot account for. Saying so is the difference between "it wrote
+                         # nothing" and "it wrote tokens we cannot see".
+                         + (f", {100 * hidden / spent['output']:.0f}% not in content"
+                            if hidden > spent["output"] * 0.05 else ""))
     named = [f'"{call["subject"] or call["tool"]}" {call["s"]:.1f}s' for call in summary["slowest"]]
     if named:
         parts.append("slowest: " + ", ".join(named))
