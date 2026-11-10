@@ -156,3 +156,42 @@ def test_a_braced_and_a_bare_name_are_the_same_credential(tmp_path):
     d = models_dir(tmp_path, {"mixed": {"providers": {"m": {
         "apiKey": "${MIXED_KEY}", "headers": {"x-other": "$MIXED_OTHER"}}}}})
     assert mc.credential_vars(d / "mixed.json") == {"MIXED_KEY", "MIXED_OTHER"}
+
+
+def test_the_agent_catalog_asks_for_reasoning_the_way_the_responses_api_takes_it():
+    """pi sends `reasoning` and `include: ["reasoning.encrypted_content"]` only for a model it is
+    told supports thinking, and the gateway withholds reasoning text from a client that did not ask
+    for it (`pass_through.py:1470`, `provider.py:3441`). So a catalog without `reasoning: true`
+    leaves the model thinking — and billed for it — where no reviewer can see it: four real reviews
+    spent 80-90% of their output tokens there before this was found.
+
+    A raw `reasoning_effort` sampling param is the chat-completions spelling. It reaches the wire,
+    but it does not make the client opt in, so the two must not be swapped back.
+    """
+    catalog = json.loads((HERE.parent / "base" / "models" / "models.json").read_text())
+    fast = next(model for model in catalog["providers"]["coral"]["models"]
+                if model["id"] == "deepseek-v4.1-flash-fast")
+    assert fast["reasoning"] is True
+    assert "samplingParams" not in fast
+    # Levels mapped to null are clamped instead of being sent as a provider value nobody verified
+    # against the gateway: `max` is not an effort the Responses API accepts.
+    assert fast["thinkingLevelMap"]["xhigh"] is None
+    assert fast["thinkingLevelMap"]["max"] is None
+    assert fast["thinkingLevelMap"]["high"] == "high"
+
+
+def test_a_reasoning_model_still_sends_its_prompt_as_a_system_message():
+    """`reasoning: true` has a second effect: pi picks the instruction role with
+    `model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system"`
+    (`pi-ai/dist/api/openai-responses-shared.js:169`), so turning reasoning on would also re-shape
+    the prompt — the whole review contract — from `system` to `developer`.
+
+    The gateway does translate `developer` back to `system` (`api/responses_translate.py:393`),
+    so nothing would break; but a review that changes two things about its request cannot say
+    which one moved the numbers. `supportsDeveloperRole: false` keeps the prompt byte-identical
+    and leaves the reasoning opt-in as the only difference.
+    """
+    catalog = json.loads((HERE.parent / "base" / "models" / "models.json").read_text())
+    fast = next(model for model in catalog["providers"]["coral"]["models"]
+                if model["id"] == "deepseek-v4.1-flash-fast")
+    assert fast["compat"]["supportsDeveloperRole"] is False
