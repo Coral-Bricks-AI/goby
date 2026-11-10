@@ -11,8 +11,14 @@
       "models": [
         {
           "id": "deepseek-v4.1-flash-fast",
-          "samplingParams": {
-            "reasoning_effort": "high"
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "minimal": "minimal",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
           }
         },
         { "id": "deepseek-v4.1-flash" }

@@ -38,9 +38,31 @@ own decision and cannot be an input (`on.schedule` takes none).
 | `CORALBRICKS_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | the key for that provider |
 
 The key never reaches the agent. The entrypoint writes it to a root-only file, the proxy reads it,
-and the agent's `models.json` holds a dummy value and a loopback base URL. The cleaners use the
-same arrangement (`base/lib.sh`). One provider per run:
-the proxy has one upstream.
+and the agent's `models.json` holds a dummy value and a loopback base URL. The cleaners and the tide
+use the same arrangement (`base/lib.sh`) and the same file, `base/models/models.json`. One provider
+per run: the proxy has one upstream.
+
+### Reasoning
+
+`deepseek-v4.1-flash-fast` is declared `"reasoning": true` in `base/models/models.json`, and that
+flag is load-bearing rather than descriptive. pi only sends `reasoning: {effort, summary}` and
+`include: ["reasoning.encrypted_content"]` for a model it has been told supports thinking
+(`pi-ai/dist/api/openai-responses.js:284`), and the gateway withholds reasoning text from a client
+that did not ask for it. Without the flag the model thinks, is billed for it, and the stream carries
+nothing a reviewer can read — measured on four reviews that spent 80–90% of their output on thinking
+nobody could see.
+
+The level is pi's own default (`medium`, from pi's settings), so no command line needs to change.
+`medium` reaches the gateway as effort `medium`, which the gateway maps to the same upstream effort
+`high` that the old raw `reasoning_effort` sampling param used to: the intensity is unchanged, only
+the opt-in is new. `--thinking <level>` overrides it per run, and `thinkingLevelMap` decides what
+each level becomes; `xhigh` and `max` map to null so they are clamped to `high` instead of being sent
+as an effort the Responses API does not accept.
+
+What to expect on the next review: thinking blocks in the transcript, so `output ~N tok (thinking …)`
+finally reports something real instead of `not in content`, and — worth watching — reasoning is
+replayed on later turns, so `cache-read` per turn may grow. If it grows more than the visibility is
+worth, `--thinking low` is the dial.
 
 ## Bounds
 
