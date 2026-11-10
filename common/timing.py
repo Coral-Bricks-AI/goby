@@ -62,9 +62,6 @@ NAMED_TOOLS = 3
 SUBJECT_ARGS = ("command", "path", "pattern", "query", "url")
 # pi's `AssistantMessage.content` blocks, and the field in each that carries the text.
 BLOCK_FIELDS = (("thinking", "thinking"), ("text", "text"), ("toolCall", "arguments"))
-# Characters per token, for the one comparison the stream cannot make in tokens. An approximation,
-# and published as one: the split it feeds is a share, which holds because both sides use it.
-CHARS_PER_TOKEN = 4
 
 
 def _seconds(event: dict) -> float | None:
@@ -174,11 +171,11 @@ def summarise(events: list[dict], agent_s: float | None = None,
     # `emitToolExecutionEnd` in pi's agent loop). Reading `args` off the end event, as the first
     # version of this file did, names every slow call "bash" and answers nothing.
     subjects: dict[str, str] = {}
-    tokens = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+    tokens = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "reasoning": 0}
     # One entry per assistant response, with pi's timing of that request where it has one.
     requests: list[dict] = []
-    output_chars = {name: 0 for name, _field in BLOCK_FIELDS}
-    output_chars["other"] = 0
+    content_chars = {name: 0 for name, _field in BLOCK_FIELDS}
+    content_chars["other"] = 0
     for event in events:
         kind = event.get("type")
         if kind == "turn_start":
@@ -212,7 +209,7 @@ def summarise(events: list[dict], agent_s: float | None = None,
             # and counting it would drown the one number this split exists to report.
             if message.get("role") == "assistant":
                 for name, chars in _block_chars(message).items():
-                    output_chars[name] += chars
+                    content_chars[name] += chars
                 requests.append({"turn": len(per_turn), "s": _request_seconds(message),
                                  "out": usage.get("output") or 0,
                                  "stop": message.get("stopReason")})
@@ -235,6 +232,17 @@ def summarise(events: list[dict], agent_s: float | None = None,
     # wall time they occupied — two overlapping 40s commands add 80s to `tools_s` while taking 40s.
     # Subtracting that from the agent's clock invents model time that never happened.
     model_s = round(sum(request_seconds), 1) if timed else None
+    # Reasoning tokens are the provider's own count and a documented subset of `output`
+    # (`pi-ai/dist/types.d.ts:292`), so the split is measured on both sides: reasoning + answer =
+    # output exactly. But pi writes `output_tokens_details?.reasoning_tokens || 0`, so a zero is
+    # never evidence — it is what a *missing* breakdown looks like too. Only a positive count is a
+    # measurement; anything else is reported as unreported rather than as "the model did not think".
+    thinking_chars = content_chars.get("thinking", 0)
+    reasoning_tokens = tokens["reasoning"] or None
+    answer_tokens = (None if reasoning_tokens is None
+                     else max(0, tokens["output"] - reasoning_tokens))
+    chars_per_reasoning = (round(thinking_chars / reasoning_tokens, 1)
+                           if reasoning_tokens and thinking_chars else None)
     # Whatever is left of the agent's wall clock: tool wall time (which the sum overstates when
     # calls overlap), pi's own startup, the sandbox copy. Two measurements, one subtraction, no
     # claim about which part is which. Absent when a request went untimed, because then the model
@@ -275,8 +283,14 @@ def summarise(events: list[dict], agent_s: float | None = None,
         # Characters, by kind of block, from the final assistant messages. Tokens cannot be split this
         # way: `usage.output` is the whole response, and a provider that thinks silently reports
         # thinking there while sending no thinking block back at all.
-        "output_chars": output_chars,
-        "output_visible_tokens": max(0, sum(output_chars.values()) // CHARS_PER_TOKEN),
+        "content_chars": content_chars,
+        "content_chars_total": sum(content_chars.values()),
+        "reasoning_tokens": reasoning_tokens,
+        "answer_tokens": answer_tokens,
+        # Characters of thinking text per reasoning token. Text sits at ~3-4; ~7 means the same
+        # text arrived twice (the gateway repeats the raw reasoning on the summary channel, and pi
+        # appends both), which is worth knowing because that text is replayed upstream.
+        "chars_per_reasoning_token": chars_per_reasoning,
         "timeouts": timeouts(events),
         **(_findings(findings)),
         "tool_time": {name: {"calls": row["calls"], "s": round(row["s"], 1),
@@ -353,21 +367,31 @@ def line(summary: dict) -> str:
         parts.append("tokens " + " ".join(f"{name}={_compact(value)}" for name, value in (
             ("in", spent["input"]), ("out", spent["output"]),
             ("cache-read", spent["cacheRead"]), ("cache-write", spent["cacheWrite"]))))
-        # What that output was. The share is exact in characters and approximate in tokens — the
-        # same divisor cancels — so only the total carries the approximation mark.
-        chars = {name: value for name, value in summary["output_chars"].items() if value}
-        if chars:
-            total = sum(chars.values())
-            shares = ", ".join(f"{name} {100 * value / total:.0f}%"
-                               for name, value in sorted(chars.items(), key=lambda kv: -kv[1]))
-            visible = summary["output_visible_tokens"]
-            hidden = spent["output"] - visible
-            parts.append(f"output ~{_compact(visible)} tok ({shares})"
-                         # Reasoning a provider does not stream back is real output the content
-                         # cannot account for. Saying so is the difference between "it wrote
-                         # nothing" and "it wrote tokens we cannot see".
-                         + (f", {100 * hidden / spent['output']:.0f}% not in content"
-                            if hidden > spent["output"] * 0.05 else ""))
+        # The token split, both sides measured: the provider counts reasoning, and `output` already
+        # includes it, so `answer` is a subtraction of two counts rather than an estimate.
+        if summary["reasoning_tokens"] is not None:
+            piece = f"reasoning={_compact(summary['reasoning_tokens'])}"
+            if summary["answer_tokens"] is not None:
+                piece += f" answer={_compact(summary['answer_tokens'])}"
+            parts.append(piece)
+    # Content is reported in characters, because characters are what the stream carries: there is no
+    # tokenizer in the review image, and dividing by a constant would be an invention — the previous
+    # version divided by four and reported the remainder as "not in content", which the arithmetic
+    # of a real run showed was nothing but the divisor.
+    content = {name: value for name, value in summary["content_chars"].items() if value}
+    if content:
+        detail = ", ".join(f"{name}={_compact(value)} ch"
+                           for name, value in sorted(content.items(), key=lambda kv: -kv[1]))
+        ratio = summary["chars_per_reasoning_token"]
+        note = ""
+        if summary["reasoning_tokens"] is None:
+            note = " (reasoning unreported)"
+        elif ratio is not None:
+            # Text runs at ~3-4 characters per token. Twice that means the same text arrived twice:
+            # the gateway repeats the raw reasoning on its summary channel when `reasoning.summary`
+            # is set, and pi appends both channels into one thinking block.
+            note = f" ({ratio:.1f} ch/thinking tok" + (", duplicated?" if ratio > 6 else "") + ")"
+        parts.append(f"content {detail}{note}")
     named = [f'"{call["subject"] or call["tool"]}" {call["s"]:.1f}s' for call in summary["slowest"]]
     if named:
         parts.append("slowest: " + ", ".join(named))

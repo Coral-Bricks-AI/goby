@@ -326,7 +326,7 @@ def test_the_json_carries_the_sequence_and_the_batching(tmp_path):
     assert [(call["turn"], call["tool"], call["s"]) for call in summary["calls"]] == [(1, "bash", 0.01), (1, "bash", 0.02)]
 
 
-def assistant(chars, out_tokens=None, **blocks):
+def assistant(chars, out_tokens=None, reasoning=None, **blocks):
     """One final assistant message: the record, which is what the split is read from."""
     content = []
     for kind, text in blocks.items():
@@ -337,43 +337,64 @@ def assistant(chars, out_tokens=None, **blocks):
                            else {"type": "thinking", "thinking": text})
     usage = {"input": 0, "output": out_tokens if out_tokens is not None else chars // 4,
              "cacheRead": 42000, "cacheWrite": 100}
+    if reasoning is not None:
+        usage["reasoning"] = reasoning
     return {"type": "message_end",
             "message": {"role": "assistant", "content": content, "usage": usage}}
 
 
-def test_the_output_is_split_by_what_the_model_was_writing(tmp_path):
-    """The question this answers: is the wall clock going on deliberation, on the command, or on the
-    answer? Read from the final message, not the deltas — pi's docs say a delta stream is for live
-    rendering and the completed content replaces it, so counting deltas can double or miss a block."""
+def test_the_content_is_reported_in_characters_and_nothing_is_invented(tmp_path):
+    """There is no tokenizer in the review image, so characters are published as characters. The
+    previous version divided them by four, and a real run showed the remainder it called "not in
+    content" was nothing but that divisor: 94,800 characters of a 27,500-token response."""
     path = stream(tmp_path, {"type": "turn_start"},
                   assistant(0, 2500, thinking="t" * 8000, text="x" * 1000,
                             toolCall={"command": "a" * 987}))
     out = run(str(path), "--agent-seconds", "4").stdout
-    assert "output ~2.5k tok (" in out
-    # Shares, not an order: two kinds writing the same number of characters may come either way.
-    for share in ("thinking 80%", "text 10%", "toolCall 10%"):
-        assert share in out, out
+    assert "content thinking=8.0k ch" in out
+    assert "text=1.0k ch" in out
+    assert "~2.5k tok" not in out
+    assert "not in content" not in out
 
 
-def test_the_brief_the_agent_reads_is_not_counted_as_output(tmp_path):
-    """A user message carries the prompt and the whole diff; counting it would drown the one number
-    this split exists to report, in the direction that makes the reviewer look chatty."""
+def test_the_token_split_is_the_providers_counts_not_a_divisor(tmp_path):
+    """`usage.reasoning` is the provider's own count and a documented subset of `output`, so
+    reasoning and answer are both measurements: 27.5k out = 20k reasoning + 7.5k answer."""
+    path = stream(tmp_path, {"type": "turn_start"}, assistant(0, 27500, reasoning=20000,
+                                                              thinking="t" * 69000))
+    out = run(str(path), "--agent-seconds", "4").stdout
+    assert "reasoning=20.0k answer=7.5k" in out
+    # 69,000 characters of thinking per 20,000 reasoning tokens: text, not a doubled transcript.
+    assert "(3.5 ch/thinking tok)" in out
+    summary = json.loads(run(str(path), "--agent-seconds", "4", "--json").stdout)
+    assert summary["reasoning_tokens"] == 20000
+    assert summary["answer_tokens"] == 7500
+    assert summary["chars_per_reasoning_token"] == 3.5
+
+
+def test_a_zero_reasoning_count_is_never_published_as_a_measurement(tmp_path):
+    """pi writes `output_tokens_details?.reasoning_tokens || 0`, so a missing breakdown and a real
+    zero are the same number on the wire — with or without thinking text to see. Only a positive
+    count is evidence, so a zero is reported as unreported either way: "no reasoning" is a claim
+    the stream cannot support, and `answer = output` would inherit it."""
+    for thinking in ("t" * 69000, ""):
+        path = stream(tmp_path, {"type": "turn_start"},
+                      assistant(0, 27500, reasoning=0, thinking=thinking, text="x" * 40))
+        out = run(str(path), "--agent-seconds", "4").stdout
+        assert "reasoning=" not in out
+        assert "answer=" not in out
+        summary = json.loads(run(str(path), "--agent-seconds", "4", "--json").stdout)
+        assert summary["reasoning_tokens"] is None
+        assert summary["answer_tokens"] is None
+
+
+def test_a_doubled_transcript_announces_itself(tmp_path):
+    """The gateway repeats the raw reasoning on its summary channel when `reasoning.summary` is
+    set, and pi appends both into one thinking block. That is ~7 characters per reasoning token
+    instead of ~3.5, and it matters because pi replays that text upstream."""
     path = stream(tmp_path, {"type": "turn_start"},
-                  {"type": "message_end", "message": {
-                      "role": "user", "content": [{"type": "text", "text": "z" * 50000}]}},
-                  assistant(0, 100, text="y" * 400))
-    out = run(str(path), "--agent-seconds", "2").stdout
-    assert "output ~100 tok (text 100%)" in out
-
-
-def test_output_a_provider_does_not_send_back_is_named_not_rounded_into_text(tmp_path):
-    """A reasoning model bills output tokens it never streams as content. Without this the split
-    would read "text 100%" for a run that spent its time thinking — the opposite of the truth."""
-    path = stream(tmp_path, {"type": "turn_start"},
-                  assistant(0, 10000, text="y" * 40))
-    out = run(str(path), "--agent-seconds", "10").stdout
-    assert "not in content" in out
-    assert "100% not in content" in out
+                  assistant(0, 27500, reasoning=10000, thinking="t" * 69000))
+    assert "(6.9 ch/thinking tok, duplicated?)" in run(str(path), "--agent-seconds", "4").stdout
 
 
 def test_a_run_with_no_content_does_not_claim_a_split(tmp_path):
@@ -384,5 +405,16 @@ def test_a_run_with_no_content_does_not_claim_a_split(tmp_path):
                       "usage": {"input": 0, "output": 500, "cacheRead": 10, "cacheWrite": 0}}})
     out = run(str(path), "--agent-seconds", "2").stdout
     assert "out=500" in out
-    assert "output ~" not in out
-    assert "not in content" not in out
+    assert "content " not in out
+    assert "reasoning=" not in out
+
+
+def test_the_brief_the_agent_reads_is_not_counted_as_content(tmp_path):
+    """A user message carries the prompt and the whole diff; counting it would drown the one number
+    this split exists to report, in the direction that makes the reviewer look chatty."""
+    path = stream(tmp_path, {"type": "turn_start"},
+                  {"type": "message_end", "message": {
+                      "role": "user", "content": [{"type": "text", "text": "z" * 50000}]}},
+                  assistant(0, 100, text="y" * 400))
+    out = run(str(path), "--agent-seconds", "2").stdout
+    assert "content text=400 ch" in out

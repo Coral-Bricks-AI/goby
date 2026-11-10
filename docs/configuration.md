@@ -65,8 +65,8 @@ gateway translates that back (`api/responses_translate.py:393`), so it would wor
 review would be changing two things about its request at once, and the numbers could not say which
 mattered. The prompt stays a `system` message, and the reasoning opt-in is the only difference.
 
-What to expect on the next review: thinking blocks in the transcript, so `output ~N tok (thinking …)`
-finally reports something real instead of `not in content`, and — worth watching — reasoning is
+What to expect on the next review: thinking blocks in the transcript, so `content thinking=…` finally
+carries the deliberation itself, and — worth watching — reasoning is
 replayed on later turns, so `cache-read` per turn may grow. If it grows more than the visibility is
 worth, `--thinking low` is the dial.
 
@@ -120,8 +120,8 @@ Inside the agent there is one line more, and it is the one to read first when a 
 timing agent=118s model=77s requests=43 p50=1.3s p95=2.9s max=6.1s (turn 12: 890 out) \
   tools=41.1s (62 calls: bash 38.9s/44, read 1.8s/12) \
   turns=31 calls/turn=2.0 (12/31 ran 2+) timeouts=2 notices=3 \
-  tokens in=31k out=48k cache-read=1.2M cache-write=9k \
-  output ~40k tok (thinking 89%, toolCall 7%, text 4%) \
+  tokens in=31k out=48k cache-read=1.2M cache-write=9k reasoning=20k answer=28k \
+  content thinking=69k ch, toolCall=25k ch, text=1k ch (3.5 ch/thinking tok) \
   slowest: "uv run pytest tests/x -q" 60.0s, "rg -n reauth" 3.1s
 ```
 
@@ -152,12 +152,22 @@ timing agent=118s model=77s requests=43 p50=1.3s p95=2.9s max=6.1s (turn 12: 890
   kept — without them, whether a nudge fired is unknowable after the container exits.
 - `tokens` is the whole run's spend, in the four classes the provider reports. Cache-read against
   input is the interesting pair: a turn that re-reads the context is the slow kind.
-- `output` splits those written tokens by what the model was writing — `thinking`, `toolCall`,
-  `text` — read from the final assistant messages, in characters. The shares are exact in
-  characters and approximate in tokens (four characters per token), which is why the total carries
-  the `~`. Where the visible tokens fall short of `out=`, the line says how much of the output is
-  **not in the content at all**: a reasoning model bills thinking tokens it never streams back, and
-  rounding those into "text" would invert the answer to "what is it spending time on".
+- `reasoning` and `answer` split `out` with **no approximation**: `usage.reasoning` is the
+  provider's own count and a documented subset of `output`, so `answer` is one count minus another.
+  27.5k out = 20k reasoning + 7.5k answer is a measurement on both sides. Only a **positive** count
+  is published: pi writes `output_tokens_details?.reasoning_tokens || 0`, so "not reported" and
+  "none" arrive as the same number, and `reasoning=` is absent below the two fields rather than
+  claiming the model did not think.
+- `content` counts **characters**, because characters are what the stream carries. There is no
+  tokenizer in the review image, and an earlier version divided characters by four and published the
+  remainder as "not in content" — arithmetic on a real run showed that remainder was nothing but the
+  divisor (94,800 characters of a 27,500-token response is 3.45 characters per token, not 4), so the
+  number was a claim about our constant rather than about the model.
+- `ch/thinking tok` is the one place those two units meet, and it is a diagnostic: text runs at
+  roughly 3–4 characters per token, so **twice that means the same text arrived twice**. The gateway
+  repeats the raw reasoning on its summary channel when `reasoning.summary` is set, and pi appends
+  both channels into one thinking block; it matters because that text is replayed upstream on later
+  turns. `duplicated?` is printed above 6.
 
 Before that line the log carries one line per tool call, in order:
 
