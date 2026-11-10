@@ -173,10 +173,16 @@ def test_the_agent_catalog_asks_for_reasoning_the_way_the_responses_api_takes_it
                 if model["id"] == "deepseek-v4.1-flash-fast")
     assert fast["reasoning"] is True
     assert "samplingParams" not in fast
-    # Levels mapped to null are clamped instead of being sent as a provider value nobody verified
-    # against the gateway: `max` is not an effort the Responses API accepts.
-    assert fast["thinkingLevelMap"]["xhigh"] is None
-    assert fast["thinkingLevelMap"]["max"] is None
+    # `xhigh` has no counterpart on this API, so it is clamped instead of sending a value nobody
+    # accepts. `max` does: measured against the gateway, every level is honoured and monotonic
+    # (nothing 0, minimal 371, low 407, medium 554, high 1033, max 1549 reasoning tokens on one
+    # prompt), so closing it off was us second-guessing the provider. `minimal` and `medium` stay
+    # mapped for the same reason, even though CoralBricks' client metadata marks them unsupported.
+    # Declared, not left to pi's clamp: `clampThinkingLevel` scans forward before backward
+    # (`pi-ai/dist/models.js:713`), so an unmapped `xhigh` now lands on `max` — the most expensive
+    # level — because opening `max` made it available. Mapping it is what makes the doc true.
+    assert fast["thinkingLevelMap"]["xhigh"] == "max"
+    assert fast["thinkingLevelMap"]["max"] == "max"
     assert fast["thinkingLevelMap"]["high"] == "high"
 
 

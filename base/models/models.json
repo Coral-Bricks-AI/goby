@@ -20,8 +20,8 @@
             "low": "low",
             "medium": "medium",
             "high": "high",
-            "xhigh": null,
-            "max": null
+            "xhigh": "max",
+            "max": "max"
           }
         },
         { "id": "deepseek-v4.1-flash" }
