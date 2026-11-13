@@ -32,8 +32,10 @@ COPY cleaners/entrypoint.sh /opt/cleaners/entrypoint.sh
 COPY cleaners/post_findings.py /opt/cleaners/post_findings.py
 COPY cleaners/plan.py /opt/cleaners/plan.py
 # Shared with goby-tide: the filing machinery, the credential check, the run summary, the cost
-# line, and the provider model files. One copy in the repository, one copy in each image.
+# line, the version every marker carries, and the provider model files. One copy in the
+# repository, one copy in each image.
 COPY common/issues.py /opt/common/issues.py
+COPY common/VERSION /opt/common/VERSION
 COPY common/model_check.py common/summarize_run.py common/usage.py \
      common/timing.py /opt/common/
 RUN chmod +x /opt/cleaners/*.sh /opt/cleaners/*.py

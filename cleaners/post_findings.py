@@ -78,12 +78,16 @@ DEFAULT_PRODUCER = "goby-cleaners"
 MARKER = common.Marker(
     token=DEFAULT_PRODUCER,
     pattern=(r"<!--\s+[A-Za-z0-9._-]+\s+fp=(?P<fp>[0-9a-f]{12})"
-             r"\s+component=(?P<component>.+)\s+severity=(?P<severity>\w+)\s*-->"),
+             r"\s+component=(?P<component>.+)\s+severity=(?P<severity>\w+)"
+             # `v=` is trailing and optional: a run that cannot name its version writes a marker
+             # identical to the ones already filed, so every issue in every repository keeps
+             # matching its own dedupe after this change.
+             r"(?:\s+v=(?P<version>[0-9][0-9A-Za-z.+-]*))?\s*-->"),
     # The producer token is fixed, not the active label: a label is a repository's own
     # convention and may contain characters the marker grammar rejects (`cleaners/goby` did
     # exactly that), which made the issue a run had just filed invisible to its own next
     # dedupe. The writer stays beside the grammar it was written for.
-    template=("<!-- {token} fp={fp} component={component} severity={severity} -->"),
+    template=("<!-- {token} fp={fp} component={component} severity={severity}{version} -->"),
 )
 
 

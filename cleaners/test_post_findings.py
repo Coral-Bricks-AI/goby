@@ -596,6 +596,27 @@ def test_a_component_that_looks_like_the_marker_does_not_set_the_severity():
     assert parsed.group("severity") == "medium"
 
 
+def test_the_marker_carries_the_version_that_filed_it():
+    """The version is what puts a release tag on a timeseries' x-axis; a commit sha is not a
+    milestone anybody can read."""
+    fp = pf.fingerprint(COMPONENT, finding())
+    parsed = pf.parse_marker(pf.marker(COMPONENT, finding(), fp, "medium"))
+    assert parsed is not None
+    assert parsed.group("version") == (HERE.parent / "common" / "VERSION").read_text().strip()
+
+
+def test_a_marker_filed_before_versions_existed_still_parses():
+    """Every issue already filed lacks `v=`. If the new grammar rejected those, the next scan
+    would see no fingerprints and file every one of them again."""
+    old = ("<!-- goby-cleaners fp=0123456789ab component=src/cli "
+           "severity=medium -->")
+    parsed = pf.parse_marker(old)
+    assert parsed is not None
+    assert parsed.group("component") == "src/cli"
+    assert parsed.group("severity") == "medium"
+    assert parsed.group("version") is None
+
+
 def test_a_marker_quoted_inside_a_body_is_not_a_filing():
     """The repro output of a scan of this repository is full of markers. Reading them as filings
     suppressed the real finding one of them named, and spent the budget it needed."""

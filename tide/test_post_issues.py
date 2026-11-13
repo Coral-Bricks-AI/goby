@@ -72,6 +72,28 @@ def test_the_marker_round_trips_including_a_path_with_a_space():
         assert parsed.group("check") == "max_file_lines"
 
 
+def test_the_marker_carries_the_version_that_filed_it():
+    """The version is what puts a release tag on a timeseries' x-axis. A commit sha is not a
+    milestone anybody can read."""
+    parsed = pi.MARKER.parse(rendered({"fingerprint": "0123456789ab"}))
+    assert parsed is not None
+    assert parsed.group("version") == (HERE.parent / "common" / "VERSION").read_text().strip()
+
+
+def test_a_marker_filed_before_versions_existed_still_parses():
+    """Every issue already filed lacks `v=`. If the new grammar rejected those, the next sweep
+    would see no fingerprints and file every one of them again."""
+    old = ("<!-- goby-tide fp=0123456789ab check=max_file_lines "
+           "path=src/cli/entry.ts -->")
+    parsed = pi.MARKER.parse(old)
+    assert parsed is not None
+    assert parsed.group("path") == "src/cli/entry.ts"
+    assert parsed.group("version") is None
+    # And the same file with a version reads identically apart from that one field.
+    parsed = pi.MARKER.parse(rendered({"fingerprint": "0123456789ab"}))
+    assert parsed is not None and parsed.group("path") == "src/cli/entry.ts"
+
+
 def test_a_marker_quoted_in_a_body_is_not_a_filing():
     real = proposal()
     quoted = issue("ffffffffffff", body="**Diff:**\n\n```\n"
