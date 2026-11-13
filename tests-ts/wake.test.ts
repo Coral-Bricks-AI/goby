@@ -152,10 +152,21 @@ describe('a workflow run record', () => {
     expect(record).toMatchObject({ product: 'review', conclusion: 'success', duration_s: 150 });
   });
 
-  test('an unrelated workflow has no product', () => {
-    expect(runProduct('CI')).toBeNull();
+  test('a product workflow is one named after the product', () => {
+    expect(runProduct('Goby review')).toBe('review');
     expect(runProduct('Goby cleaners')).toBe('cleaners');
     expect(runProduct('goby-tide')).toBe('tide');
+    expect(runProduct('goby_wake')).toBe('wake');
+  });
+
+  test('tooling that merely mentions a product is not a product run', () => {
+    // This repository publishes an image from "review image" and tests one from "test review
+    // image". Counting those made a publish look like a scan, its build time look like review
+    // time, and a red lint job look like a failed review.
+    for (const name of ['review image', 'test review image', 'test cleaners', 'tide image',
+      'test tide', 'test wake image', 'wake image', 'CI', '']) {
+      expect(runProduct(name)).toBeNull();
+    }
   });
 
   test('an unfinished run has no duration rather than zero', () => {

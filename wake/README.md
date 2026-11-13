@@ -31,6 +31,11 @@ edited: `GOBY_WAKE_DAYS` (default 30) and `GOBY_WAKE_LIMIT` (default 500 records
 | labelled issues | filed, fixed, dismissed as not planned, still open, age | forever |
 | workflow runs | that a scan ran, whether it succeeded, how long it took | GitHub's retention, about 90 days |
 
+A workflow counts as a product run when its `name:` starts with `Goby` and the product — which is
+what every shipped file calls itself. Anything else, including the repository's own build and test
+workflows, has `product: null`: a run attributed to the wrong product is a measurement nobody can
+correct afterwards, so a renamed workflow is reported as unknown rather than guessed.
+
 The first two are permanent, so outcome questions ("what share of findings were acted on", "how
 old is the cleaners backlog") can be asked over the whole history. The third is a rolling window,
 which is what a coverage or speed graph over the last quarter is anyway.

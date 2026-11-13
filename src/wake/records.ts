@@ -174,13 +174,22 @@ export function issueRecord(issue: Record<string, any>, now: number): IssueRecor
   };
 }
 
-/** Which product a workflow run belongs to, from its name or its path. */
+/**
+ * Which product a workflow run belongs to, from the name the workflow gives itself.
+ *
+ * The name has to *start* with goby and the product — `Goby review` — because a substring match
+ * counts the repository's own tooling as product runs: this repository publishes an image from a
+ * workflow called "review image" and tests one called "test review image", and counting those made
+ * an image publish look like a scan that ran, its build time look like review time, and a failing
+ * lint job look like a failed review. Coverage is the one number this tool exists to report
+ * honestly.
+ *
+ * A consumer who renames the workflow gets `null`, not a guess: "unknown" is a fact, and a run
+ * attributed to the wrong product is a measurement nobody can correct afterwards.
+ */
 export function runProduct(workflow: string): string | null {
-  const lower = workflow.toLowerCase();
-  for (const product of ['review', 'cleaners', 'tide', 'wake']) {
-    if (lower.includes(product)) return product;
-  }
-  return null;
+  const match = /^goby[\s_-]+(review|cleaners|tide|wake)\b/i.exec(workflow.trim());
+  return match ? match[1]!.toLowerCase() : null;
 }
 
 export function runRecord(run: Record<string, any>): RunRecord {
