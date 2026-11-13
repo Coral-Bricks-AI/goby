@@ -35,8 +35,10 @@ RUN chmod 0755 /opt/goby/entrypoint.sh
 # one log line every goby product prints, and `timing.py` turns the same stream into the model/tool
 # split. Both are copied rather than reimplemented, so the wording and the arithmetic stay in one
 # file; `timing.py` imports the timeout marker from `summarize_run.py`, which is why the pair ships
-# together.
-COPY common/summarize_run.py common/timing.py /opt/common/
+# together. `runrecord.py` is the same numbers as the marker in the review body, and it prices them
+# through `usage.py` — the same catalog the cleaners and the tide quote from, so one rate table and
+# one rounding rule.
+COPY common/summarize_run.py common/timing.py common/usage.py common/runrecord.py /opt/common/
 
 # The agent's own pi config lives here; the image copy stays read-only, so a missing key fails
 # loudly instead of half-working from a baked file.

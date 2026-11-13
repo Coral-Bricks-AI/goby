@@ -39,6 +39,7 @@ import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Callable
 from urllib.parse import quote, urlencode
 
@@ -47,6 +48,38 @@ API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 # The label every goby product puts on its issues, beside its own. Filtering for all of goby
 # is `label:goby`; filtering for one product is `label:goby-tide`.
 GENERAL = "goby"
+
+# goby's own version, in one file at the root of `common/`, so every image that ships this module
+# ships the same string. `src/identity.ts` carries the same number for the reviewer, which cannot
+# read a file at run time; `common/test_version.py` is what stops the two from disagreeing.
+VERSION = Path(__file__).resolve().parent / "VERSION"
+_VERSION_GRAMMAR = re.compile(r"^[0-9][0-9A-Za-z.+-]*$")
+
+
+def version() -> str | None:
+    """The version that produced this run, or None when the file is not there.
+
+    A string that the marker grammar could not carry is treated as absent rather than escaped:
+    the marker is read by a regular expression, and a version with a space in it would turn a
+    filing the next sweep cannot see into a defect filed twice. A missing version costs a field;
+    a broken one costs the dedupe.
+    """
+    try:
+        found = VERSION.read_text().strip()
+    except OSError:
+        return None
+    return found if _VERSION_GRAMMAR.match(found) else None
+
+
+def version_field() -> str:
+    """` v=0.4.0` for a marker, or nothing at all.
+
+    A suffix rather than a value, so a run without a version file writes a marker byte-identical
+    to the ones already in repositories: the grammar's `v=` group is optional, and the issues
+    filed before this existed keep parsing, keep deduping and keep their budget.
+    """
+    found = version()
+    return f" v={found}" if found else ""
 
 
 @dataclass(frozen=True)
@@ -101,6 +134,12 @@ class Marker:
         self.regex = re.compile(self.pattern)
 
     def render(self, **fields: object) -> str:
+        """The marker, carrying goby's version when this image has one.
+
+        Supplied here rather than at each call site, so a product cannot forget it and every
+        marker spells it the same way; a template with no `{version}` placeholder ignores it.
+        """
+        fields.setdefault("version", version_field())
         return self.template.format(**fields)
 
     def parse(self, body: str) -> re.Match | None:

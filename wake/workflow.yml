@@ -1,0 +1,71 @@
+# Goby wake — goby's observability API. Copy this file into `.github/workflows/` in your
+# repository and edit the `cron` line; everything else arrives through `:latest`.
+#
+# This job writes nothing. It reads the history the repository already has — goby's reviews and
+# their threads, the issues the cleaners and the tide filed, and the workflow runs that produced
+# them — and prints one JSON object to stdout. Where that JSON goes next is the consumer's
+# decision: a file, a dashboard, an alert, or nothing at all.
+#
+# Two things are a repository's own choice, and both are here rather than in the image:
+#   - **when** it reads: the `cron` line below;
+#   - **how far back**: `GOBY_WAKE_DAYS`, which is a repository variable, so changing the window
+#     does not mean editing this file. Default 30 days, which is about half a megabyte for a busy
+#     repository.
+#
+# Permissions are read-only on purpose: pull requests for the reviews and their threads, issues
+# for what the cleaners and the tide filed, actions for the runs. `contents: read` and
+# `packages: read` are what checkout and the image pull need.
+#
+# A scheduled workflow fires only on the default branch, is delayed at busy times, and is disabled
+# by GitHub after 60 days without a push. Any push re-enables it; the read is idempotent, so a
+# missed tick costs a window nobody looked at, and the next run covers it.
+
+name: Goby wake
+
+on:
+  schedule:
+    # 07:00 UTC daily, after the tide's own 06:00 sweep so a night's filing is in the same read.
+    # Hourly is "0 * * * *", weekly is "0 7 * * 1". Change this line and nothing else.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How many days back to read (blank: the repository variable, then 30)"
+        required: false
+        default: ""
+      limit:
+        description: "Cap per record kind (blank: the repository variable, then 500)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  actions: read
+  packages: read
+
+concurrency:
+  group: goby-wake
+  cancel-in-progress: true
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      # `:latest`, like the other three products: a fix reaches every consumer on merge, and a
+      # record names the version that produced it, so a data point stays attributable to its bytes.
+      image: ghcr.io/coral-bricks-ai/goby-wake:latest
+    env:
+      GOBY_WAKE_DAYS: ${{ github.event.inputs.days || vars.GOBY_WAKE_DAYS || '30' }}
+      GOBY_WAKE_LIMIT: ${{ github.event.inputs.limit || vars.GOBY_WAKE_LIMIT || '500' }}
+    steps:
+      # A container job ignores the image's ENTRYPOINT — GitHub keeps its own — so the step names
+      # it. stdin and stdout are the whole interface; nothing is written anywhere.
+      - name: Read
+        env:
+          # The repository's own token, read-only by the permissions above. There is no second
+          # credential and nothing to install: a consumer wires this to a sink, not to a service.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node /opt/wake/wake.js --repo "$GITHUB_REPOSITORY" --pretty

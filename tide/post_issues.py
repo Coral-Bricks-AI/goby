@@ -65,8 +65,11 @@ MARKER = common.Marker(
     # stopped matching the next run's key. `check` is a fixed word from the detector. A marker the
     # grammar cannot read is a filing the next sweep cannot see, and it files the same smell again.
     pattern=(r"<!--\s+[A-Za-z0-9._-]+\s+fp=(?P<fp>[0-9a-f]{12})"
-             r"\s+check=(?P<check>[a-z_]+)\s+path=(?P<path>.+?)\s*-->"),
-    template="<!-- {token} fp={fp} check={check} path={path} -->",
+             r"\s+check=(?P<check>[a-z_]+)\s+path=(?P<path>.+?)"
+             # Trailing and optional, so the markers already filed keep matching and a run that
+             # cannot name its version writes exactly what it wrote before.
+             r"(?:\s+v=(?P<version>[0-9][0-9A-Za-z.+-]*))?\s*-->"),
+    template="<!-- {token} fp={fp} check={check} path={path}{version} -->",
 )
 
 

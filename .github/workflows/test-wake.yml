@@ -1,0 +1,56 @@
+name: test wake image
+
+# The reader's Dockerfile is otherwise only built by the push to main that publishes it, so a
+# broken build — a base that lost `node`, a bundle that cannot start — would first fail on the
+# branch everyone already runs. Build it on the pull request that changes it instead.
+#
+# Not on push to main: `wake-image.yml` already builds it there, and a second build would only
+# repeat the work.
+
+on:
+  pull_request:
+    paths:
+      - "wake/**"
+      - "src/**"
+      - "common/VERSION"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.json"
+      - ".github/workflows/test-wake.yml"
+      - ".github/workflows/wake-image.yml"
+
+concurrency:
+  group: test-wake-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dockerfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the reader
+        run: docker build --platform linux/amd64 -f wake/Dockerfile -t goby-wake:test .
+
+      # A build that succeeds but cannot start is the failure mode a schedule hides: the job goes
+      # red once a day and the graph quietly stops moving. These check that the bundle runs, that
+      # it carries the version, and that it refuses to read with no credential instead of printing
+      # an empty window that looks like a quiet repository.
+      - name: The version travels with the bundle
+        run: |
+          set -euo pipefail
+          want="$(cat common/VERSION)"
+          got="$(docker run --rm --entrypoint cat goby-wake:test /opt/wake/VERSION)"
+          test "$want" = "$got" || { echo "image has $got, repository has $want"; exit 1; }
+
+      - name: No token is an error, not an empty window
+        run: |
+          set -euo pipefail
+          if docker run --rm -e GITHUB_TOKEN= --entrypoint node goby-wake:test \
+               /opt/wake/wake.js --repo owner/repo; then
+            echo "wake ran with no token"; exit 1
+          fi

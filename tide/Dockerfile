@@ -12,8 +12,10 @@ ARG BASE_IMAGE=goby-base
 FROM ${BASE_IMAGE}
 
 # Shared with goby-cleaners: the filing machinery, the credential check, the run summary, the
-# cost line, and the provider model files. One copy in the repository, one copy in each image.
+# cost line, the version every marker carries, and the provider model files. One copy in the
+# repository, one copy in each image.
 COPY common/issues.py /opt/common/issues.py
+COPY common/VERSION /opt/common/VERSION
 COPY common/model_check.py common/summarize_run.py common/usage.py \
      common/timing.py /opt/common/
 COPY common/models/ /opt/tide/models/

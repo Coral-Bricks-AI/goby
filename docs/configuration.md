@@ -213,5 +213,11 @@ logins and the version. Changing a marker orphans existing threads. Receipts in
 completeness, agent flag, unthreaded count and expected inline ids; an older schema cannot grant
 eligibility.
 
+Reviews also carry `<!-- goby-run {...} -->`: the run's own numbers — cost, tokens, turns, the
+model/tool split, per-request latency, timeouts — which otherwise existed only in the Actions job
+summary, where no API reads them and the log's retention ends. `src/core/record.ts` is the grammar
+and `common/runrecord.py` the writer; [`wake/README.md`](../wake/README.md) says what a reader does
+with it.
+
 Path filters live in `src/core/contract.ts`; transport and retry logic in
 `src/platforms/github.ts`.

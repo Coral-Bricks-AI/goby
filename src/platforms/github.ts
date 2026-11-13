@@ -27,6 +27,8 @@ export type ThreadRecord = {
   created_at: string;
   title: string;
   fid: string;
+  /** The severity goby wrote into the marker; empty when the comment carries none. */
+  severity: string;
   resolution?: string;
   resolved?: boolean;
 };
@@ -171,10 +173,13 @@ export class GitHubClient {
    *
    * Returned as records rather than heads because the caller has to tell a completed review from an
    * incomplete one: only a completed review spends the round, or a failed review on the first commit
-   * would suppress every later push.
+   * would suppress every later push. The id and the submission time are here for the same reason a
+   * reader wants them: a review is a point on a timeline, and it has to be identifiable afterwards.
    */
-  async own_reviews(pr: number): Promise<{ head: string; body: string }[]> {
-    const reviews: { head: string; body: string }[] = [];
+  async own_reviews(pr: number): Promise<{
+    head: string; body: string; id: number | null; submitted_at: string;
+  }[]> {
+    const reviews: { head: string; body: string; id: number | null; submitted_at: string }[] = [];
     for (let page = 1; page <= 20; page++) {
       const rows = JSON.parse(await this.get(`/repos/${this.repo}/pulls/${pr}/reviews?per_page=100&page=${page}`));
       if (!Array.isArray(rows)) throw new Error('Invalid GitHub review response');
@@ -186,7 +191,12 @@ export class GitHubClient {
         // Otherwise an unrelated review would suppress this one for the whole pull request.
         if (!(body.startsWith(SUMMARY_PREFIX) || body.includes(`<!-- ${MARKER} head=`))) continue;
         if (!['COMMENTED', 'APPROVED', 'CHANGES_REQUESTED'].includes(String(review.state))) continue;
-        if (typeof review.commit_id === 'string' && review.commit_id) reviews.push({ head: review.commit_id, body });
+        if (typeof review.commit_id === 'string' && review.commit_id) {
+          reviews.push({
+            head: review.commit_id, body,
+            id: position(review.id), submitted_at: text(review.submitted_at),
+          });
+        }
       }
       if (rows.length < 100) break;
     }
@@ -209,6 +219,7 @@ export class GitHubClient {
       marker_start: marker_position('start_line'), marker_end: marker_position('end_line'),
       sha: field('sha'), outdated: Boolean(node.isOutdated), created_at: text(first.createdAt),
       title: content_line(body), fid: body.match(new RegExp(`<!-- ${MARKER} id=(\\w+)`))?.[1] ?? '',
+      severity: field('severity'),
     };
     if (resolved) {
       rec.line ??= rec.original_line;
