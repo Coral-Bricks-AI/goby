@@ -41,12 +41,15 @@ Licensed under [Apache-2.0](LICENSE).
 | `review/` | reviewer image: `FROM goby-base`, the prompt, the emit tool, the entrypoint |
 | `cleaners/` | cleaner image: `FROM goby-base`, the post-merge scan, its own INVARIANTS.md contract |
 | `tide/` | the scheduled sweep: `FROM goby-base`, the detector, the prompt, the entrypoint |
+| `wake/` | the reader: `FROM node`, reads what the other three left in GitHub, prints JSON |
 | `common/` | what both issue-filing products share: `issues.py`, `model_check.py`, `usage.py`, the provider model files |
 | `src/core/contract.ts` | findings shape, parser, retraction, dedupe, re-derivation matching |
 | `src/core/selection.ts` | which findings may be posted, and which are withheld and why |
 | `src/core/gate.ts`, `verdict.ts`, `rules.ts` | receipts, the model-free recheck, and the rules |
 | `src/core/gateEvent.ts` | which PR a `workflow_run` handoff is about |
 | `src/reviewRun.ts` | the two GitHub-facing halves: `prepare` before the agent, `finish` after |
+| `src/wake/` | the observability reader: what it collects, and what each record means |
+| `src/core/record.ts` | the `<!-- goby-run … -->` marker a review carries its own numbers in |
 | `src/platforms/` | GitHub transport and publication |
 | `scripts/gate.ts` | recheck eligibility locally, no model key needed |
 
@@ -61,7 +64,10 @@ Each product is one file to copy plus the model key as a secret:
   post-merge cleaner;
 - [`.github/workflows/tide-scheduled.yml`](.github/workflows/tide-scheduled.yml) for the scheduled
   sweep. The `cron` line in that file is yours to set — it is the one knob a repository keeps its
-  own copy of. Details: [`tide/README.md`](tide/README.md).
+  own copy of. Details: [`tide/README.md`](tide/README.md);
+- [`wake/workflow.yml`](wake/workflow.yml) for the reader, which needs no key and no secret: it
+  reads the history the other three already wrote and prints it. Details:
+  [`wake/README.md`](wake/README.md).
 
 The images run `:latest`, so thresholds, budgets and prompts reach every consumer without an edit;
 pin a digest when you need immutable bytes.

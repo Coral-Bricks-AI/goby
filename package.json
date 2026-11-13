@@ -6,7 +6,7 @@
   "type": "module",
   "description": "Code review with kernel-checked review and gate policies",
   "scripts": {
-    "build": "bun build src/reviewRun.ts --target=node --outfile=dist/reviewRun.js && bun build src/progressCli.ts --target=node --outfile=dist/progress.js && bun build scripts/gate.ts --target=node --outfile=dist/gate.js",
+    "build": "bun build src/reviewRun.ts --target=node --outfile=dist/reviewRun.js && bun build src/progressCli.ts --target=node --outfile=dist/progress.js && bun build scripts/gate.ts --target=node --outfile=dist/gate.js && bun build src/wakeCli.ts --target=node --outfile=dist/wake.js",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests-ts",
     "proof": "bun run tests-ts/prove.ts",

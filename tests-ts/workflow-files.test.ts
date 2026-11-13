@@ -84,7 +84,9 @@ test('every workflow parses under actionlint rules we rely on', () => {
     '.github/workflows/cleaners-image.yml', '.github/workflows/cleaners-post-merge.yml',
     '.github/workflows/test-cleaners.yml', '.github/workflows/test-review-image.yml',
     '.github/workflows/goby-review.yml', '.github/workflows/tide-scheduled.yml',
-    '.github/workflows/tide-image.yml', '.github/workflows/test-tide.yml']) {
+    '.github/workflows/tide-image.yml', '.github/workflows/test-tide.yml',
+    'wake/workflow.yml', '.github/workflows/wake-image.yml',
+    '.github/workflows/test-wake.yml']) {
     const block = read(file).split(/^permissions:$/m)[1];
     if (!block) continue;
     for (const line of block.split('\n')) {
@@ -109,11 +111,13 @@ test('the image is named once, so a pin cannot change the label without the runt
 test('only the default branch may move the moving tag', () => {
   // `:latest` is the runtime now, so a release tag or a dispatch on an older commit must not
   // re-publish that older image as the one everything runs.
-  const publish = read('.github/workflows/review-image.yml');
-  expect(publish).toContain('refs/heads/${GITHUB_DEFAULT_BRANCH:-main}');
-  const latestPush = publish.slice(publish.indexOf('if [[ "$GITHUB_REF"'));
-  expect(latestPush.indexOf('docker push --quiet "$image:latest"'))
-    .toBeLessThan(latestPush.indexOf('fi'));
+  for (const file of ['.github/workflows/review-image.yml', '.github/workflows/wake-image.yml']) {
+    const publish = read(file);
+    expect(publish).toContain('refs/heads/${GITHUB_DEFAULT_BRANCH:-main}');
+    const latestPush = publish.slice(publish.indexOf('if [[ "$GITHUB_REF"'));
+    expect(latestPush.indexOf('docker push --quiet "$image:latest"'))
+      .toBeLessThan(latestPush.indexOf('fi'));
+  }
 });
 
 test('the reviewer is bounded by turns, a command timeout and a job timeout', () => {
@@ -155,7 +159,7 @@ test('the reviewer\'s own code carries briefs, so a cleaner can debug the review
   // Without an INVARIANTS.md a directory is invisible to the post-merge cleaner, which is how the
   // reviewer would be the one part of this project nothing ever scanned.
   const {existsSync} = require('node:fs') as typeof import('node:fs');
-  for (const dir of ['review', 'src', 'tide']) {
+  for (const dir of ['review', 'src', 'tide', 'wake']) {
     const path = join(root, dir, 'INVARIANTS.md');
     expect(existsSync(path)).toBe(true);
     const text = readFileSync(path, 'utf8');
@@ -173,7 +177,7 @@ test('a pull request is reviewed once by default', () => {
 });
 
 
-test('the tide is the only scheduled product, and the schedule is the consumer\'s', () => {
+test('two products are scheduled — the tide sweeps, the wake reads — and the schedule is the consumer\'s', () => {
   // A cron expression cannot read an input, so it is the one knob that stays in the workflow a
   // consumer copies. Everything else arrives through `:latest`, which is why no product may sneak
   // a second scheduled workflow in without this test changing.
@@ -189,6 +193,27 @@ test('the tide is the only scheduled product, and the schedule is the consumer\'
   expect(tide).toContain('issues: write');
   expect(tide).toContain('packages: read');
   expect(tide).toContain('run: bash /opt/tide/entrypoint.sh');
+  // The reader is the second scheduled product and the only one that writes nothing: no issue, no
+  // status, no comment. A `write` scope here would make a reader able to change the repository it
+  // is reading, which is a larger surface than a schedule needs.
+  const wake = read('wake/workflow.yml');
+  expect(wake).toContain('schedule:');
+  expect(wake).toContain('cron:');
+  expect(wake).toContain('workflow_dispatch:');
+  expect(wake).toContain('goby-wake:latest');
+  expect(wake).not.toMatch(/goby-wake@sha256/);
+  expect(wake).not.toMatch(/^\s*pull_request_target:/m);
+  for (const scope of ['pull-requests: read', 'issues: read', 'actions: read']) {
+    expect(wake).toContain(scope);
+  }
+  for (const forbidden of ['issues: write', 'statuses: write', 'pull-requests: write',
+    'contents: write']) {
+    expect(wake).not.toContain(forbidden);
+  }
+  // `schedule` cannot read inputs, so the window is a repository variable, and the cron is the one
+  // thing a consumer edits by hand.
+  expect(wake).toContain('vars.GOBY_WAKE_DAYS');
+  expect(wake).toContain('node /opt/wake/wake.js');
   for (const other of ['review/workflow.yml', '.github/workflows/goby-review.yml',
     '.github/workflows/cleaners-post-merge.yml']) {
     expect(read(other)).not.toContain('schedule:');
@@ -248,6 +273,7 @@ test('an image is republished when anything its Dockerfile copies changes', () =
     ['review/Dockerfile', '.github/workflows/review-image.yml'],
     ['cleaners/Dockerfile', '.github/workflows/cleaners-image.yml'],
     ['tide/Dockerfile', '.github/workflows/tide-image.yml'],
+    ['wake/Dockerfile', '.github/workflows/wake-image.yml'],
   ];
   for (const [dockerfile, workflow] of images) {
     const paths = read(workflow);

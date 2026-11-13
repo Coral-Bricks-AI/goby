@@ -1,0 +1,64 @@
+name: wake image
+
+# Publishes `goby-wake`, the reader consumers run on a schedule.
+#
+# One image, one digest. `:latest` is what the copied workflow points at; a consumer who wants
+# immutable bytes pins the printed digest instead. A release tag publishes its own tag and leaves
+# `latest` alone, the same rule the other three images follow.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wake/**"
+      # The bundle imports the marker grammar (`src/core/record.ts`) and the GitHub client the
+      # reviewer uses, so a change there changes what a reader can parse.
+      - "src/**"
+      - "common/VERSION"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.json"
+      - ".github/workflows/wake-image.yml"
+    tags: ["wake-v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: wake-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        run: docker build --platform linux/amd64 -f wake/Dockerfile -t wake:local .
+
+      - name: Publish, and print what to pin
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse --short=12 HEAD)"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/goby-wake"
+          docker tag wake:local "$image:$SHA"
+          docker push --quiet "$image:$SHA"
+          # Only the default branch moves `:latest`, so a dispatch against an older commit cannot
+          # take the runtime backwards.
+          if [[ "$GITHUB_REF" == "refs/heads/${GITHUB_DEFAULT_BRANCH:-main}" ]]; then
+            docker tag wake:local "$image:latest"
+            docker push --quiet "$image:latest"
+          fi
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$SHA")"
+          { echo "### goby-wake — pin this"; echo '```'; echo "$digest"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "goby-wake -> $digest"

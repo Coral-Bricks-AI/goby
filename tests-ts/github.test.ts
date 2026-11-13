@@ -100,7 +100,7 @@ describe('thread state and completeness', () => {
     const compatible: ContractThread[] = open;
     expect(compatible).toBe(open);
     expect(resolved).toHaveLength(1);
-    expect(open[0]).toEqual({ thread_id: 'T1', comment_id: 1, path: 'a.ts', line: 14, start_line: 9, original_line: 14, original_start_line: 9, marker_start: 9, marker_end: 14, sha: 'deadbeef00', outdated: false, created_at: '2026-10-15T10:00:00Z', title: '[high] Leaks the handle', fid: 'ab12', resolved: false });
+    expect(open[0]).toEqual({ thread_id: 'T1', comment_id: 1, path: 'a.ts', line: 14, start_line: 9, original_line: 14, original_start_line: 9, marker_start: 9, marker_end: 14, sha: 'deadbeef00', outdated: false, created_at: '2026-10-15T10:00:00Z', title: '[high] Leaks the handle', fid: 'ab12', severity: 'high', resolved: false });
     expect(resolved[0]!.line).toBe(14);
     expect(resolved[0]!.resolution).toBe('');
     expect(calls).toHaveLength(1);
