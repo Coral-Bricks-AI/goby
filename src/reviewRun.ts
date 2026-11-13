@@ -24,6 +24,7 @@ import { select } from './core/selection.ts';
 import { build_summary } from './core/summary.ts';
 import { assertHead, finish_failure_should_report, HeadChanged, loadReceipt, refreshGate } from './core/gate.ts';
 import { diffDigest, parseReceipt, receiptMarker, type ReviewReceipt } from './core/verdict.ts';
+import { recordMarker, type RunRecord } from './core/record.ts';
 import { REVIEW_VERSION } from './identity.ts';
 import { GitHubClient } from './platforms/github.ts';
 import { post_gate_status, post_review, post_status, reply_in_thread, resolve_thread } from './platforms/publish.ts';
@@ -86,6 +87,27 @@ function intEnv(name: string, fallback?: number): number {
 }
 function lineCount(text: string): number {
   return text ? text.split(/\r?\n/).length - (text.endsWith('\n') ? 1 : 0) : 0;
+}
+
+/**
+ * The run's numbers, as the marker appended to the review body — or nothing.
+ *
+ * `out/run-record.json` is written by the entrypoint from the same event stream the timing line
+ * came from. It is absent when the run produced no stream, and unreadable when the instrument
+ * failed to write it; both mean a reader reports "unknown" for this run, which is the truth and
+ * the opposite of the zeros a placeholder would print.
+ *
+ * Two fields are added here because only this side knows them. `v` is goby's version, so a view
+ * can put release tags on the x-axis instead of commit shas. `complete` is whether the scan
+ * finished: a review that spent its budget, or was cut short, answers fewer lines in less time and
+ * is exactly the run an average over durations must not silently count as an improvement.
+ */
+async function runRecordBlock(out: string, version: string, complete: boolean): Promise<string> {
+  const raw = await readFile(join(out, 'run-record.json'), 'utf8').catch(() => null);
+  let parsed: RunRecord | null = null;
+  try { parsed = raw === null ? null : JSON.parse(raw) as RunRecord; } catch { parsed = null; }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return '';
+  return '\n' + recordMarker({ ...parsed, v: version, complete });
 }
 
 async function prepare(out: string, client: GitHubClient): Promise<number> {
@@ -232,9 +254,13 @@ async function finish(out: string, client: GitHubClient, warn: (m: string) => vo
       incomplete: complete ? null : incomplete.join(' '),
       caveat: caveats.length ? caveats.join(' ') : null,
     }, REVIEW_VERSION) + '\n\n' + receiptMarker(receipt);
+  // Last in the body, and hidden: the record a reader parses, after the receipt the gate parses.
+  // A `complete` review that spent its budget is not complete for a duration average, so the
+  // caveat is part of the answer rather than a footnote beside it.
+  const body = summary + await runRecordBlock(out, REVIEW_VERSION, complete && caveats.length === 0);
 
   await assertHead(client, job.pr, job.head);
-  await post_review(client, job.pr, job.head, summary, picked.inline);
+  await post_review(client, job.pr, job.head, body, picked.inline);
   const found = picked.inline.length + picked.overflow.length;
   const description = found ? `${found} new bug(s) found` : 'no bugs found';
   await post_status(client, job.head, 'success', description);

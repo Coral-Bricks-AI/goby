@@ -70,6 +70,22 @@ def test_the_trace_reaches_the_log_and_the_summary_line_reaches_the_job_summary(
     assert "GITHUB_STEP_SUMMARY" in block
 
 
+def test_the_run_record_is_written_and_cannot_end_a_review():
+    """The record is the same numbers as the timing line, in the one place a review is kept
+    forever: the job summary has no API and expires with the log. It is instrumentation like
+    everything above it — a record that cannot be written costs a field, never a review."""
+    block = after_agent()
+    record = block[block.index("runrecord.py"):block.index('goby_log "agent exit=')]
+    assert '! python3 /opt/common/runrecord.py "$AGENT_OUT"' in record, record
+    assert "--agent-seconds" in record and "--model" in record
+    assert '"$OUT/run-record.json"' in record
+    # The guard is the `if !`, so the failure path has to clear the half-written file: a truncated
+    # record would be parsed later as a record with fields missing.
+    assert "rm -f" in record
+    # The price comes from the repository's own table, the same convention the cleaners follow.
+    assert "$REPO_DIR/.goby/models.json" in block
+
+
 def test_no_event_stream_names_the_cause_instead_of_only_the_symptom():
     """A rejected key writes a session header and nothing else, so the stream is neither absent
     nor empty; the reason is in pi's own stderr. Without it the last line before the failure is

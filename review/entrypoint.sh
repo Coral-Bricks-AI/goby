@@ -265,6 +265,24 @@ if [[ -s "$EVENTS" ]]; then
       goby_log "warn: could not write the timing line to the job summary"
     fi
   fi
+  # The same numbers as a record, in the one place a review is kept forever: the job summary above
+  # has no API and expires with the log, so from here on "what did this review cost" was answerable
+  # for ninety days out of a zip. `runrecord.py` takes its clock and its price from the same two
+  # functions the line above used, so the record and the line cannot disagree.
+  #
+  # Instrumentation, like everything in this block: a record that cannot be written is a missing
+  # field for a reader, never a failed review.
+  MODEL_CATALOG=()
+  if [[ -f "$REPO_DIR/.goby/models.json" ]]; then
+    # The same convention the cleaners and the tide follow: a repository that commits a price
+    # table gets money in its records, and one that does not gets `null` and the reason.
+    MODEL_CATALOG=(--models-json "$REPO_DIR/.goby/models.json")
+  fi
+  if ! python3 /opt/common/runrecord.py "$AGENT_OUT" --agent-seconds "$AGENT_ELAPSED" \
+       --model "$MODEL" "${MODEL_CATALOG[@]}" > "$OUT/run-record.json"; then
+    rm -f "$OUT/run-record.json"
+    goby_log "warn: could not write the run record"
+  fi
 else
   goby_log "warn: the agent produced no event stream"
 fi

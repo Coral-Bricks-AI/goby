@@ -66,6 +66,52 @@ def rate_for(model: str, path=None) -> dict | None:
     return None
 
 
+def price(model: str, tokens: dict | None, catalog_path=None) -> dict:
+    """The bill for one run's tokens, or an unknown with the reason it is unknown.
+
+    One function because two readers ask the same question: this script prints a scan's price
+    line, and `runrecord.py` puts the same number in the marker a review leaves behind. A rate
+    the catalog does not state is not a rate of zero — billing a campaign of cache-read tokens
+    at an invented zero is how a printed total becomes a wrong measurement — so a token class
+    with usage and no stated rate makes the price unknown and names the missing field. A stated
+    `0` is a decision and is used as one.
+    """
+    priced = {"billed_cents": None, "billed_usd": None, "note": None}
+    if tokens is None:
+        priced["note"] = (
+            "no events.jsonl: this scan ran without CLEANERS_JSON=1, so tokens and cost "
+            "are unknown. Spend for it has to come from inference_requests."
+        )
+        return priced
+    bill = (rate_for(model, catalog_path) or {}).get("bill")
+    if not bill:
+        found = catalog(catalog_path)
+        priced["note"] = (f"no bill rates for {model!r} in {found}" if found else
+                          "no model catalog: price unknown")
+        return priced
+    rate_field = {"input": "input_cents_per_m", "output": "output_cents_per_m",
+                  "cacheRead": "cache_read_cents_per_m",
+                  "cacheWrite": "cache_write_cents_per_m"}
+    # Only the priced classes: `reasoning` is a slice of `output` that pi reports separately, and
+    # a catalog has no rate for it because it is already paid for as output.
+    unstated = sorted(field for name, field in rate_field.items()
+                      if tokens.get(name) and field not in bill)
+    if unstated:
+        priced["note"] = (f"{', '.join(unstated)} not stated for {model!r}: those tokens "
+                          f"would be priced at an invented zero")
+        return priced
+    # Bill rates are cents per million tokens, so this is cents; /100 gives USD.
+    # pi reports the prompt as cacheRead/cacheWrite, so cache_read is where most
+    # the prompt lands; pricing it at 0 would understate every scan.
+    cents = (tokens.get("input", 0) * bill["input_cents_per_m"]
+             + tokens.get("output", 0) * bill["output_cents_per_m"]
+             + tokens.get("cacheRead", 0) * bill["cache_read_cents_per_m"]
+             + tokens.get("cacheWrite", 0) * bill["cache_write_cents_per_m"]) / 1e6
+    priced["billed_cents"] = round(cents, 2)
+    priced["billed_usd"] = round(cents / 100, 4)
+    return priced
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir", type=Path)
@@ -128,46 +174,7 @@ def main(argv: list[str]) -> int:
         "wall_s": run.get("wall_s"),
     }
 
-    row = rate_for(model, args.models_json)
-    bill = (row or {}).get("bill")
-    if usage is None:
-        summary["billed_cents"] = None
-        summary["billed_usd"] = None
-        summary["note"] = (
-            "no events.jsonl: this scan ran without CLEANERS_JSON=1, so tokens and cost "
-            "are unknown. Spend for it has to come from inference_requests."
-        )
-    elif bill:
-        # A rate the catalog does not state is not a rate of zero. Billing a full campaign of
-        # cache-read tokens at an invented zero is how a printed total becomes a wrong
-        # measurement, so a token class with usage and no stated rate makes the price unknown
-        # and says which field is missing. A stated `0` is a decision and is used as one.
-        rate_field = {"input": "input_cents_per_m", "output": "output_cents_per_m",
-                      "cacheRead": "cache_read_cents_per_m",
-                      "cacheWrite": "cache_write_cents_per_m"}
-        unstated = sorted(rate_field[name] for name, tokens in usage.items()
-                          if tokens and rate_field[name] not in bill)
-        if unstated:
-            summary["billed_cents"] = None
-            summary["billed_usd"] = None
-            summary["note"] = (f"{', '.join(unstated)} not stated for {model!r}: those tokens "
-                               f"would be priced at an invented zero")
-        else:
-            # Bill rates are cents per million tokens, so this is cents; /100 gives USD.
-            # pi reports the prompt as cacheRead/cacheWrite, so cache_read is where most of
-            # the prompt lands; pricing it at 0 would understate every scan.
-            cents = (usage["input"] * bill["input_cents_per_m"]
-                     + usage["output"] * bill["output_cents_per_m"]
-                     + usage["cacheRead"] * bill["cache_read_cents_per_m"]
-                     + usage["cacheWrite"] * bill["cache_write_cents_per_m"]) / 1e6
-            summary["billed_cents"] = round(cents, 2)
-            summary["billed_usd"] = round(cents / 100, 4)
-    else:
-        summary["billed_cents"] = None
-        summary["billed_usd"] = None
-        found = catalog(args.models_json)
-        summary["note"] = (f"no bill rates for {model!r} in {found}" if found else
-                          "no model catalog: price unknown")
+    summary.update(price(model, usage, args.models_json))
 
     if args.markdown:
         print(markdown(summary))
