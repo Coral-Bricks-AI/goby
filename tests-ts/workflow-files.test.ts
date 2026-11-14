@@ -224,6 +224,21 @@ test('two products are scheduled — the tide sweeps, the wake reads — and the
   }
 })
 
+test('a container step is sh, so it carries no bash-only shell option', () => {
+  // Container jobs run `run:` steps with `sh -e` — dash on these images — where `set -o pipefail`
+  // is not an option and a pipeline reports the *last* command's status. Both halves bit on the
+  // first scheduled run: `| tee` made a failed read a green step, and `set -euo pipefail` aborted
+  // the ship step before it ran. A step that is expected to fail on failure has to be written for
+  // the shell it actually gets.
+  for (const file of ['wake/workflow.yml', '.github/workflows/goby-wake.yml']) {
+    const code = read(file).split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
+    expect(code).not.toContain('pipefail');
+    // No pipeline into `tee`: the status would be tee's, not the reader's.
+    expect(code).not.toMatch(/^\s*run: node .*\|/m);
+    expect(code).toContain('> /tmp/wake.json');
+  }
+})
+
 test('the wake this repository runs is the wake it ships', () => {
   // One file, copied, exactly as a consumer copies it: the cron line is the part a repository
   // owns, and this repository reading its own history is what "works well enough" is decided
