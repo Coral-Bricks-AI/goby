@@ -85,8 +85,8 @@ test('every workflow parses under actionlint rules we rely on', () => {
     '.github/workflows/test-cleaners.yml', '.github/workflows/test-review-image.yml',
     '.github/workflows/goby-review.yml', '.github/workflows/tide-scheduled.yml',
     '.github/workflows/tide-image.yml', '.github/workflows/test-tide.yml',
-    'wake/workflow.yml', '.github/workflows/wake-image.yml',
-    '.github/workflows/test-wake.yml']) {
+    'wake/workflow.yml', '.github/workflows/goby-wake.yml',
+    '.github/workflows/wake-image.yml', '.github/workflows/test-wake.yml']) {
     const block = read(file).split(/^permissions:$/m)[1];
     if (!block) continue;
     for (const line of block.split('\n')) {
@@ -222,6 +222,13 @@ test('two products are scheduled — the tide sweeps, the wake reads — and the
     '.github/workflows/cleaners-post-merge.yml']) {
     expect(read(other)).not.toContain('schedule:');
   }
+})
+
+test('the wake this repository runs is the wake it ships', () => {
+  // One file, copied, exactly as a consumer copies it: the cron line is the part a repository
+  // owns, and this repository reading its own history is what "works well enough" is decided
+  // from. A copy that drifted would mean the thing being dogfooded is not the thing being shipped.
+  expect(read('.github/workflows/goby-wake.yml')).toBe(read('wake/workflow.yml'));
 })
 
 test('a scheduled sweep never cancels another, and is not keyed on the commit', () => {
