@@ -85,3 +85,12 @@ def test_every_scan_reports_where_its_wall_clock_went():
     assert '--agent-seconds "$SCAN_ELAPSED"' in block
     call = block[block.index("SCAN_TIMING="):block.index('if [[ -n "$SCAN_TIMING" ]]')]
     assert "|| true" in call
+
+
+def test_the_thinking_level_is_the_image_s_default_not_the_dependency_s():
+    """pi defaults to `medium`. Stated in the image so the level is a decision made here, and so a
+    change reaches every client through `:latest` like the other budgets."""
+    assert '--thinking "$THINKING"' in (HERE / "tide.sh").read_text()
+    defaults = (HERE / "defaults.env").read_text()
+    assert ': "${THINKING:=high}"' in defaults
+    assert "THINKING" in defaults.split("export", 1)[1]

@@ -218,3 +218,12 @@ def test_every_scan_reports_where_its_wall_clock_went():
     retry_block = retry_block[:retry_block.index("model_error=0")]
     assert "/opt/common/timing.py" in retry_block
     assert '$OUT/agent/$SLUG-retry/events.jsonl' in retry_block
+
+
+def test_the_thinking_level_is_the_image_s_default_not_the_dependency_s():
+    """pi defaults to `medium`. Stated in the image so the level is a decision made here, and so a
+    change reaches every client through `:latest` like the other budgets."""
+    assert '--thinking "$THINKING"' in (HERE / "cleaner.sh").read_text()
+    defaults = (HERE / "defaults.env").read_text()
+    assert ': "${THINKING:=high}"' in defaults
+    assert "THINKING" in defaults.split("export", 1)[1]
