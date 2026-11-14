@@ -91,7 +91,7 @@ worth, `--thinking low` is the dial.
 
 ## Bounds
 
-The six `GOBY_*` bounds below default from `review/defaults.env` inside the image, so changing one
+The seven `GOBY_*` bounds below default from `review/defaults.env` inside the image, so changing one
 there reaches every consumer through the image tag; a workflow sets a variable only to override it
 for that repository.
 
@@ -100,10 +100,11 @@ for that repository.
 | `GOBY_MAX_ROUNDS` | reviews per pull request; a later push reuses the first one and says so in the status. Incompatible with requiring the gate: a push after the only review has no receipt to gate, so the gate is not recomputed for it |
 | `GOBY_MAX_TURNS` | model turns one review may take; pi has no cap, so the emit extension counts `turn_start` and gives the reviewer budget notices at 10, 5 and 2 turns left |
 | `GOBY_MAX_TOOL_CALLS` | tool calls, the backstop when a single turn does a lot of work |
+| `GOBY_AGENT_TIMEOUT_S` | wall clock for the agent, enforced by `timeout` as pi's parent; a turn budget is not a clock, and without this a slow provider window reaches the job timeout with the review unfinished and its statuses pending |
 | `GOBY_BASH_TIMEOUT_S` | wall clock for one shell command; a command with none can run until the job timeout |
 | `GOBY_MAX_DIFF_LINES` | larger diffs are skipped: the review says so and the gate fails closed |
 | `GOBY_MAX_FINDINGS` | findings posted, highest severity first; the rest are counted in the summary |
-| job `timeout-minutes` | the outer backstop, set in the workflow |
+| job `timeout-minutes` | the outer backstop, set in the workflow. It has to stay above `GOBY_AGENT_TIMEOUT_S` plus the clone and publish around it: a job the runner stops runs no further step, so nothing would resolve the statuses `prepare` posted |
 
 ## What the reviewer is given
 
@@ -204,6 +205,26 @@ The line is instrumentation, never a verdict: it is printed whatever the review 
 histogram. What it still cannot give is time-to-first-token — pi times a whole response, so a slow
 start and a slow write are one number here, and separating them would mean reading the event stream
 as it arrives.
+
+### When a review does not answer
+
+Two deadlines, in the order they fire:
+
+- `GOBY_AGENT_TIMEOUT_S` is `timeout` wrapped around pi inside the agent's own process tree. It exits
+  124, which the harness reads as *the reviewer spent its wall clock* rather than *the reviewer
+  exited*, and either way the statuses are resolved with that reason on them.
+- A SIGTERM the runner sends on its own — its `timeout-minutes`, a new push under
+  `cancel-in-progress` — is caught by the cancel handler, which resolves the same statuses to
+  `Review failed: the review was cancelled before it finished`. The number above is what should fire
+  first; this is the second line. Without it a review killed mid-run left `Goby Review` pending on
+  the head with the note still saying "is reviewing", which is a blocked pull request and nothing to
+  read.
+
+Because the deadline fires inside the review's own process, the failure is an ordinary exit: the
+instrumentation still runs, so the log of a run that spent its budget carries the timing line
+(`max=` against `p95=` is what tells a stalled request from uniformly slow turns), one line per tool
+call, and pi's stderr tail. Nothing is uploaded — a job the runner stops runs no step at all, so an
+artifact would never have covered the case the deadline exists for.
 
 ## Stable contracts
 

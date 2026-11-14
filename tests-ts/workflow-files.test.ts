@@ -120,7 +120,7 @@ test('only the default branch may move the moving tag', () => {
   }
 });
 
-test('the reviewer is bounded by turns, a command timeout and a job timeout', () => {
+test('the reviewer is bounded by turns, a command timeout, an agent deadline and a job timeout', () => {
   // pi has no turn cap of its own, and a shell command with no wall clock can hang until the job
   // timeout — which is how a four-minute review turned into fifteen minutes. The numbers are image
   // defaults, so a change reaches every consumer through `:latest` instead of a workflow edit.
@@ -128,11 +128,15 @@ test('the reviewer is bounded by turns, a command timeout and a job timeout', ()
     const text = read(file);
     expect(text).not.toContain('GOBY_MAX_TURNS:');
     expect(text).not.toContain('GOBY_BASH_TIMEOUT_S:');
+    // The agent's deadline is image-owned for the same reason, and it has to be the one that fires:
+    // a job the runner stops runs no shell of ours, so nothing resolves the statuses `prepare` posted.
+    expect(text).not.toContain('GOBY_AGENT_TIMEOUT_S:');
     expect(text).toContain('timeout-minutes: 15');
   }
   const defaults = read('review/defaults.env');
   expect(defaults).toContain('GOBY_MAX_TURNS:=50');
   expect(defaults).toContain('GOBY_BASH_TIMEOUT_S:=120');
+  expect(defaults).toContain('GOBY_AGENT_TIMEOUT_S:=600');
   expect(read('review/entrypoint.sh')).toContain('source /opt/goby/defaults.env');
   expect(read('review/Dockerfile')).toContain('review/defaults.env');
   const extension = read('review/report_findings.ts');
