@@ -85,3 +85,24 @@ def test_every_scan_reports_where_its_wall_clock_went():
     assert '--agent-seconds "$SCAN_ELAPSED"' in block
     call = block[block.index("SCAN_TIMING="):block.index('if [[ -n "$SCAN_TIMING" ]]')]
     assert "|| true" in call
+
+
+def test_the_thinking_level_is_the_image_s_default_not_the_dependency_s():
+    """pi defaults to `medium`. Stated in the image so the level is a decision made here, and so a
+    change reaches every client through `:latest` like the other budgets."""
+    assert '--thinking "$THINKING"' in (HERE / "tide.sh").read_text()
+    defaults = (HERE / "defaults.env").read_text()
+    assert ': "${THINKING:=high}"' in defaults
+    assert "THINKING" in defaults.split("export", 1)[1]
+
+
+def test_every_variable_the_agent_script_reads_is_in_its_closed_environment():
+    """`goby_run_as_agent` runs the script with `env -i` and an explicit list, so a variable that is
+    exported by the root entrypoint is *not* visible to the script. With `set -u` the first read of
+    one aborts the whole scan before pi starts — and because the script dies rather than the model,
+    it lands in the "not retried" branch and every component files nothing. Asserting the flag is
+    in the script is not enough; what matters is that the value travels."""
+    launch = (HERE / "entrypoint.sh").read_text()
+    launch = launch[launch.index("goby_run_as_agent"):]
+    launch = launch[:launch.index("bash /opt/")]
+    assert "THINKING=" in launch, "THINKING is read by tide.sh but never passed to it"

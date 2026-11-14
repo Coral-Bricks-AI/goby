@@ -98,6 +98,15 @@ def test_the_run_record_is_written_and_cannot_end_a_review():
     assert "$REPO_DIR/.goby/models.json" in block
 
 
+def test_the_thinking_level_is_the_image_s_default_not_the_dependency_s():
+    """pi's own default is `medium`. A review that inherits it reviews at half the reasoning the
+    gateway will give it, and nothing about the result says so — the numbers just look cheaper."""
+    assert '--thinking "$GOBY_THINKING"' in launch()
+    defaults = (HERE / "defaults.env").read_text()
+    assert ': "${GOBY_THINKING:=high}"' in defaults
+    assert "GOBY_THINKING" in defaults.split("export", 1)[1]
+
+
 def test_no_event_stream_names_the_cause_instead_of_only_the_symptom():
     """A rejected key writes a session header and nothing else, so the stream is neither absent
     nor empty; the reason is in pi's own stderr. Without it the last line before the failure is

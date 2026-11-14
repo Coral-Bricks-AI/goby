@@ -129,6 +129,7 @@ cd "$REPO_DIR"
 # with a shell. --no-extensions then -e keeps a repository's own .pi resources out of the run.
 PI_ARGS=(
   --model "$MODEL"
+  --thinking "$THINKING"
   --no-session
   --no-extensions
   --tools "$TOOLS"

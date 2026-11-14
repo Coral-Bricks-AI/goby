@@ -253,7 +253,8 @@ cat > "$OUT/run-agent.sh" <<RUN
 set -euo pipefail
 cd "$SANDBOX"
 exec timeout --signal=TERM --kill-after=30 "$GOBY_AGENT_TIMEOUT_S" \
-  pi --mode json --model "$PROVIDER/$MODEL" --no-session --no-extensions \
+  pi --mode json --model "$PROVIDER/$MODEL" --thinking "$GOBY_THINKING" \
+  --no-session --no-extensions \
   --extension /opt/goby/report_findings.ts \
   --tools bash,read,grep,find,ls,report_findings --exclude-tools edit,write \
   "Read your brief at $OUT/prompt.md. It is the whole task: $GOBY_REPO#$GOBY_PR at $(printf '%s' "$GOBY_HEAD" | cut -c1-10). Do it, then call report_findings." \

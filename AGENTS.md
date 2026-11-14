@@ -36,8 +36,10 @@ One version for the whole repository, in `common/VERSION`. `src/identity.ts` and
 the same number, and `common/test_version.py` fails CI when the three disagree. The scheme is
 `vX.Y.Z`, staying `0.x.y` until there is a real consumer.
 
-**When it moves.** `y` for a change a consumer would notice in a product; `x` for a change to the
-records or the statuses themselves, which resets `y`; not for docs, CI or tests.
+**When it moves.** `y` for behaviour a consumer runs into — a better prompt, a threshold, a faster
+scan, a finding it did not make before. `x` for a change to what goby *emits*, which resets `y`: a
+field added or renamed in the run marker or in wake's JSON, a new product in its output, a status
+whose meaning moved. Neither for docs, CI or tests.
 
 **How.** Bump the three in the pull request that changes the behaviour, then tag the merge commit by
 hand: annotated, one line, in the shape `v0.4.0 — batched file reads`. A tag is a label and nothing

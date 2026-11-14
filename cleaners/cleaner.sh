@@ -129,6 +129,7 @@ cd "$REPO_DIR"
 # keeps a repo's own .pi resources out of the run, and only the named extensions load.
 PI_ARGS=(
   --model "$MODEL"
+  --thinking "$THINKING"
   --no-session
   --no-extensions
   --tools "$TOOLS"
