@@ -30,12 +30,29 @@ When there is no pull request to review, `gh issue list --label goby-cleaners --
 best backlog: those are defects goby cleaners reproduced in this repository, and each one has a
 repro and a flip to start from.
 
+## Releases
+
+One version for the whole repository, in `common/VERSION`. `src/identity.ts` and `package.json` carry
+the same number, and `common/test_version.py` fails CI when the three disagree. The scheme is
+`vX.Y.Z`, staying `0.x.y` until there is a real consumer.
+
+**When it moves.** `y` for a change a consumer would notice in a product; `x` for a change to the
+records or the statuses themselves, which resets `y`; not for docs, CI or tests.
+
+**How.** Bump the three in the pull request that changes the behaviour, then tag the merge commit by
+hand: annotated, one line, in the shape `v0.4.0 — batched file reads`. A tag is a label and nothing
+else — it publishes no image and gates nothing, so this paragraph is the whole mechanism. The wake
+joins a record's `v` to the tag's date to put a release on an axis, and `tag check` fails the tag
+push when its number disagrees with `common/VERSION`.
+
 ## Testing the container without a pull request
 
 The image is most of the product, and everything inside it runs locally in under a minute: the
-clone, `prepare`, the rendered prompt, the sandbox, the agent and its tools. What still needs a real
-pull request is the Actions side — the runner, the image pull, and publishing the review and its
-statuses — so use the loop below to iterate and a plain PR to confirm the wiring.
+clone, `prepare`, the rendered prompt, the sandbox, the agent and its tools. Run it in docker before
+you push: a container is where most of these failures appear, and a pull request is a slow way to
+learn what a local run would have said in a minute. What still needs a real pull request is the
+Actions side — the runner, the image pull, and publishing the review and its statuses — so iterate
+locally and use a plain PR to confirm the wiring.
 
 ```bash
 docker build -t goby-base base
@@ -55,3 +72,7 @@ the provider directly. `events.jsonl` is the stream the review reads, so
 `python3 common/timing.py events.jsonl --agent-seconds N --json` reproduces the timing line from it:
 that is how the token, character and per-request accounting gets checked without waiting for a PR,
 and how a claim about a provider's behaviour gets settled from the wire rather than from a doc.
+
+A workflow step is code too. It runs in the container, under the shell the runner picks rather than
+the one you are typing in, so treat a step body like any other function: run it where it will run
+before trusting it.

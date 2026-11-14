@@ -22,7 +22,6 @@ on:
       # Compiled into the harness, so a change here changes the published bundle.
       - "tsconfig.json"
       - ".github/workflows/review-image.yml"
-    tags: ["review-v*"]
   workflow_dispatch:
 
 concurrency:

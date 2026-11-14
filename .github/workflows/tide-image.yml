@@ -13,7 +13,6 @@ on:
       - "common/**"
       - "base/**"
       - ".github/workflows/tide-image.yml"
-    tags: ["tide-v*"]
   workflow_dispatch:
 
 concurrency:
