@@ -60,6 +60,11 @@ sync, and the contract is the command and its output:
 The image carries node and a shell and nothing else: no `curl`, no `jq`. A sink in that container
 uses `node -e`, an action, or a separate job on the runner.
 
+One trap, because it is silent: a container job runs `run:` steps with `sh -e`, not bash. So a
+sink step cannot use `set -o pipefail`, and a pipeline reports its *last* command's status — which
+turns `node … | tee out.json` into a green step with a half-written file when the read fails. Use a
+redirect (`> out.json` and then `cat`), or `shell: bash` if the image has bash.
+
 **The log is not a store.** It is truncated at long lines, redacted (`***`), and expires with the
 run's retention — GitHub's own log export does not reliably return this JSON in one piece. If
 nothing reads stdout, the records are gone when the job ends.
