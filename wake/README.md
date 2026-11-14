@@ -18,10 +18,55 @@ cp goby/wake/workflow.yml .github/workflows/goby-wake.yml
 ```
 
 No secret is needed. The job reads with the repository's own `GITHUB_TOKEN`, scoped read-only by
-the `permissions:` block in that file. Point whatever consumes it at the job's stdout.
+the `permissions:` block in that file.
 
 Two knobs belong to the repository, and both are repository variables so they do not need the file
 edited: `GOBY_WAKE_DAYS` (default 30) and `GOBY_WAKE_LIMIT` (default 500 records of each kind).
+
+## Where the JSON goes
+
+The job prints; nothing else happens. Whatever sits on the other side of stdout is your pipeline,
+and the shape it receives is stable — `schema: 1`, fields only ever added, so a sink that stores the
+blob keeps working as goby grows.
+
+**Copy the workflow** — one file, edited once:
+
+- `cron:` is how often it reads. Weekly is `0 7 * * 1`.
+- the `Ship it` step is where the records land. The read writes `/tmp/wake.json` first, in the
+  job's own scratch disk, which dies with the job; the next step hands that file to a destination:
+
+```yaml
+      - name: Ship it
+        uses: actions/upload-artifact@v4     # or an HTTP POST, or your own uploader
+        with:
+          name: goby-wake
+          path: /tmp/wake.json
+```
+
+Everything else — the fields, the outcome rules, the image — arrives through `:latest`.
+
+**Or call the image from a workflow you already have.** Then there is no file of ours to keep in
+sync, and the contract is the command and its output:
+
+```yaml
+      - name: Read goby
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker run --rm -e GITHUB_TOKEN -e GOBY_WAKE_DAYS=30 \
+            ghcr.io/coral-bricks-ai/goby-wake:latest --repo "$GITHUB_REPOSITORY" > wake.json
+```
+
+The image carries node and a shell and nothing else: no `curl`, no `jq`. A sink in that container
+uses `node -e`, an action, or a separate job on the runner.
+
+**The log is not a store.** It is truncated at long lines, redacted (`***`), and expires with the
+run's retention — GitHub's own log export does not reliably return this JSON in one piece. If
+nothing reads stdout, the records are gone when the job ends.
+
+Three things in the output say whether what you received is complete: `notes` (empty means the
+window is the whole window), `threads_complete` per review, and the exit code — a failed read exits
+non-zero, so a `Ship it` step after it does not run.
 
 ## What it reads
 

@@ -6,11 +6,12 @@
 # them — and prints one JSON object to stdout. Where that JSON goes next is the consumer's
 # decision: a file, a dashboard, an alert, or nothing at all.
 #
-# Two things are a repository's own choice, and both are here rather than in the image:
+# Three things are a repository's own choice, and all are here rather than in the image:
 #   - **when** it reads: the `cron` line below;
-#   - **how far back**: `GOBY_WAKE_DAYS`, which is a repository variable, so changing the window
-#     does not mean editing this file. Default 30 days, which is about half a megabyte for a busy
-#     repository.
+#   - **how far back**: `GOBY_WAKE_DAYS`, a repository variable, so changing the window does not mean
+#     editing this file. Default 30 days, about half a megabyte for a busy repository;
+#   - **where the JSON goes**: the step after the read. Nothing here picks a destination, because
+#     there is no right one — see `wake/README.md`, "Where the JSON goes".
 #
 # Permissions are read-only on purpose: pull requests for the reviews and their threads, issues
 # for what the cleaners and the tide filed, actions for the runs. `contents: read` and
@@ -62,10 +63,23 @@ jobs:
       GOBY_WAKE_LIMIT: ${{ github.event.inputs.limit || vars.GOBY_WAKE_LIMIT || '500' }}
     steps:
       # A container job ignores the image's ENTRYPOINT — GitHub keeps its own — so the step names
-      # it. stdin and stdout are the whole interface; nothing is written anywhere.
+      # it. `tee` writes the job's own scratch disk, which dies with the job: that is not storage,
+      # it is what lets the next step hand the file to a sink. Everything outside the container is
+      # the consumer's to choose.
       - name: Read
         env:
           # The repository's own token, read-only by the permissions above. There is no second
           # credential and nothing to install: a consumer wires this to a sink, not to a service.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node /opt/wake/wake.js --repo "$GITHUB_REPOSITORY" --pretty
+        run: node /opt/wake/wake.js --repo "$GITHUB_REPOSITORY" --pretty | tee /tmp/wake.json
+
+      # Replace this with wherever the records should land — an artifact, an HTTP POST, a file in
+      # the repository. It runs last on purpose: a failed read exits non-zero, and this step then
+      # never runs, so a sink cannot receive half a window and believe it.
+      - name: Ship it
+        run: |
+          set -euo pipefail
+          test -s /tmp/wake.json
+          echo "records: $(node -p 'JSON.stringify(require("/tmp/wake.json").counts)')"
+          # No `curl` and no `jq` in this image — it carries node and a shell and nothing else, so
+          # a sink uses one of those, an action, or the runner's own tools in a separate job.
