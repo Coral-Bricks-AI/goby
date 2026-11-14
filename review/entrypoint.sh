@@ -80,6 +80,37 @@ esac
 
 mkdir -p "$OUT" "$AGENT_HOME"
 
+# The runner stops a job with SIGTERM — its own `timeout-minutes`, a new push under
+# `cancel-in-progress`, an operator's stop — and nothing in this shell answered it. So a review
+# killed at minute 14 left `Goby Review` pending on the head with the note still saying "is
+# reviewing": the pull request is blocked with nothing to read, which review/INVARIANTS.md 1
+# forbids. Installed before `prepare`, because `prepare` is what posts the statuses this resolves;
+# the EXIT trap further down only puts the note away. `GOBY_AGENT_TIMEOUT_S` should fire long
+# before the runner does — this is the handler for a kill that is not the deadline's.
+#
+# Three paths publish and then end: a reused head, a skipped diff, and the review itself. Each sets
+# this immediately before its publish, and a cancel after that writes nothing — the reuse branch
+# posts no pending status to begin with, so "the review was cancelled" there would be a red status
+# appearing over a green one, out of nothing, with a reason that is not true.
+VERDICT_POSTED=0
+on_cancel() {
+  # One handler, one exit: clearing the traps stops the EXIT one from running this a second time,
+  # so the two cleanups it owns are done here instead.
+  trap - EXIT TERM INT
+  if [[ "$VERDICT_POSTED" == 1 ]]; then
+    goby_log "cancelled after this run posted its verdict; leaving it alone"
+  else
+    goby_log "error: cancelled; resolving the statuses this review opened"
+    GOBY_REPO="$GOBY_REPO" GOBY_HEAD="$GOBY_HEAD" GITHUB_TOKEN="$GITHUB_TOKEN" \
+    GOBY_FAIL_REASON="the review was cancelled before it finished" \
+      node /opt/goby/reviewRun.js fail || true
+  fi
+  goby_progress stop
+  goby_proxy_stop
+  exit 1
+}
+trap on_cancel TERM INT
+
 # --- what this run is -------------------------------------------------------------------
 # Prepare asks GitHub everything the reuse decision needs — the API's diff digest for this head and
 # base, the PR's head and base, the receipt on a previous review of this commit, the reviews this
@@ -94,6 +125,7 @@ GOBY_GATE="${GOBY_GATE:-off}" \
 
 if grep -q '"reuse":true' "$OUT/prepare.json"; then
   goby_log "this head was already reviewed; refreshing the gate only"
+  VERDICT_POSTED=1
   GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
   GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" \
     node /opt/goby/reviewRun.js finish
@@ -144,6 +176,7 @@ goby_log "diff $DIFF_LINES lines"
 if [[ "$DIFF_LINES" -gt "$MAX_DIFF_LINES" ]]; then
   # Skipping is a verdict, not a crash: the review says so, and the gate fails closed.
   goby_log "skipped: diff is $DIFF_LINES lines (cap $MAX_DIFF_LINES)"
+  VERDICT_POSTED=1
   GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
   GOBY_MODEL="$MODEL" GOBY_SKIP_REASON="diff is $DIFF_LINES lines (cap $MAX_DIFF_LINES)" \
     node /opt/goby/reviewRun.js skip || true
@@ -209,11 +242,18 @@ chmod 700 "$AGENT_OUT"
 # own diagnostics, kept because a refusal to start (a bad flag, a rejected key) leaves no events at
 # all and this file would then be the only evidence of why. Neither stream decides the verdict —
 # `report_findings` does, as before.
+#
+# `timeout` is the deadline, and it sits inside the agent's own process tree on purpose: it is pi's
+# direct parent, so SIGTERM reaches the process that is actually spending the time, and
+# `--kill-after` ends one that does not exit. A run stopped this way exits 124, which is how the
+# failure path below tells "the model was slow enough to spend the whole budget" apart from
+# "something stopped the agent with no verdict".
 cat > "$OUT/run-agent.sh" <<RUN
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$SANDBOX"
-exec pi --mode json --model "$PROVIDER/$MODEL" --no-session --no-extensions \
+exec timeout --signal=TERM --kill-after=30 "$GOBY_AGENT_TIMEOUT_S" \
+  pi --mode json --model "$PROVIDER/$MODEL" --no-session --no-extensions \
   --extension /opt/goby/report_findings.ts \
   --tools bash,read,grep,find,ls,report_findings --exclude-tools edit,write \
   "Read your brief at $OUT/prompt.md. It is the whole task: $GOBY_REPO#$GOBY_PR at $(printf '%s' "$GOBY_HEAD" | cut -c1-10). Do it, then call report_findings." \
@@ -221,9 +261,14 @@ exec pi --mode json --model "$PROVIDER/$MODEL" --no-session --no-extensions \
 RUN
 chmod 755 "$OUT/run-agent.sh"
 
-goby_log "review $GOBY_REPO#$GOBY_PR model=$MODEL max_tool_calls=$GOBY_MAX_TOOL_CALLS"
+goby_log "review $GOBY_REPO#$GOBY_PR model=$MODEL max_tool_calls=$GOBY_MAX_TOOL_CALLS agent_deadline=${GOBY_AGENT_TIMEOUT_S}s"
 AGENT_STARTED=$SECONDS
 set +e
+# Backgrounded and waited on, not run in the foreground, and that is what makes the cancel handler
+# above reachable: bash defers a trapped signal until the command it is waiting for returns, and the
+# agent is the one command that may never return. `wait` is interruptible, so a SIGTERM from the
+# runner runs `on_cancel` while the agent is still working — a second and a half before the runner
+# stops the container, which is all the time the status write gets.
 goby_run_as_agent \
   PI_CODING_AGENT_DIR="$AGENT_HOME" \
   PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
@@ -234,7 +279,9 @@ goby_run_as_agent \
   GOBY_MAX_TOOL_CALLS="$GOBY_MAX_TOOL_CALLS" \
   GOBY_MAX_TURNS="$GOBY_MAX_TURNS" \
   GOBY_BASH_TIMEOUT_S="$GOBY_BASH_TIMEOUT_S" \
-  bash "$OUT/run-agent.sh"
+  bash "$OUT/run-agent.sh" &
+AGENT_PID=$!
+wait "$AGENT_PID"
 AGENT_STATUS=$?
 AGENT_ELAPSED=$((SECONDS - AGENT_STARTED))
 set -e
@@ -293,18 +340,30 @@ goby_log "agent exit=$AGENT_STATUS findings=$(grep -c '"kind":"findings"' "$AGEN
 if ! grep -q '"kind":"findings"' "$AGENT_OUT/findings.jsonl" 2>/dev/null; then
   # Not "no bugs": the reviewer never answered. Both statuses have to resolve, or the gate stays
   # pending forever and the pull request is blocked with nothing to read.
+  #
+  # 124 is `timeout` in run-agent.sh and 137 is the `--kill-after` behind it. The two reasons have
+  # different next steps — one says the model was too slow for the budget, the other that something
+  # ended the agent — so the status carries which one, rather than "exit 124" for a reader to look up.
+  if [[ "$AGENT_STATUS" -eq 124 || "$AGENT_STATUS" -eq 137 ]]; then
+    REASON="the reviewer spent its ${GOBY_AGENT_TIMEOUT_S}s wall clock without reporting"
+  else
+    REASON="the reviewer exited without reporting (exit $AGENT_STATUS)"
+  fi
   goby_log "error: the reviewer never reported (exit $AGENT_STATUS)"
   # pi's own diagnostics, which is where the reason is when it never got as far as a turn: a key
   # the provider rejected writes a session header and nothing else, so the stream above says the
   # split is unavailable without saying why.
   if [[ -f "$AGENT_OUT/stderr.log" ]]; then tail -20 "$AGENT_OUT/stderr.log"; fi
   GOBY_REPO="$GOBY_REPO" GOBY_HEAD="$GOBY_HEAD" GITHUB_TOKEN="$GITHUB_TOKEN" \
-  GOBY_FAIL_REASON="the reviewer exited without reporting (exit $AGENT_STATUS)" \
+  GOBY_FAIL_REASON="$REASON" \
     node /opt/goby/reviewRun.js fail || true
   exit 1
 fi
 
+# The review has answered, so from here the only thing left is this run's own publish — and a
+# SIGTERM during it must not be turned into an error status over a review that was posted.
 goby_proxy_stop
+VERDICT_POSTED=1
 GOBY_REPO="$GOBY_REPO" GOBY_PR="$GOBY_PR" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
 GOBY_MODEL="$MODEL" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" GOBY_AGENT_OUT="$AGENT_OUT" \
 GOBY_ELAPSED_S="$AGENT_ELAPSED" GOBY_GATE="${GOBY_GATE:-off}" \

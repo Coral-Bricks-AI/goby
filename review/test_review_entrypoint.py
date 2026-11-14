@@ -29,6 +29,18 @@ def after_agent() -> str:
     return text[start:text.index('if ! grep -q \'"kind":"findings"\'', start)]
 
 
+def verdict() -> str:
+    """The block that decides a review without a findings record has failed, and resolves it."""
+    text = entrypoint()
+    return text[text.index('if ! grep -q \'"kind":"findings"\''):]
+
+
+def cancel_handler() -> str:
+    """The handler for a SIGTERM the runner sends, which no `goby_fail` call can cover."""
+    text = entrypoint()
+    return text[text.index('on_cancel() {'):text.index('trap on_cancel TERM INT')]
+
+
 def test_the_agent_writes_an_event_stream_and_not_just_its_last_message():
     """`--mode json` is what makes the run's cost readable: `tool_execution_end` carries
     `durationMs`, and nothing else in the review records a tool's own clock. `--print` reviews
@@ -151,3 +163,86 @@ def test_a_failure_before_the_agent_resolves_the_statuses_it_opened():
     for failure in ('goby_fail "the clone of', 'goby_fail "cannot fetch',
                     'goby_fail "checkout of', 'goby_fail "the diff'):
         assert failure in text, failure
+
+
+def test_the_agent_has_a_wall_clock_and_it_is_pis_parent():
+    """A turn budget is not a clock. 50 turns at a slow provider's latency took 14.5 minutes and the
+    runner killed the job at its `timeout-minutes`, which runs no shell of ours: the review never
+    reached a verdict and both statuses `prepare` posted stayed pending. `timeout` inside the
+    generated script, not around `goby_run_as_agent`, so SIGTERM reaches the process that is
+    actually spending the time rather than the `runuser` in front of it."""
+    script = launch()
+    assert 'exec timeout --signal=TERM --kill-after=30 "$GOBY_AGENT_TIMEOUT_S"' in script
+    # Same line as `exec pi`: a `cd` before it is fine, a second process in between is not.
+    assert script.index('exec timeout') < script.index('pi --mode json')
+    assert 'timeout' not in after_agent(), "the deadline belongs on the agent, not on the reading"
+
+
+def test_the_deadline_is_an_image_default_under_the_job_timeout():
+    """It has to fire first, with the clone and the publish on either side of it. A number the
+    workflow sets would not reach a consumer's copy; a number above the job timeout would never
+    run."""
+    defaults = (HERE / "defaults.env").read_text()
+    assert 'GOBY_AGENT_TIMEOUT_S:=600' in defaults
+    assert 'export GOBY_MAX_ROUNDS GOBY_MAX_TURNS GOBY_MAX_TOOL_CALLS GOBY_AGENT_TIMEOUT_S' in defaults
+
+
+def test_a_deadline_failure_names_the_deadline():
+    """124 is `timeout` and 137 the `--kill-after` behind it. "exit 124" for a reader to look up is
+    not a reason; "spent the budget" is, and it says which knob to turn."""
+    block = verdict()
+    assert '[[ "$AGENT_STATUS" -eq 124 || "$AGENT_STATUS" -eq 137 ]]' in block
+    assert 'GOBY_FAIL_REASON="$REASON"' in block
+    assert 'spent its ${GOBY_AGENT_TIMEOUT_S}s wall clock' in block
+
+
+def test_a_cancel_from_the_runner_resolves_the_statuses_it_opened():
+    """The EXIT trap only puts the progress note away. A job the runner stops needs a handler that
+    writes a status, or the pull request keeps a pending check and nothing to read — which is what
+    the harness did for fourteen minutes of www#2015."""
+    handler = cancel_handler()
+    assert "reviewRun.js fail" in handler
+    assert "GOBY_FAIL_REASON=" in handler
+    # Once, and without leaving the note or the proxy behind: the EXIT trap these replace cannot
+    # run after `trap -`, so the two cleanups belong here.
+    assert "trap - EXIT TERM INT" in handler
+    assert "goby_progress stop" in handler and "goby_proxy_stop" in handler
+    assert "exit 1" in handler
+    text = entrypoint()
+    # Armed before `prepare`, because `prepare` is what posts the statuses it resolves.
+    assert text.index("trap on_cancel TERM INT") < text.index("node /opt/goby/reviewRun.js prepare")
+
+
+def test_the_agent_is_waited_on_so_a_cancel_runs_before_the_container_dies():
+    """bash defers a trapped signal until the command it is waiting for returns, and the agent is the
+    one command that may never return. Run in the foreground, the cancel handler would never run and
+    the runner would stop the container with the statuses still pending; `wait` is interruptible, so
+    the handler gets the second and a half between the SIGTERM and the teardown."""
+    text = entrypoint()
+    assert 'bash "$OUT/run-agent.sh" &' in text
+    assert 'AGENT_PID=$!' in text
+    assert 'wait "$AGENT_PID"' in text
+    assert text.index('wait "$AGENT_PID"') < text.index('AGENT_STATUS=$?')
+    # The trap counts as installed only if it outlives the handler's own `trap -`, so it is re-armed
+    # once and disarmed once, and never inside the block that decides the verdict.
+    assert text.count('trap on_cancel TERM INT') == 1
+
+
+def test_a_cancel_after_a_verdict_is_posted_leaves_that_verdict_alone():
+    """Three paths publish and then end: a reused head, a skipped diff, and the review itself. A
+    SIGTERM in the window after any of them must not post a failure over a green status — the reuse
+    branch posts no pending status to begin with, so the error would appear out of nothing, with a
+    reason that is not true, which is the blocked pull request this change exists to remove."""
+    text = entrypoint()
+    handler = cancel_handler()
+    assert 'VERDICT_POSTED' in handler
+    # The flag is read before the failure is written, or it protects nothing.
+    assert handler.index('VERDICT_POSTED') < handler.index('reviewRun.js fail')
+    # Set once per publishing path, immediately before the publish it protects.
+    marks = [i for i in range(len(text)) if text.startswith('VERDICT_POSTED=1', i)]
+    assert len(marks) == 3, marks
+    for mark in marks:
+        following = text[mark:mark + 400]
+        assert 'reviewRun.js finish' in following or 'reviewRun.js skip' in following, following
+    # And the review's own publish is one of them, at the end of the file.
+    assert text.rindex('VERDICT_POSTED=1') > text.index('bash "$OUT/run-agent.sh" &')
