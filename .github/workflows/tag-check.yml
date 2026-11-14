@@ -1,0 +1,29 @@
+name: tag check
+
+# A tag carries no mechanism: it publishes no image and gates nothing, so a tag whose number
+# disagrees with `common/VERSION` stays invisible until somebody joins a record to the wrong
+# release. This job is the only moment that can be caught cheaply.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  matches:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag names the version in the tree
+        run: |
+          set -euo pipefail
+          want="v$(tr -d '[:space:]' < common/VERSION)"
+          if [[ "$GITHUB_REF_NAME" != "$want" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME, but common/VERSION says $want"
+            echo "bump the version in a pull request, then tag the merge commit; or tag $want"
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME matches $(git show -s --format=%s "$GITHUB_SHA")"

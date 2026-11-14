@@ -19,7 +19,6 @@ on:
       - "bun.lock"
       - "tsconfig.json"
       - ".github/workflows/wake-image.yml"
-    tags: ["wake-v*"]
   workflow_dispatch:
 
 concurrency:

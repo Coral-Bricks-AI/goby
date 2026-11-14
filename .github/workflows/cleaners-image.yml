@@ -20,7 +20,6 @@ on:
       - "cleaners/**"
       - "common/**"
       - ".github/workflows/cleaners-image.yml"
-    tags: ["cleaners-v*"]
   workflow_dispatch:
 
 concurrency:
@@ -69,7 +68,6 @@ jobs:
           tags: |
             type=sha,prefix=,format=long
             type=raw,value=latest,enable={{is_default_branch}}
-            type=match,pattern=cleaners-v(.*),group=1
 
       # amd64 only: it is what `ubuntu-latest` is, and it is what a container job pulls. A
       # multi-arch build would double the build time for the one platform nobody runs a scan

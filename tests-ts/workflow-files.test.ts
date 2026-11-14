@@ -108,6 +108,29 @@ test('the image is named once, so a pin cannot change the label without the runt
   }
 });
 
+test('an image publishes on the merge, not on a tag', () => {
+  // The per-product `tags: ["review-v*"]` filters matched a convention nobody followed — `v0.3.0`
+  // and `v0.4.0` match none of them — so they published nothing and rebuilt nothing. A release
+  // tag is a label: `:latest` moves on the merge, and a consumer who wants immutable bytes pins the
+  // digest the review reports.
+  for (const file of ['review-image.yml', 'cleaners-image.yml', 'tide-image.yml', 'wake-image.yml']) {
+    const text = read(`.github/workflows/${file}`);
+    expect({ file, tags: /^\s+tags: \[/m.test(text) }).toEqual({ file, tags: false });
+  }
+  // The rule that turned `cleaners-v1.2.3` into image tag `1.2.3` had no other user.
+  expect(read('.github/workflows/cleaners-image.yml')).not.toContain('type=match');
+})
+
+test('a tag that disagrees with the version fails, because nothing else would notice', () => {
+  const guard = read('.github/workflows/tag-check.yml');
+  expect(guard).toContain('tags: ["v*"]');
+  expect(guard).toContain('common/VERSION');
+  expect(guard).toContain('GITHUB_REF_NAME');
+  // Read-only: the job compares two strings and touches nothing.
+  expect(guard).toContain('contents: read');
+  expect(guard).not.toContain('contents: write');
+})
+
 test('only the default branch may move the moving tag', () => {
   // `:latest` is the runtime now, so a release tag or a dispatch on an older commit must not
   // re-publish that older image as the one everything runs.
