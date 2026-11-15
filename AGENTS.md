@@ -41,11 +41,11 @@ scan, a finding it did not make before. `x` for a change to what goby *emits*, w
 field added or renamed in the run marker or in wake's JSON, a new product in its output, a status
 whose meaning moved. Neither for docs, CI or tests.
 
-**How.** Bump the three in the pull request that changes the behaviour, then tag the merge commit by
-hand: annotated, one line, in the shape `v0.4.0 — batched file reads`. A tag is a label and nothing
-else — it publishes no image and gates nothing, so this paragraph is the whole mechanism. The wake
-joins a record's `v` to the tag's date to put a release on an axis, and `tag check` fails the tag
-push when its number disagrees with `common/VERSION`.
+**How.** Bump the three in the pull request that changes the behaviour, then — once it is merged —
+tag the merge commit yourself: annotated, one line, in the shape `v0.4.0 — batched file reads`. A
+tag is a label and nothing else — it publishes no image and gates nothing, so this paragraph is the
+whole mechanism. The wake joins a record's `v` to the tag's date to put a release on an axis, and
+`tag check` fails the tag push when its number disagrees with `common/VERSION`.
 
 ## Testing the container without a pull request
 
