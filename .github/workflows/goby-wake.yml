@@ -35,7 +35,7 @@ on:
         required: false
         default: ""
       limit:
-        description: "Cap per record kind (blank: the repository variable, then 500)"
+        description: "Cap per record kind (blank: the repository variable, then 2000)"
         required: false
         default: ""
 
@@ -60,7 +60,7 @@ jobs:
       image: ghcr.io/coral-bricks-ai/goby-wake:latest
     env:
       GOBY_WAKE_DAYS: ${{ github.event.inputs.days || vars.GOBY_WAKE_DAYS || '30' }}
-      GOBY_WAKE_LIMIT: ${{ github.event.inputs.limit || vars.GOBY_WAKE_LIMIT || '500' }}
+      GOBY_WAKE_LIMIT: ${{ github.event.inputs.limit || vars.GOBY_WAKE_LIMIT || '2000' }}
     steps:
       # A container job ignores the image's ENTRYPOINT — GitHub keeps its own — so the step names
       # it. The redirect writes the job's own scratch disk, which dies with the job: that is not
@@ -77,7 +77,8 @@ jobs:
           # credential and nothing to install: a consumer wires this to a sink, not to a service.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          node /opt/wake/wake.js --repo "$GITHUB_REPOSITORY" --pretty > /tmp/wake.json
+          node /opt/wake/wake.js --repo "$GITHUB_REPOSITORY" --pretty \
+            --svg /tmp/wake.svg > /tmp/wake.json
           cat /tmp/wake.json
 
       # Replace this with wherever the records should land — an artifact, an HTTP POST, a file in
@@ -90,6 +91,8 @@ jobs:
         run: |
           set -eu
           test -s /tmp/wake.json
+          test -s /tmp/wake.svg
           echo "records: $(node -p 'JSON.stringify(require("/tmp/wake.json").counts)')"
-          # No `curl` and no `jq` in this image — it carries node and a shell and nothing else, so
-          # a sink uses one of those, an action, or the runner's own tools in a separate job.
+          # Both files are here: the records, and a picture of them for anybody who wants to look
+          # before building a view. No `curl` and no `jq` in this image — it carries node and a
+          # shell and nothing else, so a sink uses one of those, an action, or a separate job.
