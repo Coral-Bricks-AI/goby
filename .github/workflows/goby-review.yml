@@ -70,6 +70,9 @@ jobs:
       # state with no model involved. Turn it on when branch protection requires it; off, the review
       # posts its findings and claims nothing about merging.
       GOBY_GATE: "off"
+      # TEMPORARY, for #188's clock nudge: a 90s deadline makes the 20%/10% thresholds land inside a
+      # review that would otherwise take three minutes. Removed once the log shows the nudge.
+      GOBY_AGENT_TIMEOUT_S: "90"
     steps:
       # A container job ignores the image's ENTRYPOINT — GitHub keeps its own — so the step names
       # it. Everything else (clone, sandbox, agent, publish) happens inside. The two secrets are

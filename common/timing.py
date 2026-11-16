@@ -5,7 +5,7 @@
     timing.py … --calls --findings …/findings.jsonl   # one line per tool call, then the summary
     timing.py … --json                              # the whole summary, for anything deeper
 
-A review used to be timed by two shell counters — seconds around the agent, and a grep of
+A goby review used to be timed by two shell counters — seconds around the agent, and a grep of
 `findings.jsonl` for the call count — which separates "the agent" from "everything else" and stops
 there. That is not enough to answer the first question anyone asking for a faster review has:
 whether those two minutes were model round trips or shell commands.
