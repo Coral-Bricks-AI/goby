@@ -21,7 +21,7 @@ No secret is needed. The job reads with the repository's own `GITHUB_TOKEN`, sco
 the `permissions:` block in that file.
 
 Two knobs belong to the repository, and both are repository variables so they do not need the file
-edited: `GOBY_WAKE_DAYS` (default 30) and `GOBY_WAKE_LIMIT` (default 500 records of each kind).
+edited: `GOBY_WAKE_DAYS` (default 30) and `GOBY_WAKE_LIMIT` (default 2000 records of each kind).
 
 ## Where the JSON goes
 

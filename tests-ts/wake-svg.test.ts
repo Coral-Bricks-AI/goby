@@ -69,7 +69,10 @@ describe('the picture', () => {
         review({ at: '2026-11-15T10:00:00Z', v: '0.5.1' })],
     }));
     expect(marks).toEqual([{ day: '2026-11-14', version: '0.5.0' }, { day: '2026-11-15', version: '0.5.1' }]);
-    expect(svg).toContain('stroke-dasharray="2 2"');
+    expect(svg).toContain('stroke-dasharray="3 3"');
+    // The version on day 0 is where the window starts, not a release boundary: a line there sits
+    // on the axis and labels a version every point is already under.
+    expect(svg).not.toContain('0.5.0</text>');
     expect(svg).toContain('0.5.1</text>');
   });
 

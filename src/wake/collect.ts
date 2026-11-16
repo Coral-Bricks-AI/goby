@@ -13,7 +13,7 @@
  * - **A cap is stated.** `--limit` bounds the work; when it bites, the output says so.
  */
 import type { GitHubClient, ThreadRecord } from '../platforms/github.ts';
-import { issueRecord, reviewRecord, runRecord } from './records.ts';
+import { issueRecord, reviewRecord, runProduct, runRecord } from './records.ts';
 
 export interface Window { since: string; days: number }
 
@@ -94,22 +94,42 @@ export async function collectIssues(client: GitHubClient, window: Window, limit:
   return out;
 }
 
+/**
+ * goby's workflow runs, asked for by workflow rather than by repository.
+ *
+ * `/actions/runs` returns every workflow's runs newest-first, so a busy repository spends the whole
+ * page budget on other people's CI: www creates hundreds of runs a day, and reading ten pages of
+ * them covered barely a day, silently — the chart showed workflow activity for the last afternoon
+ * of a seven-day window because nothing said the walk had stopped early.
+ *
+ * Asking each goby workflow for its own runs is exact and cheap, and it also means the cap is about
+ * goby's runs rather than about how busy the repository is.
+ */
 export async function collectRuns(client: GitHubClient, window: Window, limit: number,
                                   notes: string[]): Promise<Collected['runs']> {
   const out: Collected['runs'] = [];
-  for (let page = 1; page <= 10; page++) {
-    const data = JSON.parse(await client.get(
-      `/repos/${client.repo}/actions/runs?created=${encodeURIComponent(`>=${window.since}`)}` +
-      `&per_page=100&page=${page}`));
-    const rows = data?.workflow_runs;
-    if (!Array.isArray(rows) || !rows.length) break;
-    for (const run of rows) {
-      const record = runRecord(run);
-      if (record.product === null) continue;
-      if (out.length >= limit) { notes.push(`runs truncated at ${limit}`); return out; }
-      out.push(record);
+  const listed = JSON.parse(await client.get(`/repos/${client.repo}/actions/workflows?per_page=100`));
+  const workflows = Array.isArray(listed?.workflows) ? listed.workflows : null;
+  if (workflows === null) {
+    notes.push('workflows could not be listed; no runs');
+    return out;
+  }
+  const ours = workflows.filter((workflow: Record<string, unknown>) =>
+    runProduct(String(workflow?.name ?? '')) !== null);
+  if (!ours.length) return out;
+  for (const workflow of ours) {
+    for (let page = 1; page <= 10; page++) {
+      const data = JSON.parse(await client.get(
+        `/repos/${client.repo}/actions/workflows/${workflow.id}/runs` +
+        `?created=${encodeURIComponent(`>=${window.since}`)}&per_page=100&page=${page}`));
+      const rows = data?.workflow_runs;
+      if (!Array.isArray(rows) || !rows.length) break;
+      for (const run of rows) {
+        if (out.length >= limit) { notes.push(`runs truncated at ${limit}`); return out; }
+        out.push(runRecord(run));
+      }
+      if (rows.length < 100) break;
     }
-    if (rows.length < 100) break;
   }
   return out;
 }

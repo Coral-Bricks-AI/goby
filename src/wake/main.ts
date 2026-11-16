@@ -64,7 +64,9 @@ export function options(argv: readonly string[], env: NodeJS.ProcessEnv = proces
   return {
     repo,
     days: positive(flag(argv, 'days') ?? env.GOBY_WAKE_DAYS, 30),
-    limit: positive(flag(argv, 'limit') ?? env.GOBY_WAKE_LIMIT, 500),
+    // A busy repository runs goby hundreds of times a week: www had 400 in seven days, so 500
+    // truncated a week. The cap is per record kind and a run record is small.
+    limit: positive(flag(argv, 'limit') ?? env.GOBY_WAKE_LIMIT, 2000),
     pretty: argv.includes('--pretty'),
     svg: svgPath(argv, env),
   };

@@ -35,7 +35,7 @@ on:
         required: false
         default: ""
       limit:
-        description: "Cap per record kind (blank: the repository variable, then 500)"
+        description: "Cap per record kind (blank: the repository variable, then 2000)"
         required: false
         default: ""
 
@@ -60,7 +60,7 @@ jobs:
       image: ghcr.io/coral-bricks-ai/goby-wake:latest
     env:
       GOBY_WAKE_DAYS: ${{ github.event.inputs.days || vars.GOBY_WAKE_DAYS || '30' }}
-      GOBY_WAKE_LIMIT: ${{ github.event.inputs.limit || vars.GOBY_WAKE_LIMIT || '500' }}
+      GOBY_WAKE_LIMIT: ${{ github.event.inputs.limit || vars.GOBY_WAKE_LIMIT || '2000' }}
     steps:
       # A container job ignores the image's ENTRYPOINT — GitHub keeps its own — so the step names
       # it. The redirect writes the job's own scratch disk, which dies with the job: that is not

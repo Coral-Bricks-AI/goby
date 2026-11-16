@@ -280,18 +280,38 @@ describe('collecting', () => {
     expect(issues.map(i => i.number)).toEqual([1]);
   });
 
-  test('workflow runs are windowed by creation and unrelated workflows dropped', async () => {
-    const { client, asked } = stub({
-      get: async () => JSON.stringify({ workflow_runs: [
-        { name: 'Goby review', created_at: '2026-10-01T00:00:00Z', conclusion: 'success',
-          run_started_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:03:00Z' },
-        { name: 'CI', created_at: '2026-10-01T00:00:00Z' },
-      ] }),
+  test('runs are asked for by workflow, so another project\'s CI cannot spend the page budget',
+    async () => {
+      // `/actions/runs` returns every workflow newest-first: on www that covered barely a day of a
+      // seven-day window, silently, because the pages ran out before the window did.
+      const { client, asked } = stub({
+        get: async (path: string) => {
+          if (path.includes('/actions/workflows?')) {
+            return JSON.stringify({ workflows: [
+              { id: 11, name: 'Goby review' }, { id: 12, name: 'CI' },
+              { id: 13, name: 'Goby cleaners' }] });
+          }
+          if (path.includes('/workflows/11/runs')) {
+            return JSON.stringify({ workflow_runs: [
+              { name: 'Goby review', created_at: '2026-10-01T00:00:00Z', conclusion: 'success',
+                run_started_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:03:00Z' },
+            ] });
+          }
+          if (path.includes('/workflows/13/runs')) {
+            return JSON.stringify({ workflow_runs: [
+              { name: 'Goby cleaners', created_at: '2026-10-02T00:00:00Z', conclusion: 'failure',
+                run_started_at: '2026-10-02T00:00:00Z', updated_at: '2026-10-02T00:00:40Z' },
+            ] });
+          }
+          return JSON.stringify({});
+        },
+      });
+      const runs = await collectRuns(client, window, 100, []);
+      expect(runs.map(r => r.product).sort()).toEqual(['cleaners', 'review']);
+      // The unrelated workflow is never asked for its runs at all.
+      expect(asked.some(path => path.includes('/workflows/12/'))).toBe(false);
+      expect(asked.some(path => path.includes('created='))).toBe(true);
     });
-    const runs = await collectRuns(client, window, 100, []);
-    expect(runs.map(r => r.product)).toEqual(['review']);
-    expect(asked[0]).toContain('created=');
-  });
 });
 
 describe('the options', () => {
@@ -304,7 +324,7 @@ describe('the options', () => {
   test('the window defaults to thirty days and the cap to something finite', () => {
     const opts = options(['--repo', 'a/b'], {});
     expect(opts.days).toBe(30);
-    expect(opts.limit).toBe(500);
+    expect(opts.limit).toBe(2000);
     expect(options(['--repo', 'a/b', '--days', '7', '--limit', '50'], {}))
       .toMatchObject({ days: 7, limit: 50 });
   });
