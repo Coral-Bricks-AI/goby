@@ -248,11 +248,22 @@ chmod 700 "$AGENT_OUT"
 # `--kill-after` ends one that does not exit. A run stopped this way exits 124, which is how the
 # failure path below tells "the model was slow enough to spend the whole budget" apart from
 # "something stopped the agent with no verdict".
-cat > "$OUT/run-agent.sh" <<RUN
+# A provider failure is not a review verdict. pi spends its own retries inside a turn and then ends
+# the run; `/opt/common/summarize_run.py --status` says so from the last assistant message's
+# `stopReason`, never from its text, which is upstream wording. One more attempt, sharing the same
+# agent budget, and only while enough of it is left to be worth spending: two attempts can never
+# outlive `GOBY_AGENT_TIMEOUT_S`, so the job timeout still holds. The second attempt *is* the run —
+# its stream overwrites the first, and the log line below is what says a retry happened.
+AGENT_BUDGET="$GOBY_AGENT_TIMEOUT_S"
+AGENT_SPENT=0
+AGENT_ATTEMPTS=2
+AGENT_ATTEMPT=1
+while :; do
+  cat > "$OUT/run-agent.sh" <<RUN
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$SANDBOX"
-exec timeout --signal=TERM --kill-after=30 "$GOBY_AGENT_TIMEOUT_S" \
+exec timeout --signal=TERM --kill-after=30 "$AGENT_BUDGET" \
   pi --mode json --model "$PROVIDER/$MODEL" --thinking "$GOBY_THINKING" \
   --no-session --no-extensions \
   --extension /opt/goby/report_findings.ts \
@@ -260,32 +271,51 @@ exec timeout --signal=TERM --kill-after=30 "$GOBY_AGENT_TIMEOUT_S" \
   "Read your brief at $OUT/prompt.md. It is the whole task: $GOBY_REPO#$GOBY_PR at $(printf '%s' "$GOBY_HEAD" | cut -c1-10). Do it, then call report_findings." \
   > "$AGENT_OUT/events.jsonl" 2> "$AGENT_OUT/stderr.log"
 RUN
-chmod 755 "$OUT/run-agent.sh"
+  chmod 755 "$OUT/run-agent.sh"
 
-goby_log "review $GOBY_REPO#$GOBY_PR model=$MODEL max_tool_calls=$GOBY_MAX_TOOL_CALLS agent_deadline=${GOBY_AGENT_TIMEOUT_S}s"
-AGENT_STARTED=$SECONDS
-set +e
-# Backgrounded and waited on, not run in the foreground, and that is what makes the cancel handler
-# above reachable: bash defers a trapped signal until the command it is waiting for returns, and the
-# agent is the one command that may never return. `wait` is interruptible, so a SIGTERM from the
-# runner runs `on_cancel` while the agent is still working — a second and a half before the runner
-# stops the container, which is all the time the status write gets.
-goby_run_as_agent \
-  PI_CODING_AGENT_DIR="$AGENT_HOME" \
-  PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
-  GOBY_MODEL_KEY=dummy-proxy-key \
-  GOBY_SESSION_ID="review-pr${GOBY_PR}-${GOBY_HEAD:0:10}" \
-  GOBY_AGENT_OUT="$AGENT_OUT" GOBY_OUT="$OUT" GOBY_SCRATCH="$AGENT_OUT/scratch" \
-  GOBY_SANDBOX="$SANDBOX" GOBY_REPO="$GOBY_REPO" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
-  GOBY_MAX_TOOL_CALLS="$GOBY_MAX_TOOL_CALLS" \
-  GOBY_MAX_TURNS="$GOBY_MAX_TURNS" \
-  GOBY_BASH_TIMEOUT_S="$GOBY_BASH_TIMEOUT_S" \
-  bash "$OUT/run-agent.sh" &
-AGENT_PID=$!
-wait "$AGENT_PID"
-AGENT_STATUS=$?
-AGENT_ELAPSED=$((SECONDS - AGENT_STARTED))
-set -e
+  goby_log "review $GOBY_REPO#$GOBY_PR model=$MODEL max_tool_calls=$GOBY_MAX_TOOL_CALLS agent_deadline=${AGENT_BUDGET}s attempt=$AGENT_ATTEMPT/$AGENT_ATTEMPTS"
+  AGENT_STARTED=$SECONDS
+  set +e
+  # Backgrounded and waited on, not run in the foreground, and that is what makes the cancel handler
+  # above reachable: bash defers a trapped signal until the command it is waiting for returns, and the
+  # agent is the one command that may never return. `wait` is interruptible, so a SIGTERM from the
+  # runner runs `on_cancel` while the agent is still working — a second and a half before the runner
+  # stops the container, which is all the time the status write gets.
+  goby_run_as_agent \
+    PI_CODING_AGENT_DIR="$AGENT_HOME" \
+    PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
+    GOBY_MODEL_KEY=dummy-proxy-key \
+    GOBY_SESSION_ID="review-pr${GOBY_PR}-${GOBY_HEAD:0:10}" \
+    GOBY_AGENT_OUT="$AGENT_OUT" GOBY_OUT="$OUT" GOBY_SCRATCH="$AGENT_OUT/scratch" \
+    GOBY_SANDBOX="$SANDBOX" GOBY_REPO="$GOBY_REPO" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
+    GOBY_MAX_TOOL_CALLS="$GOBY_MAX_TOOL_CALLS" \
+    GOBY_MAX_TURNS="$GOBY_MAX_TURNS" \
+    GOBY_AGENT_TIMEOUT_S="$GOBY_AGENT_TIMEOUT_S" \
+    GOBY_BASH_TIMEOUT_S="$GOBY_BASH_TIMEOUT_S" \
+    bash "$OUT/run-agent.sh" &
+  AGENT_PID=$!
+  wait "$AGENT_PID"
+  AGENT_STATUS=$?
+  AGENT_ELAPSED=$((SECONDS - AGENT_STARTED))
+  set -e
+  AGENT_SPENT=$((AGENT_SPENT + AGENT_ELAPSED))
+
+  # Anything was answered, or the clock ended it: both are final. Only a *model* error is worth
+  # another attempt, and only with a fifth of the budget left to spend on it.
+  if grep -q '"kind":"findings"' "$AGENT_OUT/findings.jsonl" 2>/dev/null; then break; fi
+  if [[ "$AGENT_STATUS" -eq 124 || "$AGENT_STATUS" -eq 137 ]]; then break; fi
+  AGENT_MODEL_ERROR=0
+  python3 /opt/common/summarize_run.py --status "$AGENT_OUT/events.jsonl" > /dev/null \
+    || AGENT_MODEL_ERROR=$?
+  if [[ "$AGENT_MODEL_ERROR" -ne 3 ]]; then break; fi
+  AGENT_LEFT=$((GOBY_AGENT_TIMEOUT_S - AGENT_SPENT))
+  if [[ "$AGENT_ATTEMPT" -ge "$AGENT_ATTEMPTS" || "$AGENT_LEFT" -lt $((GOBY_AGENT_TIMEOUT_S / 5)) ]]; then
+    break
+  fi
+  goby_log "attempt $AGENT_ATTEMPT of $AGENT_ATTEMPTS ended on a model error after ${AGENT_ELAPSED}s; retrying with ${AGENT_LEFT}s left of the ${GOBY_AGENT_TIMEOUT_S}s budget"
+  AGENT_ATTEMPT=$((AGENT_ATTEMPT + 1))
+  AGENT_BUDGET="$AGENT_LEFT"
+done
 
 # What the run did, from its own record. All of it is instrumentation: every call is `|| true`,
 # because an instrument that can end a review is a new way for a review to fail. The timing line is

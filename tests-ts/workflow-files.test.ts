@@ -181,6 +181,61 @@ test('the reviewer is bounded by turns, a command timeout, an agent deadline and
   expect(extension).not.toContain('COMMAND_TIMEOUT_S * 1000');
 });
 
+test('the reviewer is nudged on the clock, not only on turns', () => {
+  // The clock is what ended two reviews of one pull request: 41 of 50 turns and 571 of 600 seconds
+  // spent, then `timeout` with no findings at all — the turn nudge had fired with nine turns to
+  // spare. The extension reads the same deadline the entrypoint wraps pi in, from the same file.
+  const extension = read('review/report_findings.ts');
+  expect(extension).toContain("requiredInt('GOBY_AGENT_TIMEOUT_S')");
+  expect(extension).toContain('CLOCK_NOTICE_LEFT_PCT = 20');
+  expect(extension).toContain('CLOCK_WRAP_UP_LEFT_PCT = 10');
+  // Percentages of that number, not seconds of its own: a budget that moves takes the thresholds
+  // with it, and a second copy of 600 in the extension would be a second source of truth.
+  expect(extension).toContain('AGENT_TIMEOUT_S * CLOCK_NOTICE_LEFT_PCT');
+  expect(extension).toContain('AGENT_TIMEOUT_S * CLOCK_WRAP_UP_LEFT_PCT');
+  // No fallback of its own: a copy of 600 here would be the second source of truth the budgets
+  // file exists to avoid.
+  expect(extension).not.toContain('?? 600');
+  expect(extension).not.toContain('|| 600');
+  // The wrap-up has to name the budget that ran out, or the log cannot say which knob to turn.
+  expect(extension).toContain("reason: out_of_turns ? 'turns' : 'clock'");
+  expect(extension).toContain('seconds_left');
+  // The agent runs under `env -i` (base/lib.sh), so an extension that throws on a missing number
+  // fails the whole review — every variable `requiredInt` reads has to be passed explicitly.
+  const entrypoint = read('review/entrypoint.sh');
+  for (const name of ['GOBY_AGENT_TIMEOUT_S', 'GOBY_BASH_TIMEOUT_S', 'GOBY_MAX_TURNS', 'GOBY_MAX_TOOL_CALLS']) {
+    expect(extension).toContain(`requiredInt('${name}')`);
+    expect(entrypoint).toContain(`${name}="$`);
+  }
+});
+
+test('a provider failure costs one more attempt, never a retry loop', () => {
+  // pi spends its own retries inside a turn and then ends the run; the signal is the last assistant
+  // message's `stopReason`, which `summarize_run.py --status` exits 3 on — never the wording of the
+  // error, which is upstream text. Two attempts share one `GOBY_AGENT_TIMEOUT_S`, so a retry can
+  // never push the job past its timeout, and a deadline exit is not retried at all.
+  const text = read('review/entrypoint.sh');
+  expect(text).toContain('AGENT_ATTEMPTS=2');
+  expect(text).toContain('summarize_run.py --status');
+  expect(text).toContain('AGENT_MODEL_ERROR" -ne 3');
+  expect(text).toContain('AGENT_BUDGET="$AGENT_LEFT"');
+  expect(text).toContain('AGENT_LEFT=$((GOBY_AGENT_TIMEOUT_S - AGENT_SPENT))');
+  // The clock stays final: a run that spent the deadline reports it, it does not get another go.
+  expect(text).toContain('[[ "$AGENT_STATUS" -eq 124 || "$AGENT_STATUS" -eq 137 ]]; then break');
+  // And the harness still never reads the provider's prose to decide anything.
+  expect(text).not.toContain('temporarily unavailable');
+});
+
+test('the sandbox can install the test runner the prompt tells it to run', () => {
+  // `python3 -m pip` is what a reviewer types first, and an image without it reads as "nothing can
+  // be installed": www#2106 spent ten turns writing `pytest` stubs by hand instead of installing it.
+  const base = read('base/Dockerfile');
+  expect(base).toContain('python3-pip');
+  // Debian marks its Python externally managed and the agent is not root, which is two refusals for
+  // one install; this drops the first, and pip falls back to `~/.local` for the second.
+  expect(base).toContain('PIP_BREAK_SYSTEM_PACKAGES=1');
+});
+
 
 test('the reviewer\'s own code carries briefs, so a cleaner can debug the reviewer', () => {
   // Without an INVARIANTS.md a directory is invisible to the post-merge cleaner, which is how the

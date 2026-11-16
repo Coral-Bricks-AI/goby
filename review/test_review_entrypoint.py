@@ -181,7 +181,7 @@ def test_the_agent_has_a_wall_clock_and_it_is_pis_parent():
     generated script, not around `goby_run_as_agent`, so SIGTERM reaches the process that is
     actually spending the time rather than the `runuser` in front of it."""
     script = launch()
-    assert 'exec timeout --signal=TERM --kill-after=30 "$GOBY_AGENT_TIMEOUT_S"' in script
+    assert 'exec timeout --signal=TERM --kill-after=30 "$AGENT_BUDGET"' in script
     # Same line as `exec pi`: a `cd` before it is fine, a second process in between is not.
     assert script.index('exec timeout') < script.index('pi --mode json')
     assert 'timeout' not in after_agent(), "the deadline belongs on the agent, not on the reading"
