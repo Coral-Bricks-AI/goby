@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { days, renderSvg, type WakeBody } from '../src/wake/svg.ts';
+import { days, milestones, renderSvg, series, type WakeBody } from '../src/wake/svg.ts';
 import { options } from '../src/wake/main.ts';
 import type { IssueRecord, ReviewRecord } from '../src/wake/records.ts';
 
@@ -32,14 +32,55 @@ describe('the picture', () => {
     expect(svg).not.toContain('href=');
   });
 
+  test('a count series sums, so "acted on" is not a median of a flag', () => {
+    // The first version took the median of an outcome flag per day — 0 or 1 — and drew a flat line
+    // on the floor while 71 findings had been acted on. Counts sum; only measurements take a median.
+    const rows = [{ at: '2026-11-14T01:00:00Z', n: 1 }, { at: '2026-11-14T02:00:00Z', n: 1 },
+      { at: '2026-11-15T02:00:00Z', n: 1 }];
+    expect(series(body(), rows, r => r.at, r => r.n, 'count')).toEqual([2, 1, 0]);
+    expect(series(body(), rows.map(r => ({ ...r, n: 0.5 })), r => r.at, r => r.n, 'median'))
+      .toEqual([0.5, 0.5, null]);
+    // A measurement nobody took is null, not zero: the difference between "spent nothing" and
+    // "spend unknown".
+    expect(series(body(), rows, r => r.at, r => r.n, 'sum')).toEqual([2, 1, null]);
+  });
+
+  test('separates the products, because a merged line across them answers nothing', () => {
+    const svg = renderSvg(body({
+      issues: [issue(), issue({ number: 2, product: 'goby-tide', state: 'closed', state_reason: 'completed' })],
+    }));
+    for (const title of ['review', 'review resource', 'cleaners', 'tide', 'workflow runs']) {
+      expect(svg).toContain(`>${title}</text>`);
+    }
+    expect(svg).toContain('1 still open');
+    expect(svg).toContain('0 still open');
+  });
+
+  test('marks the day each version first appears, because that is the axis with a question on it', () => {
+    const svg = renderSvg(body({
+      reviews: [review({ pr: 1, at: '2026-11-14T10:00:00Z', v: '0.5.0' }),
+        review({ pr: 2, at: '2026-11-15T10:00:00Z', v: '0.5.1' }),
+        review({ pr: 3, at: '2026-11-16T10:00:00Z', v: '0.5.1' })],
+    }));
+    expect(milestones(body({ reviews: [] }))).toEqual([]);
+    const marks = milestones(body({
+      reviews: [review({ at: '2026-11-14T10:00:00Z', v: '0.5.0' }),
+        review({ at: '2026-11-16T10:00:00Z', v: '0.5.1' }),
+        review({ at: '2026-11-15T10:00:00Z', v: '0.5.1' })],
+    }));
+    expect(marks).toEqual([{ day: '2026-11-14', version: '0.5.0' }, { day: '2026-11-15', version: '0.5.1' }]);
+    expect(svg).toContain('stroke-dasharray="2 2"');
+    expect(svg).toContain('0.5.1</text>');
+  });
+
   test('never draws a measurement that is not there', () => {
     // A review with no run marker has no cost and no duration. Drawing a zero would be a number
     // nobody took, which is the one thing the records are careful about.
     const svg = renderSvg(body({ reviews: [review(), review({ pr: 2 })] }));
     expect(svg).not.toContain('NaN');
     expect(svg).not.toContain('undefined');
-    expect(svg).toContain('duration: none');
-    expect(svg).toContain('2 review(s) carry a run marker'.replace('2', '0'));
+    expect(svg).toContain('no review in this window carries a run marker');
+    expect(svg).toContain('no review in this window carries a run marker');
   });
 
   test('draws cost and duration once a run marker exists', () => {
@@ -47,8 +88,7 @@ describe('the picture', () => {
       run: { schema: 1, product: 'review', v: '0.5.0', complete: true, model: 'm', measured: true,
         agent_s: 120, cost: { cents: 4.5, usd: 0.045, note: null } },
     })] }));
-    expect(svg).toContain('1 review(s) carry a run marker');
-    expect(svg).toContain('median 2.0 min');
+    expect(svg).toContain('1 reviews carry a run marker');
   });
 
   test('an empty window renders rather than throwing', () => {

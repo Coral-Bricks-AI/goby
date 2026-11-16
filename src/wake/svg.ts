@@ -7,20 +7,26 @@
  * a one-off workflow can see what the records look like before deciding to store anything. It reads
  * the same object `wake` prints, so the picture and the JSON cannot disagree.
  *
- * What it draws is only what the records can carry honestly:
+ * Four panels, one per thing the records can answer, and each product drawn on its own because a
+ * merged line across products answers nothing: a cleaners run and a review are not the same event.
  *
- * - activity per day — reviews, and how many of those had findings;
- * - the outcome of those findings, which is the one number that is about quality rather than volume;
- * - for the reviews that carry a run marker, the money spent per day and the median time the agent
- *   took. The two go together on purpose: cost without duration is a quarter of a picture, and the
- *   days before the marker legitimately have neither, which is why the series can start mid-window.
- * - the issue backlog the two filing products left, split by what happened to each issue.
+ * - **review** — reviews per day, the findings they carried, and how many were acted on;
+ * - **review resource** — what those reviews cost and how long the agent took, from the runs that
+ *   carry a run marker. The two belong together: cost without duration is a quarter of a question,
+ *   and the days before the marker honestly have neither;
+ * - **cleaners** and **tide** — filings per day, with the backlog they left running underneath;
+ * - **runs** — every product's workflow runs, one strip per product, coloured by conclusion.
+ *
+ * Vertical lines mark the first day a new goby version appears in this repository's own records.
+ * That is not the tag's date — the records carry a version, and the tag is a label a consumer can
+ * join on — but it is the boundary the data itself shows, and it is the one that answers "did the
+ * newer goby get faster".
  *
  * No dependencies and no layout engine: a few hundred bytes of arithmetic over arrays, then a
  * string. Widths are fixed, because a picture whose size depends on its data is a picture that
  * shifts under a diff.
  */
-import type { IssueRecord, ReviewRecord } from './records.ts';
+import type { IssueRecord, ReviewRecord, RunRecord } from './records.ts';
 
 export interface WakeBody {
   repo: string;
@@ -31,15 +37,19 @@ export interface WakeBody {
   counts: Record<string, number>;
   reviews: ReviewRecord[];
   issues: IssueRecord[];
+  runs: RunRecord[];
   notes: string[];
 }
 
-const W = 360;
-const PAD = 40;
+const W = 700;
+const PAD = 52;
+const RIGHT = W - 128;
+const PANEL = 78;
 const esc = (value: unknown): string => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const dayOf = (iso: string): string => (iso ?? '').slice(0, 10);
+const round = (value: number): string => (Math.round(value * 10) / 10).toString();
 
-const day_of = (iso: string): string => (iso ?? '').slice(0, 10);
 const median = (values: number[]): number | null => {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -47,141 +57,262 @@ const median = (values: number[]): number | null => {
   return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 };
 
-/** Every day in the window, so a quiet day is a gap in the bars rather than a missing column. */
+/** Every day in the window, so a quiet day is an empty column rather than a missing one. */
 export function days(body: WakeBody): string[] {
   const out: string[] = [];
   const start = Date.parse(`${body.window.since.slice(0, 10)}T00:00:00Z`);
-  const end = Date.parse(`${day_of(body.generated_at)}T00:00:00Z`);
+  const end = Date.parse(`${dayOf(body.generated_at)}T00:00:00Z`);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
   // A window longer than a quarter is not a picture anybody reads at this width.
-  const first = Math.max(start, end - 92 * 86_400_000);
+  const first = Math.max(start, end - 91 * 86_400_000);
   for (let at = first; at <= end; at += 86_400_000) out.push(new Date(at).toISOString().slice(0, 10));
   return out;
 }
 
-/** Count, or the median of a numeric field, per day. `null` where the day has nothing to say. */
-function per_day<T>(body: WakeBody, rows: readonly T[], key: (row: T) => string,
-                    value?: (row: T) => number | null): (number | null)[] {
+/**
+ * `count` is a count of rows and is 0 on a quiet day — nothing happened, which is a fact. `sum` and
+ * `median` describe measurements and are null on a quiet day — nothing was observed, which is not
+ * the same thing and must not be drawn as a zero.
+ */
+export type Aggregation = 'count' | 'sum' | 'median';
+
+/**
+ * One series, aligned to the window's days.
+ *
+ * Counts aggregate as sums and only the measured values — cost, duration — take a median. Mixing
+ * the two was a real bug in the first version: a median over an outcome flag is 0 or 1, so "findings
+ * acted on" drew a flat line on the floor while 71 findings had in fact been acted on.
+ */
+export function series<T>(body: WakeBody, rows: readonly T[], key: (row: T) => string,
+                          value: (row: T) => number | null, how: Aggregation): (number | null)[] {
   const buckets = new Map<string, number[]>();
   for (const row of rows) {
-    const k = day_of(key(row));
-    const v = value ? value(row) : 1;
-    if (v === null || !Number.isFinite(v)) continue;
-    buckets.set(k, [...(buckets.get(k) ?? []), v]);
+    const found = value(row);
+    if (found === null || !Number.isFinite(found)) continue;
+    const day = dayOf(key(row));
+    buckets.set(day, [...(buckets.get(day) ?? []), found]);
   }
   return days(body).map(day => {
-    const values = buckets.get(day);
-    if (!values || !values.length) return value ? null : 0;
-    return value ? median(values) : values.length;
+    const found = buckets.get(day);
+    if (!found?.length) return how === 'count' ? 0 : null;
+    if (how === 'median') return median(found);
+    return found.reduce((total, n) => total + n, 0);
   });
 }
 
-interface Geometry { x0: number; x1: number; top: number; height: number }
+interface Geo { x0: number; x1: number; top: number; height: number }
 
-function bar_path(points: (number | null)[], geo: Geometry, peak: number, colour: string): string {
-  const usable = Math.max(1, points.length);
-  const step = (geo.x1 - geo.x0) / usable;
-  const width = Math.max(1.5, step * 0.62);
+function step(geo: Geo, count: number): number { return (geo.x1 - geo.x0) / Math.max(1, count); }
+
+function bars(points: (number | null)[], geo: Geo, peak: number, colour: string): string {
+  const width = Math.max(1, step(geo, points.length) * 0.6);
   return points.map((value, index) => {
     if (!value) return '';
     const height = peak <= 0 ? 0 : (geo.height * value) / peak;
-    const x = geo.x0 + step * index + (step - width) / 2;
-    return `<rect x="${x.toFixed(1)}" y="${(geo.top + geo.height - height).toFixed(1)}" ` +
-      `width="${width.toFixed(1)}" height="${height.toFixed(1)}" fill="${colour}"/>`;
+    return `<rect x="${(geo.x0 + step(geo, points.length) * index + (step(geo, points.length) - width) / 2).toFixed(1)}"` +
+      ` y="${(geo.top + geo.height - height).toFixed(1)}" width="${width.toFixed(1)}"` +
+      ` height="${height.toFixed(1)}" fill="${colour}"><title>${round(value)}</title></rect>`;
   }).join('');
 }
 
-function line_path(points: (number | null)[], geo: Geometry, peak: number, colour: string): string {
-  const usable = Math.max(1, points.length);
-  const step = (geo.x1 - geo.x0) / usable;
-  const at = points.map((value, index) => value === null ? null : [
-    geo.x0 + step * index + step / 2,
+function line(points: (number | null)[], geo: Geo, peak: number, colour: string, dashed = false): string {
+  const width = step(geo, points.length);
+  const at = points.flatMap((value, index) => value === null ? [] : [[
+    geo.x0 + width * index + width / 2,
     geo.top + geo.height - (peak <= 0 ? 0 : (geo.height * value) / peak),
-  ] as const).filter((p): p is readonly [number, number] => p !== null);
+  ] as const]);
   if (!at.length) return '';
   const path = at.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-  const dots = at.map(([x, y]) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="1.8" fill="${colour}"/>`).join('');
-  return `<path d="${path}" fill="none" stroke="${colour}" stroke-width="1.5"/>${dots}`;
+  return `<path d="${path}" fill="none" stroke="${colour}" stroke-width="${dashed ? 1 : 1.4}"` +
+    `${dashed ? ' stroke-dasharray="3 2"' : ''}/>` +
+    at.map(([x, y], i) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="1.5" fill="${colour}">` +
+      `<title>${round(points.filter(p => p !== null)[i] ?? 0)}</title></circle>`).join('');
+}
+
+/** Two gridlines and their numbers: enough to read a magnitude, few enough not to shout. */
+function yticks(geo: Geo, peak: number, format: (n: number) => string): string {
+  if (peak <= 0) return '';
+  return [0, 0.5, 1].map(fraction => {
+    const y = geo.top + geo.height - geo.height * fraction;
+    return `<line x1="${geo.x0}" y1="${y.toFixed(1)}" x2="${geo.x1}" y2="${y.toFixed(1)}"` +
+      ` stroke="${fraction === 0 ? '#c8d0d8' : '#eef1f5'}"/>` +
+      `<text x="${geo.x0 - 6}" y="${(y + 2.5).toFixed(1)}" font-size="6.5" fill="#888"` +
+      ` text-anchor="end">${esc(format(peak * fraction))}</text>`;
+  }).join('');
 }
 
 const legend = (x: number, y: number, items: [string, string][]): string => items
-  .map(([colour, label], i) => `<rect x="${x + i * 108}" y="${y - 5}" width="6" height="6" fill="${colour}"/>` +
-    `<text x="${x + i * 108 + 10}" y="${y}" font-size="7.5" fill="#555">${esc(label)}</text>`).join('');
+  .map(([colour, label], index) => `<rect x="${x + index * 130}" y="${y - 5}" width="6" height="6" fill="${colour}"/>` +
+    `<text x="${x + index * 130 + 9}" y="${y}" font-size="7" fill="#555">${esc(label)}</text>`).join('');
 
-const axis = (body: WakeBody, geo: Geometry): string => {
+function xaxis(body: WakeBody, geo: Geo): string {
   const labels = days(body);
-  if (!labels.length) return '';
-  const usable = Math.max(1, labels.length);
-  const step = (geo.x1 - geo.x0) / usable;
-  const every = Math.ceil(usable / 7); // about seven ticks, however long the window
+  const width = step(geo, labels.length);
+  const every = Math.max(1, Math.ceil(labels.length / 9));
   return labels.map((label, index) => index % every ? '' :
-    `<text x="${(geo.x0 + step * index + step / 2).toFixed(1)}" y="${geo.top + geo.height + 10}" ` +
-    `font-size="6.5" fill="#888" text-anchor="middle">${label.slice(5)}</text>`).join('');
-};
+    `<text x="${(geo.x0 + width * index + width / 2).toFixed(1)}" y="${geo.top + geo.height + 11}"` +
+    ` font-size="6.5" fill="#999" text-anchor="middle">${label.slice(5)}</text>`).join('');
+}
+
+/** The first day each goby version appears in this repository's own reviews, oldest first. */
+export function milestones(body: WakeBody): { day: string; version: string }[] {
+  const first = new Map<string, string>();
+  for (const review of body.reviews ?? []) {
+    if (!review.v || !review.at) continue;
+    const day = dayOf(review.at);
+    if (!first.has(review.v) || day < first.get(review.v)!) first.set(review.v, day);
+  }
+  return [...first.entries()].map(([version, day]) => ({ day, version }))
+    .sort((a, b) => a.day.localeCompare(b.day) || a.version.localeCompare(b.version));
+}
+
+function milestone_lines(body: WakeBody, geo: Geo, label: boolean): string {
+  const days_ = days(body);
+  return milestones(body).map(({ day, version }) => {
+    const index = days_.indexOf(day);
+    if (index < 0) return '';
+    const x = geo.x0 + step(geo, days_.length) * index;
+    return `<line x1="${x.toFixed(1)}" y1="${geo.top}" x2="${x.toFixed(1)}" y2="${geo.top + geo.height}"` +
+      ` stroke="#b0b8c4" stroke-dasharray="2 2"/>` +
+      (label ? `<text x="${(x + 2).toFixed(1)}" y="${geo.top - 3}" font-size="6.5" fill="#8a94a6">` +
+        `${esc(version)}</text>` : '');
+  }).join('');
+}
 
 export function renderSvg(body: WakeBody): string {
   const reviews = body.reviews ?? [];
   const issues = body.issues ?? [];
-  const marked = reviews.filter(review => review.run && review.run.measured !== false);
+  const runs = body.runs ?? [];
+  const marked = reviews.filter(review => review.run);
+  const findings = reviews.flatMap(review =>
+    review.findings.map(finding => ({ at: review.at, ...finding })));
 
-  const reviewsPerDay = per_day(body, reviews, review => review.at);
-  const findingsPerDay = per_day(body, reviews.flatMap(review =>
-    review.findings.map(finding => ({ at: review.at, outcome: finding.outcome }))),
-  row => row.at, row => (row.outcome === 'acted_on' ? 1 : 0));
-  // Cost and duration exist only where a run marker does: they are the two numbers that begin at a
-  // release, and drawing a zero before that would claim a measurement nobody took.
-  const centsPerDay = per_day(body, marked, review => review.at,
-    review => Number((review.run?.cost as { cents?: unknown } | undefined)?.cents ?? NaN));
-  const secondsPerDay = per_day(body, marked, review => review.at,
-    review => Number(review.run?.agent_s ?? NaN));
+  const reviewsPerDay = series(body, reviews, review => review.at, () => 1, 'count');
+  const findingsPerDay = series(body, findings, finding => finding.at, () => 1, 'count');
+  const actedPerDay = series(body, findings.filter(finding => finding.outcome === 'acted_on'),
+    finding => finding.at, () => 1, 'count');
+  const centsPerDay = series(body, marked, review => review.at,
+    review => Number((review.run?.cost as { cents?: unknown } | undefined)?.cents ?? NaN), 'sum');
+  const secondsPerDay = series(body, marked, review => review.at,
+    review => Number(review.run?.agent_s ?? NaN), 'median');
 
-  const states = [
-    ['open', 'still open', '#8ab4f8'],
-    ['completed', 'closed as fixed', '#8fd18f'],
-    ['not_planned', 'closed as not planned', '#e8a2a2'],
-  ] as const;
-  const issueCounts = states.map(([reason]) => issues.filter(issue => reason === 'open'
-    ? issue.state === 'open' : issue.state_reason === reason).length);
+  const product = (name: string) => issues.filter(issue => issue.product.includes(name));
+  const cleaners = product('cleaners');
+  const tide = product('tide');
 
-  const activity: Geometry = { x0: PAD, x1: W - PAD, top: 46, height: 86 };
-  const money: Geometry = { x0: PAD, x1: W - PAD, top: 176, height: 86 };
-  const peakReviews = Math.max(1, ...reviewsPerDay.map(v => v ?? 0), ...findingsPerDay.map(v => v ?? 0));
-  const peakCents = Math.max(0.01, ...centsPerDay.map(v => v ?? 0));
-  const peakSeconds = Math.max(1, ...secondsPerDay.map(v => v ?? 0));
+  /** Issues still open on a given day: filed before it, and not closed before it. */
+  const backlog = (rows: IssueRecord[]): (number | null)[] => days(body).map(day => {
+    const open = rows.filter(issue => dayOf(issue.created_at) <= day &&
+      (!issue.closed_at || dayOf(issue.closed_at) > day)).length;
+    return rows.length ? open : null;
+  });
+  const filings = (rows: IssueRecord[]) => series(body, rows, issue => issue.created_at, () => 1, 'count');
 
-  const totalIssues = issueCounts.reduce((sum, n) => sum + n, 0) || 1;
-  let x = PAD;
-  const backlog = states.map(([, , colour], index) => {
-    const width = ((W - 2 * PAD) * issueCounts[index]!) / totalIssues;
-    const rect = issueCounts[index] ? `<rect x="${x.toFixed(1)}" y="318" width="${width.toFixed(1)}" height="10" fill="${colour}"/>` : '';
-    x += width;
-    return rect;
+  const conclusions = ['success', 'failure', 'cancelled', 'skipped'];
+  const runRow = (name: string) => {
+    const rows = runs.filter(run => run.product === name);
+    return conclusions.map(conclusion => ({
+      conclusion,
+      points: series(body, rows.filter(run => String(run.conclusion) === conclusion),
+        run => run.created_at, () => 1, 'count'),
+    }));
+  };
+
+  const panels: {
+    title: string; note: string; legend: [string, string][];
+    draw: (geo: Geo) => string;
+  }[] = [
+    {
+      title: 'review', note: `${reviews.length} reviews, ${findings.length} findings` +
+        ` · ${findings.filter(f => f.outcome === 'acted_on').length} acted on`,
+      legend: [['#cfd8e3', 'reviews'], ['#94a3b8', 'findings'], ['#166534', 'acted on']],
+      draw: geo => {
+        const peak = Math.max(1, ...reviewsPerDay.map(v => v ?? 0), ...findingsPerDay.map(v => v ?? 0));
+        return yticks(geo, peak, n => String(Math.round(n))) + bars(reviewsPerDay, geo, peak, '#cfd8e3') +
+          line(findingsPerDay, geo, peak, '#94a3b8') + line(actedPerDay, geo, peak, '#166534');
+      },
+    },
+    {
+      title: 'review resource', note: marked.length
+        ? `${marked.length} reviews carry a run marker`
+        : 'no review in this window carries a run marker',
+      legend: [['#e5c79b', 'cents/day'], ['#b45309', 'median minutes/day']],
+      draw: geo => {
+        const cents = Math.max(0.01, ...centsPerDay.map(v => v ?? 0));
+        const seconds = Math.max(1, ...secondsPerDay.map(v => v ?? 0));
+        return yticks(geo, cents, n => `$${(n / 100).toFixed(2)}`) +
+          bars(centsPerDay, geo, cents, '#e5c79b') +
+          line(secondsPerDay, geo, seconds, '#b45309', true);
+      },
+    },
+  ];
+
+  const issuePanels = ([['cleaners', cleaners], ['tide', tide]] as const).map(([name, rows]) => ({
+    title: name,
+    note: `${rows.length} issues · ${rows.filter(issue => issue.state === 'open').length} still open`,
+    legend: [['#8ab4f8', 'filed'], ['#7c3aed', 'open backlog']] as [string, string][],
+    draw: (geo: Geo) => {
+      const filed = filings(rows);
+      const peak = Math.max(1, ...filed.map(v => v ?? 0), ...backlog(rows).map(v => v ?? 0));
+      return yticks(geo, peak, n => String(Math.round(n))) + bars(filed, geo, peak, '#8ab4f8') +
+        line(backlog(rows), geo, peak, '#7c3aed');
+    },
+  }));
+
+  const runPanel = {
+    title: 'workflow runs',
+    note: `${runs.length} runs`,
+    legend: [['#166534', 'success'], ['#b91c1c', 'not']] as [string, string][],
+    draw: (geo: Geo) => {
+      const names = ['review', 'cleaners', 'tide', 'wake'];
+      const rowHeight = geo.height / names.length;
+      return names.map((name, row) => {
+        const rows = runRow(name);
+        const peak = Math.max(1, ...rows.flatMap(series => series.points.map(v => v ?? 0)));
+        const top = geo.top + rowHeight * row;
+        const inner = { ...geo, top, height: rowHeight - 3 };
+        const ok = rows.find(series => series.conclusion === 'success')!.points;
+        const bad = rows.filter(series => series.conclusion !== 'success')
+          .reduce<number[]>((acc, series) => acc.map((n, i) => n + (series.points[i] ?? 0)),
+            ok.map(() => 0));
+        return `<text x="${geo.x0 - 6}" y="${(top + rowHeight / 2).toFixed(1)}" font-size="6" fill="#888"` +
+          ` text-anchor="end">${esc(name)}</text>` +
+          bars(ok, inner, peak, '#166534') + bars(bad, inner, peak, '#b91c1c');
+      }).join('');
+    },
+  };
+
+  const all = [...panels, ...issuePanels, runPanel];
+  const header = 44;
+  const height = header + all.length * (PANEL + 26) + 26;
+  let top = header;
+  const drawn = all.map(panel => {
+    const geo: Geo = { x0: PAD, x1: RIGHT, top: top + 12, height: PANEL };
+    const block = `<text x="${PAD}" y="${top}" font-size="8.5" font-weight="600" fill="#334155">` +
+      `${esc(panel.title)}</text>` +
+      `<text x="${RIGHT}" y="${top}" font-size="7" fill="#94a3b8" text-anchor="end">${esc(panel.note)}</text>` +
+      legend(PAD, top + 11, panel.legend) +
+      milestone_lines(body, geo, true) + panel.draw(geo) + xaxis(body, geo);
+    top += PANEL + 26;
+    return block;
   }).join('');
 
-  const seconds = median(secondsPerDay.filter((v): v is number => v !== null));
-  const notes = (body.notes ?? []).length
+  const note = (body.notes ?? []).length
     ? `incomplete: ${body.notes.length} note(s) — see notes[] in the JSON`
     : 'complete window';
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="372" font-family="ui-sans-serif,system-ui,-apple-system,sans-serif">
-<rect width="${W}" height="372" fill="#ffffff"/>
-<text x="${PAD}" y="20" font-size="11" font-weight="600" fill="#111">goby wake — ${esc(body.repo)}</text>
-<text x="${PAD}" y="32" font-size="7.5" fill="#777">${esc(body.window.since.slice(0, 10))} → ${esc(day_of(body.generated_at))} · ${reviews.length} reviews · ${issues.length} issues · v${esc(body.v ?? 'unknown')}</text>
-<text x="${PAD}" y="${activity.top - 8}" font-size="7.5" fill="#555">reviews per day, and findings that were acted on</text>
-${legend(PAD, activity.top + 4, [['#cfd8e3', 'reviews'], ['#166534', 'findings acted on']])}
-${bar_path(reviewsPerDay, activity, peakReviews, '#cfd8e3')}
-${line_path(findingsPerDay, activity, peakReviews, '#166534')}
-${axis(body, activity)}
-<text x="${PAD}" y="${money.top - 8}" font-size="7.5" fill="#555">spend per day (cents) and median minutes per review — ${marked.length} review(s) carry a run marker</text>
-${legend(PAD, money.top + 4, [['#e5c79b', 'cents'], ['#b45309', seconds === null ? 'duration: none' : `median ${(seconds / 60).toFixed(1)} min`]])}
-<line x1="${PAD}" y1="${money.top + money.height}" x2="${W - PAD}" y2="${money.top + money.height}" stroke="#eef1f5"/>
-${bar_path(centsPerDay, money, peakCents, '#e5c79b')}
-${line_path(secondsPerDay.map(v => v === null ? null : v), money, peakSeconds, '#b45309')}
-${axis(body, money)}
-<text x="${PAD}" y="306" font-size="7.5" fill="#555">the filing products' backlog</text>
-${backlog}
-${states.map(([, label, colour], index) => `<text x="${PAD + index * 108}" y="342" font-size="7" fill="#555"><tspan fill="${colour}">■</tspan> ${issueCounts[index]} ${esc(label)}</text>`).join('')}
-<text x="${PAD}" y="360" font-size="6.5" fill="#999">${esc(notes)} · written ${esc(body.generated_at)} — nothing here is stored</text>
-</svg>
-`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${height}"` +
+    ` font-family="ui-sans-serif,system-ui,-apple-system,sans-serif">` +
+    `<rect width="${W}" height="${height}" fill="#ffffff"/>` +
+    `<text x="${PAD}" y="22" font-size="12" font-weight="600" fill="#0f172a">` +
+    `goby wake — ${esc(body.repo)}</text>` +
+    `<text x="${PAD}" y="35" font-size="7.5" fill="#94a3b8">` +
+    `${esc(dayOf(body.window.since))} → ${esc(dayOf(body.generated_at))} · ${esc(body.window.days)} days` +
+    ` · v${esc(body.v ?? 'unknown')} · ${reviews.length} reviews · ${issues.length} issues` +
+    ` · ${runs.length} runs</text>` +
+    drawn +
+    `<text x="${PAD}" y="${height - 10}" font-size="6.5" fill="#b0b8c4">` +
+    `${esc(note)} · dashed lines: first day a goby version appears in this repository's reviews` +
+    ` · written ${esc(body.generated_at)}, nothing here is stored</text>` +
+    '</svg>\n';
 }
