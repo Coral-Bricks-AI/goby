@@ -54,6 +54,7 @@ const esc = (value: unknown): string => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const dayOf = (iso: string): string => (iso ?? '').slice(0, 10);
 const round = (value: number): string => (Math.round(value * 10) / 10).toString();
+const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
 const median = (values: number[]): number | null => {
   if (!values.length) return null;
@@ -229,6 +230,15 @@ export function renderSvg(body: WakeBody): string {
   const runs = body.runs ?? [];
   const marked = reviews.filter(review => review.run);
   const findings = reviews.flatMap(review => review.findings.map(finding => ({ at: review.at, ...finding })));
+  /**
+   * The rows the chart actually draws. `days()` clamps a long window to the last 91 days, so a
+   * 180-day request has reviews and findings the panels never show. Every count in the note is
+   * about the drawn rows — subtracting the drawn "with findings" from the *undrawn* total is how
+   * the note once claimed a review found nothing when it had found something.
+   */
+  const drawn = new Set(days(body));
+  const drawnFindings = findings.filter(finding => drawn.has(dayOf(finding.at)));
+  const clamped = drawn.size < body.window.days;
 
   const quietPerDay = series(body, reviews.filter(review => !review.findings.length),
     review => review.at, () => 1, 'count');
@@ -243,12 +253,13 @@ export function renderSvg(body: WakeBody): string {
    * them, and a flat line at zero was exactly the bug the first version shipped.
    */
   const pctActedPerDay = days(body).map(day => {
-    const today = findings.filter(finding => dayOf(finding.at) === day);
+    const today = drawnFindings.filter(finding => dayOf(finding.at) === day);
     if (!today.length) return null;
     return (100 * today.filter(finding => finding.outcome === 'acted_on').length) / today.length;
   });
-  const overallPct = findings.length
-    ? Math.round((100 * findings.filter(f => f.outcome === 'acted_on').length) / findings.length)
+  const quiet = quietPerDay.reduce<number>((total, n) => total + (n ?? 0), 0);
+  const overallPct = drawnFindings.length
+    ? Math.round((100 * drawnFindings.filter(f => f.outcome === 'acted_on').length) / drawnFindings.length)
     : null;
   const centsPerDay = series(body, marked, review => review.at,
     review => Number((review.run?.cost as { cents?: unknown } | undefined)?.cents ?? NaN), 'sum');
@@ -274,9 +285,8 @@ export function renderSvg(body: WakeBody): string {
   const panels: Panel[] = [
     {
       title: 'review',
-      note: `${reviews.length} reviews · ` +
-        `${reviews.length - noisyPerDay.reduce<number>((n, v) => n + (v ?? 0), 0)} found nothing · ` +
-        `${findings.length} findings · ` +
+      note: `${plural(quiet + noisyPerDay.reduce<number>((n, v) => n + (v ?? 0), 0), 'review')} · ` +
+        `${quiet} found nothing · ${plural(drawnFindings.length, 'finding')} · ` +
         (overallPct === null ? 'none acted on' : `${overallPct}% acted on`),
       legend: [['#cfd8e3', 'reviews, no findings'], ['#8fa3bd', 'reviews with findings'],
         ['#166534', '% of findings acted on (right)']],
@@ -307,7 +317,7 @@ export function renderSvg(body: WakeBody): string {
 
   const filingPanels: Panel[] = ([['cleaners', cleaners], ['tide', tide]] as const).map(([name, rows]) => ({
     title: name,
-    note: `${rows.length} issues · ${rows.filter(issue => issue.state === 'open').length} still open`,
+    note: `${plural(rows.length, 'issue')} · ${rows.filter(issue => issue.state === 'open').length} still open`,
     legend: [['#8ab4f8', 'filed per day'], ['#7c3aed', 'open backlog']] as [string, string][],
     draw: (geo: Geo) => {
       const filed = filings(rows);
@@ -331,7 +341,7 @@ export function renderSvg(body: WakeBody): string {
   const FAILED = ['failure', 'timed_out', 'startup_failure', 'action_required'];
   const runsPanel: Panel = {
     title: 'workflow runs',
-    note: `${runs.length} runs · ` +
+    note: `${plural(runs.length, 'run')} · ` +
       `${runs.filter(run => FAILED.includes(String(run.conclusion))).length} failed`,
     legend: [['#166534', 'succeeded'], ['#b91c1c', 'failed'],
       ['#d97706', 'cancelled'], ['#eef1f5', 'did not run']],
@@ -376,7 +386,7 @@ export function renderSvg(body: WakeBody): string {
     x0: PAD, x1: RIGHT, top: header + index * perPanel + TITLE, height: PLOT,
   }));
 
-  const drawn = all.map((panel, index) => {
+  const blocks = all.map((panel, index) => {
     const geo = geos[index]!;
     const title_y = geo.top - 12;
     return `<text x="${PAD}" y="${title_y}" font-size="9.5" font-weight="600" fill="#334155">` +
@@ -396,9 +406,10 @@ export function renderSvg(body: WakeBody): string {
     `<text x="${PAD}" y="24" font-size="12.5" font-weight="600" fill="#0f172a">goby wake — ${esc(body.repo)}</text>` +
     `<text x="${PAD}" y="38" font-size="8.5" fill="#94a3b8">` +
     `${esc(dayOf(body.window.since))} → ${esc(dayOf(body.generated_at))} · ${esc(body.window.days)} days` +
-    ` · v${esc(body.v ?? 'unknown')} · ${reviews.length} reviews · ${issues.length} issues · ${runs.length} runs</text>` +
+    ` · v${esc(body.v ?? 'unknown')} · ${reviews.length} reviews · ${issues.length} issues · ${runs.length} runs` +
+    (clamped ? ` · showing the last ${drawn.size} of ${body.window.days} days</text>` : '</text>') +
     milestone_marks(body, geos, 52) +
-    drawn + xaxis(body, geos.at(-1)!) +
+    blocks + xaxis(body, geos.at(-1)!) +
     `<text x="${PAD}" y="${height - 10}" font-size="7.5" fill="#b0b8c4">` +
     `${esc(note)} · dashed lines: first day a goby version appears in this repository's reviews` +
     ` · written ${esc(body.generated_at)}, nothing here is stored</text>` +
