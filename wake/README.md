@@ -40,7 +40,9 @@ blob keeps working as goby grows.
         uses: actions/upload-artifact@v4     # or an HTTP POST, or your own uploader
         with:
           name: goby-wake
-          path: /tmp/wake.json
+          path: |
+            /tmp/wake.json
+            /tmp/wake.svg
 ```
 
 Everything else — the fields, the outcome rules, the image — arrives through `:latest`.
@@ -72,6 +74,22 @@ nothing reads stdout, the records are gone when the job ends.
 Three things in the output say whether what you received is complete: `notes` (empty means the
 window is the whole window), `threads_complete` per review, and the exit code — a failed read exits
 non-zero, so a `Ship it` step after it does not run.
+
+## A picture, if you want one
+
+```
+wake --repo owner/name --days 30 --svg /tmp/wake.svg
+```
+
+Writes one self-contained SVG — activity per day, findings acted on, spend and median duration for
+the days that carry a run marker, and the filing products' backlog — and nothing else changes: the
+JSON still goes to stdout, and this is the only file the reader ever writes, on request, in a path
+you name. It exists so somebody can look at a window before deciding to build a view, and it lives
+exactly as long as the container does.
+
+It will not draw what it does not have. Cost and duration begin at the release that added the run
+marker, so a window reaching further back shows those two series starting part-way — which is the
+truth, and the reason they are not padded with zeros.
 
 ## What it reads
 

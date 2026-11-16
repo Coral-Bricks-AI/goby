@@ -11,9 +11,11 @@
  * Inputs come from flags or from the environment the workflow already sets, so a step can be one
  * line: `run: /opt/wake/wake.js`.
  */
+import { writeFile } from 'node:fs/promises';
 import { GitHubClient } from '../platforms/github.ts';
 import { collect, type Window } from './collect.ts';
 import { HINTS } from './records.ts';
+import { renderSvg } from './svg.ts';
 import { gobyVersion } from './version.ts';
 
 interface Options {
@@ -21,6 +23,14 @@ interface Options {
   days: number;
   limit: number;
   pretty: boolean;
+  /**
+   * Where to write a picture of the window, if anywhere.
+   *
+   * Off by default: the JSON on stdout is the product, and a reader that writes files unasked is a
+   * reader you cannot run twice. When asked, the file is the only thing this ever writes and it
+   * lives exactly as long as the container does.
+   */
+  svg: string | null;
 }
 
 function flag(argv: readonly string[], name: string): string | undefined {
@@ -36,6 +46,16 @@ function positive(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+/** `--svg <path>`, or `GOBY_WAKE_SVG`. A bare `--svg` is a mistake worth naming, not a default. */
+function svgPath(argv: readonly string[], env: NodeJS.ProcessEnv): string | null {
+  const value = flag(argv, 'svg') ?? env.GOBY_WAKE_SVG;
+  if (value === undefined || value === '') {
+    if (argv.includes('--svg')) throw new Error('--svg needs a path, e.g. --svg /tmp/wake.svg');
+    return null;
+  }
+  return value;
+}
+
 export function options(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Options {
   const repo = flag(argv, 'repo') ?? env.GITHUB_REPOSITORY ?? '';
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) {
@@ -46,6 +66,7 @@ export function options(argv: readonly string[], env: NodeJS.ProcessEnv = proces
     days: positive(flag(argv, 'days') ?? env.GOBY_WAKE_DAYS, 30),
     limit: positive(flag(argv, 'limit') ?? env.GOBY_WAKE_LIMIT, 500),
     pretty: argv.includes('--pretty'),
+    svg: svgPath(argv, env),
   };
 }
 
@@ -92,5 +113,10 @@ export async function main(argv: readonly string[], env: NodeJS.ProcessEnv = pro
     notes: collected.notes,
   };
   process.stdout.write(JSON.stringify(body, null, opts.pretty ? 2 : 0) + '\n');
+  if (opts.svg) {
+    // stderr, so stdout stays exactly one JSON object for whatever is parsing it.
+    await writeFile(opts.svg, renderSvg(body));
+    process.stderr.write(`wake: wrote ${opts.svg}\n`);
+  }
   return 0;
 }
