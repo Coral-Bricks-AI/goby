@@ -114,6 +114,28 @@ function bars(points: (number | null)[], geo: Geo, peak: number, colour: string)
   }).join('');
 }
 
+function stacked(lower: (number | null)[], upper: (number | null)[], geo: Geo, peak: number,
+                 below: string, above: string): string {
+  const width = step(geo, lower.length);
+  const bar = Math.max(1, width * 0.6);
+  return lower.map((value, index) => {
+    const bottom = value ?? 0;
+    const top = Math.max(0, (upper[index] ?? 0));
+    const heightOf = (n: number): number => (peak <= 0 ? 0 : (geo.height * n) / peak);
+    const base = geo.top + geo.height;
+    const first = heightOf(bottom);
+    const second = heightOf(top);
+    const x = (geo.x0 + width * index + (width - bar) / 2).toFixed(1);
+    const drawn = [
+      bottom ? `<rect x="${x}" y="${(base - first).toFixed(1)}" width="${bar.toFixed(1)}"` +
+        ` height="${first.toFixed(1)}" fill="${below}"><title>${round(bottom)} without findings</title></rect>` : '',
+      top ? `<rect x="${x}" y="${(base - first - second).toFixed(1)}" width="${bar.toFixed(1)}"` +
+        ` height="${second.toFixed(1)}" fill="${above}"><title>${round(top)} with findings</title></rect>` : '',
+    ].join('');
+    return drawn;
+  }).join('');
+}
+
 function line(points: (number | null)[], geo: Geo, peak: number, colour: string, dashed = false): string {
   const width = step(geo, points.length);
   const at = points.flatMap((value, index) => value === null ? [] : [[
@@ -208,10 +230,26 @@ export function renderSvg(body: WakeBody): string {
   const marked = reviews.filter(review => review.run);
   const findings = reviews.flatMap(review => review.findings.map(finding => ({ at: review.at, ...finding })));
 
-  const reviewsPerDay = series(body, reviews, review => review.at, () => 1, 'count');
-  const findingsPerDay = series(body, findings, finding => finding.at, () => 1, 'count');
-  const actedPerDay = series(body, findings.filter(finding => finding.outcome === 'acted_on'),
-    finding => finding.at, () => 1, 'count');
+  const quietPerDay = series(body, reviews.filter(review => !review.findings.length),
+    review => review.at, () => 1, 'count');
+  const noisyPerDay = series(body, reviews.filter(review => review.findings.length),
+    review => review.at, () => 1, 'count');
+  const reviewsPerDay = quietPerDay.map((n, i) => (n ?? 0) + (noisyPerDay[i] ?? 0));
+  /**
+   * The share of a day's findings that were acted on, as a percentage.
+   *
+   * Not a count, and not a median of a flag: a day with four findings of which three were acted on
+   * is 75%. A day with no findings is null rather than 0% — no findings is not a failure to act on
+   * them, and a flat line at zero was exactly the bug the first version shipped.
+   */
+  const pctActedPerDay = days(body).map(day => {
+    const today = findings.filter(finding => dayOf(finding.at) === day);
+    if (!today.length) return null;
+    return (100 * today.filter(finding => finding.outcome === 'acted_on').length) / today.length;
+  });
+  const overallPct = findings.length
+    ? Math.round((100 * findings.filter(f => f.outcome === 'acted_on').length) / findings.length)
+    : null;
   const centsPerDay = series(body, marked, review => review.at,
     review => Number((review.run?.cost as { cents?: unknown } | undefined)?.cents ?? NaN), 'sum');
   const secondsPerDay = series(body, marked, review => review.at,
@@ -236,14 +274,18 @@ export function renderSvg(body: WakeBody): string {
   const panels: Panel[] = [
     {
       title: 'review',
-      note: `${reviews.length} reviews · ${findings.length} findings · ` +
-        `${findings.filter(f => f.outcome === 'acted_on').length} acted on`,
-      legend: [['#cfd8e3', 'reviews per day'], ['#94a3b8', 'findings'], ['#166534', 'acted on']],
+      note: `${reviews.length} reviews · ` +
+        `${reviews.length - noisyPerDay.reduce<number>((n, v) => n + (v ?? 0), 0)} found nothing · ` +
+        `${findings.length} findings · ` +
+        (overallPct === null ? 'none acted on' : `${overallPct}% acted on`),
+      legend: [['#cfd8e3', 'reviews, no findings'], ['#8fa3bd', 'reviews with findings'],
+        ['#166534', '% of findings acted on (right)']],
       draw: geo => {
-        const peak = Math.max(1, ...reviewsPerDay.map(v => v ?? 0), ...findingsPerDay.map(v => v ?? 0));
-        return yticks(geo, peak, count) + bars(reviewsPerDay, geo, peak, '#cfd8e3') +
-          line(findingsPerDay, geo, peak, '#94a3b8') + line(actedPerDay, geo, peak, '#166534');
+        const peak = Math.max(1, ...reviewsPerDay.map(v => v ?? 0));
+        return yticks(geo, peak, count) + stacked(quietPerDay, noisyPerDay, geo, peak, '#cfd8e3', '#8fa3bd');
       },
+      extra: geo => yticks(geo, 100, n => `${Math.round(n)}%`, 'right', '#166534') +
+        line(pctActedPerDay, geo, 100, '#166534', true),
     },
     {
       title: 'review resource',
