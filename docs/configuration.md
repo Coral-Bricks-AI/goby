@@ -98,9 +98,9 @@ for that repository.
 | variable | meaning |
 |---|---|
 | `GOBY_MAX_ROUNDS` | reviews per pull request; a later push reuses the first one and says so in the status. Incompatible with requiring the gate: a push after the only review has no receipt to gate, so the gate is not recomputed for it |
-| `GOBY_MAX_TURNS` | model turns one review may take; pi has no cap, so the emit extension counts `turn_start` and gives the reviewer budget notices at 10, 5 and 2 turns left |
+| `GOBY_MAX_TURNS` | model turns one review may take; pi has no cap, so the emit extension counts `turn_start` and gives the reviewer budget notices at 10, 5 and 2 turns left, plus one guaranteed wrap-up turn at the cap |
 | `GOBY_MAX_TOOL_CALLS` | tool calls, the backstop when a single turn does a lot of work |
-| `GOBY_AGENT_TIMEOUT_S` | wall clock for the agent, enforced by `timeout` as pi's parent; a turn budget is not a clock, and without this a slow provider window reaches the job timeout with the review unfinished and its statuses pending |
+| `GOBY_AGENT_TIMEOUT_S` | wall clock for the agent, enforced by `timeout` as pi's parent; a turn budget is not a clock, and without this a slow provider window reaches the job timeout with the review unfinished and its statuses pending. The same extension nudges on this clock too — a notice with 20% left and the wrap-up turn with 10% — because the clock is what actually ends a run: 600s is roughly 28k output tokens of thinking at the measured rate, so a hard diff can reach it with turns to spare. A model error that ends the run earns one more attempt from what is left of it, and none if under a fifth remains |
 | `GOBY_BASH_TIMEOUT_S` | wall clock for one shell command; a command with none can run until the job timeout |
 | `GOBY_MAX_DIFF_LINES` | larger diffs are skipped: the review says so and the gate fails closed |
 | `GOBY_MAX_FINDINGS` | findings posted, highest severity first; the rest are counted in the summary |
@@ -120,13 +120,17 @@ for that repository.
 
 ## Repositories that need more than the default image
 
-The reviewer image carries node, python3, git, jq and ripgrep: what the harness itself runs, plus
-the tools a reviewer reaches for on almost every diff. Everything else it installs for itself — the
-sandbox has a shell and there is no egress filtering, so a repo whose tests need bun or git-lfs gets
-them at review time. A project that would rather not pay that install on every review, or whose
-tests need Go, Rust or a system library, should build its own image `FROM goby-base`, add the
-toolchain, and point the workflow at its digest. That also pre-bakes dependencies: the job can
-install packages, but a warm image is faster than an install on every review.
+The reviewer image carries node, python3 (with its pip), git, jq and ripgrep: what the harness itself
+runs, plus the tools a reviewer reaches for on almost every diff. The pip matters because the prompt
+asks the reviewer to run the project's tests and Debian marks its Python externally managed: the
+image sets `PIP_BREAK_SYSTEM_PACKAGES`, and since nothing runs as root a `pip install pytest` lands
+in `~/.local` and works — the cheap case, before anyone reaches for their own image. Everything else
+it installs for itself: the sandbox has a shell and there is no egress filtering, so a repo whose
+tests need bun or git-lfs gets them at review time. A project that would rather not pay that install
+on every review, or whose tests need Go, Rust or a system library, should build its own image
+`FROM goby-base`, add the toolchain, and point the workflow at its digest. That also pre-bakes
+dependencies: the job can install packages, but a warm image is faster than an install on every
+review.
 
 ## Where a review's time goes
 
@@ -166,10 +170,11 @@ timing agent=118s model=77s requests=43 p50=1.3s p95=2.9s max=6.1s (turn 12: 890
 - `timeouts` counts shell commands killed at `GOBY_BASH_TIMEOUT_S`. A review that spent a minute at
   that wall clock is a review whose probe was cut off, which reads very differently from one that
   thought for a minute.
-- `notices` is how many budget nudges the reviewer was given (at 10, 5 and 2 turns left), and
-  `blocked` names the cap that cut it off, if one did. Both come from the records the emit
-  extension leaves beside the findings, because the conversation a nudge is injected into is not
-  kept — without them, whether a nudge fired is unknowable after the container exits.
+- `notices` is how many budget nudges the reviewer was given (at 10, 5 and 2 turns left, or with
+  20% of `GOBY_AGENT_TIMEOUT_S` left), and `blocked` names the budget that cut it off — `turns`,
+  `tool_calls`, or `clock` — if one did. Both come from the records the emit extension leaves beside
+  the findings, because the conversation a nudge is injected into is not kept — without them,
+  whether a nudge fired is unknowable after the container exits.
 - `tokens` is the whole run's spend, in the four classes the provider reports. Cache-read against
   input is the interesting pair: a turn that re-reads the context is the slow kind.
 - `reasoning` and `answer` split `out` with **no approximation**: `usage.reasoning` is the

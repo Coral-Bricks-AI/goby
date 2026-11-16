@@ -3,7 +3,11 @@
 
 # review (the harness)
 
-1. A review that cannot run says so, and never posts a green status. A missing key, an unreachable
+1. A review that cannot run says so, and never posts a green status. A provider failure is not a
+   verdict: the agent gets one more attempt, decided by the last assistant message's `stopReason`
+   (`summarize_run.py --status` exits 3) and never by the wording of the error, which is upstream
+   text. Two attempts share one `GOBY_AGENT_TIMEOUT_S`, so a retry cannot outlive the job timeout,
+   and a run that spent the deadline is final. A missing key, an unreachable
    proxy, a clone that failed, an agent that exited without calling `report_findings` — each one
    resolves the review status (and the gate status when the gate is on) and exits non-zero. A
    pending status left behind blocks a pull request with nothing to read. A SIGTERM from the runner
@@ -19,7 +23,10 @@
    minutes and the runner killed the job, so `GOBY_AGENT_TIMEOUT_S` wraps pi in `timeout` and has to
    sit under the workflow's `timeout-minutes`, firing first and leaving the publish time to spare.
    The numbers live in `review/defaults.env`, so a change there reaches every consumer through the
-   image; a workflow only overrides one.
+   image; a workflow only overrides one. The clock needs its own nudge, because the cap cannot warn
+   a run out of time: `timeout` is pi's parent and nothing inside the run can see it coming, so the
+   emit extension reads the same number and warns at 20% left, then asks for the wrap-up turn at
+   10%. A run that spends the clock with turns to spare is the case both of these exist for.
 4. The diff the reviewer reads is `merge-base..head` for the commits GitHub names, not `base..head`.
    A base branch that moved on would otherwise appear as reversed changes in the review.
 5. The receipt binds what the gate will re-read: GitHub's diff digest, the full head, the base ref.

@@ -8,8 +8,9 @@
  *
  * Two things this file owns, both because pi cannot:
  *   - the findings schema (`path`/`line` required, severity normalised by the publisher);
- *   - the turn cap. pi has no budget of its own, and a prompt asking for one is a suggestion.
- *
+ *   - the turn cap and the clock. pi has no budget of its own, and a prompt asking for one is a
+ *     suggestion — but the clock is the one that actually ends a run, so the nudge for it lives
+ *     here beside the turn nudge, from the same `GOBY_AGENT_TIMEOUT_S` the entrypoint wraps pi in;
  * It also replaces the built-in `bash` tool with an allowlisted-environment one: the agent runs
  * with a shell on purpose (it clones, greps, writes probes), and a child process inherits the
  * environment, so the environment it can inherit has to be chosen rather than assumed.
@@ -30,6 +31,9 @@ import {
 const ENV_ALLOW = new Set([
 	'PATH', 'HOME', 'SHELL', 'PWD', 'TERM', 'TZ', 'LANG', 'LC_ALL', 'LC_CTYPE',
 	'TMPDIR', 'USER', 'LOGNAME', 'VIRTUAL_ENV', 'PYTHONPATH', 'NODE_PATH',
+	// Debian's Python is externally managed and the agent is not root; this is what lets the
+	// reviewer install a test runner into ~/.local, which the prompt asks it to run.
+	'PIP_BREAK_SYSTEM_PACKAGES',
 	// git must not take optional locks in the read-only reference tree.
 	'GIT_OPTIONAL_LOCKS', 'GIT_TERMINAL_PROMPT',
 	// What the reviewer's shell legitimately needs: the writable sandbox, its output directory,
@@ -68,6 +72,19 @@ const FINDINGS = join(OUT, 'findings.jsonl');
 // the turn limit is counted here from `turn_start`, and the tool-call cap stays as the backstop.
 const MAX_TURNS = requiredInt('GOBY_MAX_TURNS');
 const MAX_TOOL_CALLS = requiredInt('GOBY_MAX_TOOL_CALLS');
+// The same deadline the entrypoint wraps pi in. pi cannot see that clock — `timeout` is pi's
+// parent, and nothing inside the run is told when the signal is coming — so the harness keeps its
+// own from the same number and nudges before it fires. A turn cap is not a clock: the review this
+// was written for spent 41 of its 50 turns and 571 of its 600 seconds, and `timeout` ended it with
+// no findings at all.
+const AGENT_TIMEOUT_S = requiredInt('GOBY_AGENT_TIMEOUT_S');
+// Percent of the deadline left, not a number of seconds, so the two thresholds follow the budget
+// wherever `review/defaults.env` puts it. 20% is one converged suspicion and a report; 10% is the
+// guaranteed wrap-up turn, mirroring the turn cap's graceful one.
+const CLOCK_NOTICE_LEFT_PCT = 20;
+const CLOCK_WRAP_UP_LEFT_PCT = 10;
+const STARTED_MS = Date.now();
+const seconds_left = (): number => AGENT_TIMEOUT_S - (Date.now() - STARTED_MS) / 1000;
 
 let tool_calls = 0;
 let turns = 0;
@@ -105,36 +122,61 @@ export default function (pi: ExtensionAPI) {
 	// does.
 	pi.on('turn_end', event => {
 		const entries = [...event.entries];
+		if (reported) return undefined;
 		const remaining = MAX_TURNS - turns;
-		if (!reported && turns < MAX_TURNS) {
+		const left = seconds_left();
+		// Both budgets are the same instruction — stop looking, report what you verified — so a turn
+		// that crosses both says it once, and the clock gets the same guaranteed wrap-up turn the cap
+		// has. The wrap-up wins: telling the model "120s left" and "report now" in one breath is two
+		// messages where one will do.
+		const out_of_turns = turns >= MAX_TURNS;
+		const out_of_time = left <= (AGENT_TIMEOUT_S * CLOCK_WRAP_UP_LEFT_PCT) / 100;
+		if (!wrap_up_requested && (out_of_turns || out_of_time)) {
+			// One guaranteed wrap-up turn. Without it a run that reaches the cap with no pending tool
+			// call can settle in prose and never report, which the harness treats as a failed review.
+			wrap_up_requested = true;
+			record('blocked', {
+				tool_calls,
+				turns,
+				seconds_left: Math.round(left),
+				reason: out_of_turns ? 'turns' : 'clock',
+			});
+			entries.push({
+				type: 'custom_message' as const,
+				customType: 'goby-wrap-up',
+				content:
+					'Budget spent. Call report_findings now with every finding you have verified; an empty array is valid. Do not start new exploration.',
+				display: false,
+			});
+			return { entries, continue: true };
+		}
+		if (!wrap_up_requested) {
 			const threshold = [10, 5, 2].find(value => remaining <= value && !warned.has(value));
-			if (threshold !== undefined) {
-				warned.add(threshold);
-				// Recorded before the message is built: `remaining` is the number the model was told,
-				// and a record that disagrees with the prompt would make the log lie about the run.
-				record_notice({ turns, remaining, threshold });
+			const clock_due = left <= (AGENT_TIMEOUT_S * CLOCK_NOTICE_LEFT_PCT) / 100;
+			if (threshold !== undefined || clock_due) {
+				if (threshold !== undefined) warned.add(threshold);
+				// Recorded before the message is built: `remaining` and `seconds_left` are the numbers
+				// the model was told, and a record that disagrees with the prompt would make the log lie
+				// about the run.
+				record_notice({
+					turns,
+					remaining,
+					threshold: threshold ?? null,
+					seconds_left: clock_due ? Math.round(left) : null,
+				});
+				const parts = [
+					...(clock_due ? [`~${Math.max(Math.round(left), 0)}s`] : []),
+					...(threshold === undefined ? [] : [`${remaining} turn(s)`]),
+				];
 				entries.push({
 					type: 'custom_message' as const,
 					customType: 'goby-budget',
-					content: `Review budget: ${remaining} turn(s) left. Start converging: verify the strongest remaining suspicion and call report_findings before the cap.`,
+					content: `Review budget: ${parts.join(' and ')} left. Converge: verify the strongest open suspicion, then call report_findings.`,
 					display: false,
 				});
 			}
 		}
-		if (reported || wrap_up_requested || turns < MAX_TURNS) {
-			return entries.length > event.entries.length ? { entries } : undefined;
-		}
-		// One guaranteed wrap-up turn. Without it a run that reaches the cap with no pending tool
-		// call can settle in prose and never report, which the harness treats as a failed review.
-		wrap_up_requested = true;
-		record('blocked', { tool_calls, turns, reason: 'turns' });
-		entries.push({
-			type: 'custom_message' as const,
-			customType: 'goby-wrap-up',
-			content: 'Turn budget spent. Call report_findings now with every finding you have verified; an empty array is valid. Do not start new exploration.',
-			display: false,
-		});
-		return { entries, continue: true };
+		return entries.length > event.entries.length ? { entries } : undefined;
 	});
 
 	pi.on('tool_call', event => {

@@ -82,6 +82,7 @@ jobs:
           set -euo pipefail
           out="$(docker run --rm \
             -e GOBY_MAX_TURNS=50 -e GOBY_MAX_TOOL_CALLS=80 -e GOBY_BASH_TIMEOUT_S=120 \
+            -e GOBY_AGENT_TIMEOUT_S=600 \
             -e GOBY_AGENT_OUT=/tmp/agent \
             --entrypoint bash goby-review:test -lc \
               'pi --mode json --extension /opt/goby/report_findings.ts "hi" 2>&1 || true' \
