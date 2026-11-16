@@ -31,6 +31,9 @@ import {
 const ENV_ALLOW = new Set([
 	'PATH', 'HOME', 'SHELL', 'PWD', 'TERM', 'TZ', 'LANG', 'LC_ALL', 'LC_CTYPE',
 	'TMPDIR', 'USER', 'LOGNAME', 'VIRTUAL_ENV', 'PYTHONPATH', 'NODE_PATH',
+	// Debian's Python is externally managed and the agent is not root; this is what lets the
+	// reviewer install a test runner into ~/.local, which the prompt asks it to run.
+	'PIP_BREAK_SYSTEM_PACKAGES',
 	// git must not take optional locks in the read-only reference tree.
 	'GIT_OPTIONAL_LOCKS', 'GIT_TERMINAL_PROMPT',
 	// What the reviewer's shell legitimately needs: the writable sandbox, its output directory,

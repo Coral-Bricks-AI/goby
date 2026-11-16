@@ -234,6 +234,17 @@ test('the sandbox can install the test runner the prompt tells it to run', () =>
   // Debian marks its Python externally managed and the agent is not root, which is two refusals for
   // one install; this drops the first, and pip falls back to `~/.local` for the second.
   expect(base).toContain('PIP_BREAK_SYSTEM_PACKAGES=1');
+  // An image ENV is not enough: the agent runs under `env -i`, so the flag has to be in the list
+  // `goby_run_as_agent` passes — for every product, which is why it lives in base/lib.sh — and the
+  // reviewer's shell filters pi's environment through ENV_ALLOW, which needs the name too.
+  expect(read('base/lib.sh')).toContain('PIP_BREAK_SYSTEM_PACKAGES=1');
+  expect(read('review/report_findings.ts')).toContain("'PIP_BREAK_SYSTEM_PACKAGES'");
+});
+
+test('every caller that loads the emit extension passes what it requires', () => {
+  // The extension throws at load on a missing number, and pi names the variable. The image test in
+  // CI does exactly that with a short env; the entrypoint is not the only caller.
+  expect(read('.github/workflows/test-review-image.yml')).toContain('-e GOBY_AGENT_TIMEOUT_S=600');
 });
 
 

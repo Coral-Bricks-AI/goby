@@ -78,5 +78,6 @@ goby_run_as_agent() {
   runuser -u "$GOBY_AGENT_USER" -- env -i \
     PATH=/usr/local/bin:/usr/bin:/bin \
     HOME="/home/$GOBY_AGENT_USER" TMPDIR=/tmp \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
     "${extra_env[@]}"
 }

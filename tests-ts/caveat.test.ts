@@ -39,3 +39,20 @@ test('a turn block and a tool-call block are two caveats', () => {
   expect(out[0]).toContain('turn budget');
   expect(out[1]).toContain('tool-call budget');
 });
+
+test('a clock-blocked run is not described as a tool-call or turn block', () => {
+  // The wrap-up fires on whichever budget ran out. A reviewer stopped at the deadline was bounded by
+  // time, and the reader has to be told that rather than a cap the run never reached.
+  const clock = caveat_for({kind: 'blocked', reason: 'clock', turns: 41});
+  expect(clock).toContain('time budget');
+  expect(clock).not.toContain('tool-call');
+  expect(clock).not.toContain('turn budget');
+});
+
+test('a clock block and a call block are two caveats, not one', () => {
+  const out = caveats_for([
+    {kind: 'blocked', reason: 'clock', turns: 41},
+    {kind: 'blocked', reason: 'tool_calls', turns: 42},
+  ]);
+  expect(out).toHaveLength(2);
+});

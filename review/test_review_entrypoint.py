@@ -202,7 +202,9 @@ def test_a_deadline_failure_names_the_deadline():
     block = verdict()
     assert '[[ "$AGENT_STATUS" -eq 124 || "$AGENT_STATUS" -eq 137 ]]' in block
     assert 'GOBY_FAIL_REASON="$REASON"' in block
-    assert 'spent its ${GOBY_AGENT_TIMEOUT_S}s wall clock' in block
+    # The budget the attempt actually had: a retry is given what is left, so naming the image
+    # default there would report a clock the run never had.
+    assert 'spent its ${AGENT_BUDGET}s wall clock' in block
 
 
 def test_a_cancel_from_the_runner_resolves_the_statuses_it_opened():

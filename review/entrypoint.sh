@@ -290,7 +290,7 @@ RUN
     GOBY_SANDBOX="$SANDBOX" GOBY_REPO="$GOBY_REPO" GOBY_HEAD="$GOBY_HEAD" GOBY_BASE="$GOBY_BASE" \
     GOBY_MAX_TOOL_CALLS="$GOBY_MAX_TOOL_CALLS" \
     GOBY_MAX_TURNS="$GOBY_MAX_TURNS" \
-    GOBY_AGENT_TIMEOUT_S="$GOBY_AGENT_TIMEOUT_S" \
+    GOBY_AGENT_TIMEOUT_S="$AGENT_BUDGET" \
     GOBY_BASH_TIMEOUT_S="$GOBY_BASH_TIMEOUT_S" \
     bash "$OUT/run-agent.sh" &
   AGENT_PID=$!
@@ -376,7 +376,7 @@ if ! grep -q '"kind":"findings"' "$AGENT_OUT/findings.jsonl" 2>/dev/null; then
   # different next steps — one says the model was too slow for the budget, the other that something
   # ended the agent — so the status carries which one, rather than "exit 124" for a reader to look up.
   if [[ "$AGENT_STATUS" -eq 124 || "$AGENT_STATUS" -eq 137 ]]; then
-    REASON="the reviewer spent its ${GOBY_AGENT_TIMEOUT_S}s wall clock without reporting"
+    REASON="the reviewer spent its ${AGENT_BUDGET}s wall clock without reporting"
   else
     REASON="the reviewer exited without reporting (exit $AGENT_STATUS)"
   fi
