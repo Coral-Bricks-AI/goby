@@ -54,6 +54,7 @@ const esc = (value: unknown): string => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const dayOf = (iso: string): string => (iso ?? '').slice(0, 10);
 const round = (value: number): string => (Math.round(value * 10) / 10).toString();
+const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
 const median = (values: number[]): number | null => {
   if (!values.length) return null;
@@ -111,6 +112,28 @@ function bars(points: (number | null)[], geo: Geo, peak: number, colour: string)
     return `<rect x="${(geo.x0 + width * index + (width - bar) / 2).toFixed(1)}"` +
       ` y="${(geo.top + geo.height - height).toFixed(1)}" width="${bar.toFixed(1)}"` +
       ` height="${height.toFixed(1)}" rx="1" fill="${colour}"><title>${round(value)}</title></rect>`;
+  }).join('');
+}
+
+function stacked(lower: (number | null)[], upper: (number | null)[], geo: Geo, peak: number,
+                 below: string, above: string): string {
+  const width = step(geo, lower.length);
+  const bar = Math.max(1, width * 0.6);
+  return lower.map((value, index) => {
+    const bottom = value ?? 0;
+    const top = Math.max(0, (upper[index] ?? 0));
+    const heightOf = (n: number): number => (peak <= 0 ? 0 : (geo.height * n) / peak);
+    const base = geo.top + geo.height;
+    const first = heightOf(bottom);
+    const second = heightOf(top);
+    const x = (geo.x0 + width * index + (width - bar) / 2).toFixed(1);
+    const drawn = [
+      bottom ? `<rect x="${x}" y="${(base - first).toFixed(1)}" width="${bar.toFixed(1)}"` +
+        ` height="${first.toFixed(1)}" fill="${below}"><title>${round(bottom)} without findings</title></rect>` : '',
+      top ? `<rect x="${x}" y="${(base - first - second).toFixed(1)}" width="${bar.toFixed(1)}"` +
+        ` height="${second.toFixed(1)}" fill="${above}"><title>${round(top)} with findings</title></rect>` : '',
+    ].join('');
+    return drawn;
   }).join('');
 }
 
@@ -207,11 +230,37 @@ export function renderSvg(body: WakeBody): string {
   const runs = body.runs ?? [];
   const marked = reviews.filter(review => review.run);
   const findings = reviews.flatMap(review => review.findings.map(finding => ({ at: review.at, ...finding })));
+  /**
+   * The rows the chart actually draws. `days()` clamps a long window to the last 91 days, so a
+   * 180-day request has reviews and findings the panels never show. Every count in the note is
+   * about the drawn rows — subtracting the drawn "with findings" from the *undrawn* total is how
+   * the note once claimed a review found nothing when it had found something.
+   */
+  const drawn = new Set(days(body));
+  const drawnFindings = findings.filter(finding => drawn.has(dayOf(finding.at)));
+  const clamped = drawn.size < body.window.days;
 
-  const reviewsPerDay = series(body, reviews, review => review.at, () => 1, 'count');
-  const findingsPerDay = series(body, findings, finding => finding.at, () => 1, 'count');
-  const actedPerDay = series(body, findings.filter(finding => finding.outcome === 'acted_on'),
-    finding => finding.at, () => 1, 'count');
+  const quietPerDay = series(body, reviews.filter(review => !review.findings.length),
+    review => review.at, () => 1, 'count');
+  const noisyPerDay = series(body, reviews.filter(review => review.findings.length),
+    review => review.at, () => 1, 'count');
+  const reviewsPerDay = quietPerDay.map((n, i) => (n ?? 0) + (noisyPerDay[i] ?? 0));
+  /**
+   * The share of a day's findings that were acted on, as a percentage.
+   *
+   * Not a count, and not a median of a flag: a day with four findings of which three were acted on
+   * is 75%. A day with no findings is null rather than 0% — no findings is not a failure to act on
+   * them, and a flat line at zero was exactly the bug the first version shipped.
+   */
+  const pctActedPerDay = days(body).map(day => {
+    const today = drawnFindings.filter(finding => dayOf(finding.at) === day);
+    if (!today.length) return null;
+    return (100 * today.filter(finding => finding.outcome === 'acted_on').length) / today.length;
+  });
+  const quiet = quietPerDay.reduce<number>((total, n) => total + (n ?? 0), 0);
+  const overallPct = drawnFindings.length
+    ? Math.round((100 * drawnFindings.filter(f => f.outcome === 'acted_on').length) / drawnFindings.length)
+    : null;
   const centsPerDay = series(body, marked, review => review.at,
     review => Number((review.run?.cost as { cents?: unknown } | undefined)?.cents ?? NaN), 'sum');
   const secondsPerDay = series(body, marked, review => review.at,
@@ -236,14 +285,17 @@ export function renderSvg(body: WakeBody): string {
   const panels: Panel[] = [
     {
       title: 'review',
-      note: `${reviews.length} reviews · ${findings.length} findings · ` +
-        `${findings.filter(f => f.outcome === 'acted_on').length} acted on`,
-      legend: [['#cfd8e3', 'reviews per day'], ['#94a3b8', 'findings'], ['#166534', 'acted on']],
+      note: `${plural(quiet + noisyPerDay.reduce<number>((n, v) => n + (v ?? 0), 0), 'review')} · ` +
+        `${quiet} found nothing · ${plural(drawnFindings.length, 'finding')} · ` +
+        (overallPct === null ? 'none acted on' : `${overallPct}% acted on`),
+      legend: [['#cfd8e3', 'reviews, no findings'], ['#8fa3bd', 'reviews with findings'],
+        ['#166534', '% of findings acted on (right)']],
       draw: geo => {
-        const peak = Math.max(1, ...reviewsPerDay.map(v => v ?? 0), ...findingsPerDay.map(v => v ?? 0));
-        return yticks(geo, peak, count) + bars(reviewsPerDay, geo, peak, '#cfd8e3') +
-          line(findingsPerDay, geo, peak, '#94a3b8') + line(actedPerDay, geo, peak, '#166534');
+        const peak = Math.max(1, ...reviewsPerDay.map(v => v ?? 0));
+        return yticks(geo, peak, count) + stacked(quietPerDay, noisyPerDay, geo, peak, '#cfd8e3', '#8fa3bd');
       },
+      extra: geo => yticks(geo, 100, n => `${Math.round(n)}%`, 'right', '#166534') +
+        line(pctActedPerDay, geo, 100, '#166534', true),
     },
     {
       title: 'review resource',
@@ -265,7 +317,7 @@ export function renderSvg(body: WakeBody): string {
 
   const filingPanels: Panel[] = ([['cleaners', cleaners], ['tide', tide]] as const).map(([name, rows]) => ({
     title: name,
-    note: `${rows.length} issues · ${rows.filter(issue => issue.state === 'open').length} still open`,
+    note: `${plural(rows.length, 'issue')} · ${rows.filter(issue => issue.state === 'open').length} still open`,
     legend: [['#8ab4f8', 'filed per day'], ['#7c3aed', 'open backlog']] as [string, string][],
     draw: (geo: Geo) => {
       const filed = filings(rows);
@@ -289,7 +341,7 @@ export function renderSvg(body: WakeBody): string {
   const FAILED = ['failure', 'timed_out', 'startup_failure', 'action_required'];
   const runsPanel: Panel = {
     title: 'workflow runs',
-    note: `${runs.length} runs · ` +
+    note: `${plural(runs.length, 'run')} · ` +
       `${runs.filter(run => FAILED.includes(String(run.conclusion))).length} failed`,
     legend: [['#166534', 'succeeded'], ['#b91c1c', 'failed'],
       ['#d97706', 'cancelled'], ['#eef1f5', 'did not run']],
@@ -334,7 +386,7 @@ export function renderSvg(body: WakeBody): string {
     x0: PAD, x1: RIGHT, top: header + index * perPanel + TITLE, height: PLOT,
   }));
 
-  const drawn = all.map((panel, index) => {
+  const blocks = all.map((panel, index) => {
     const geo = geos[index]!;
     const title_y = geo.top - 12;
     return `<text x="${PAD}" y="${title_y}" font-size="9.5" font-weight="600" fill="#334155">` +
@@ -354,9 +406,10 @@ export function renderSvg(body: WakeBody): string {
     `<text x="${PAD}" y="24" font-size="12.5" font-weight="600" fill="#0f172a">goby wake — ${esc(body.repo)}</text>` +
     `<text x="${PAD}" y="38" font-size="8.5" fill="#94a3b8">` +
     `${esc(dayOf(body.window.since))} → ${esc(dayOf(body.generated_at))} · ${esc(body.window.days)} days` +
-    ` · v${esc(body.v ?? 'unknown')} · ${reviews.length} reviews · ${issues.length} issues · ${runs.length} runs</text>` +
+    ` · v${esc(body.v ?? 'unknown')} · ${reviews.length} reviews · ${issues.length} issues · ${runs.length} runs` +
+    (clamped ? ` · showing the last ${drawn.size} of ${body.window.days} days</text>` : '</text>') +
     milestone_marks(body, geos, 52) +
-    drawn + xaxis(body, geos.at(-1)!) +
+    blocks + xaxis(body, geos.at(-1)!) +
     `<text x="${PAD}" y="${height - 10}" font-size="7.5" fill="#b0b8c4">` +
     `${esc(note)} · dashed lines: first day a goby version appears in this repository's reviews` +
     ` · written ${esc(body.generated_at)}, nothing here is stored</text>` +

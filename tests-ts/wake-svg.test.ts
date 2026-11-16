@@ -119,6 +119,24 @@ describe('the picture', () => {
     expect(days(body({ window: { since: '2025-01-01T00:00:00Z', days: 700 } })).length).toBeLessThanOrEqual(93);
   });
 
+  test('a window longer than the chart draws does not invent quiet reviews', () => {
+    // `days()` clamps to the last 91 days, and the note subtracted the drawn "with findings" from
+    // the *undrawn* total — so a 93-day request claimed 1 review found nothing when both had
+    // findings. Every count in the note is about the rows the panels actually draw.
+    const acted = [{ path: 'a.ts', line: 1, severity: 'high', outdated: false, outcome: 'acted_on' as const }];
+    const long = body({
+      window: { since: '2026-08-16T00:00:00Z', days: 93 },
+      reviews: [review({ pr: 1, at: '2026-08-16T00:00:00Z', findings: acted }),
+        review({ pr: 2, at: '2026-11-15T10:00:00Z', findings: acted })],
+    });
+    const note = renderSvg(long).match(/(\d+) reviews? · (\d+) found nothing · (\d+) findings?/)!;
+    expect(Number(note[2])).toBe(0);
+    expect(renderSvg(long)).toContain('showing the last');
+    // And inside the drawn window the same rows are reported in full.
+    const short = body({ reviews: [review({ pr: 2, at: '2026-11-15T10:00:00Z', findings: acted })] });
+    expect(renderSvg(short)).not.toContain('showing the last');
+  });
+
   test('is small enough to keep and to log', () => {
     const many = Array.from({ length: 60 }, (_, i) => review({
       pr: i, at: `2026-11-${String(10 + (i % 7)).padStart(2, '0')}T10:00:00Z`,
