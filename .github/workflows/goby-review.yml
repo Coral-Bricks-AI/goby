@@ -72,7 +72,7 @@ jobs:
       GOBY_GATE: "off"
       # TEMPORARY, for #188's clock nudge: 40s is inside a review of this change, so the 20% notice
       # and the 10% wrap-up both land while the reviewer is still exploring. Removed once the log shows them.
-      GOBY_AGENT_TIMEOUT_S: "25"
+      GOBY_AGENT_TIMEOUT_S: "20"
     steps:
       # A container job ignores the image's ENTRYPOINT — GitHub keeps its own — so the step names
       # it. Everything else (clone, sandbox, agent, publish) happens inside. The two secrets are
