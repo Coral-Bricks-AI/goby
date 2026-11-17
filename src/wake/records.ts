@@ -89,10 +89,22 @@ export interface RunRecord {
  * neutral judge. Counting their answer as proof the finding was wrong would flatter the numbers,
  * and the flattering number is the one somebody would then put on a dashboard.
  */
+/**
+ * `cleanup` (contract.ts `plan_thread_resolution`) resolves goby's own threads for two reasons
+ * that have nothing to do with anyone fixing anything: a line moved under a finding, or two
+ * threads landed on the same position. Both leave `isResolved: true`, which is otherwise how a
+ * human accepting the finding looks — so without this, every review that runs cleanup moves its
+ * own superseded and duplicate threads into `acted_on`, inflating the one number this reader
+ * promises not to flatter. The strings matched here are exactly what `plan_thread_resolution`
+ * writes; a reader that drifted from them would silently stop catching its own resolutions.
+ */
+const OWN_RESOLUTION = /^(Superseded|Duplicate):/;
+
 export function classify(thread: Pick<ThreadRecord, 'outdated' | 'resolved' | 'resolution'>):
 { outcome: Outcome; fix?: string } {
   const reply = (thread.resolution ?? '').trim();
   if (thread.resolved) {
+    if (OWN_RESOLUTION.test(reply)) return { outcome: thread.outdated ? 'superseded' : 'ignored' };
     const named = reply.match(NAMED_COMMIT);
     return named ? { outcome: 'acted_on', fix: named[1]!.toLowerCase() } : { outcome: 'acted_on' };
   }
