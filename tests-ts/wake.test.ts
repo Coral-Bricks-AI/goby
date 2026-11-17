@@ -52,6 +52,32 @@ describe('classifying what became of a finding', () => {
   test('resolution outranks a stale line', () => {
     expect(classify(thread({ resolved: true, outdated: true })).outcome).toBe('acted_on');
   });
+
+  // goby-cleaners #168: `cleanup` (contract.ts `plan_thread_resolution`) resolves its own threads
+  // for a superseded or a duplicate finding — neither is the author accepting anything, so both
+  // used to count as `acted_on` just because `isResolved` came back true.
+  test('a thread goby superseded itself is superseded, not acted on', () => {
+    expect(classify(thread({
+      resolved: true, outdated: true,
+      resolution: 'Superseded: the commented line changed in a newer head. The review re-flags ' +
+        'this finding at its new position if it still applies; if not, this thread stays as history.',
+    }))).toEqual({ outcome: 'superseded' });
+  });
+
+  test('a thread goby resolved as a duplicate is ignored, not a second acted_on', () => {
+    expect(classify(thread({
+      resolved: true,
+      resolution: 'Duplicate: this position already has an open Goby Review thread — the ' +
+        'oldest one stays, this copy is resolved.',
+    }))).toEqual({ outcome: 'ignored' });
+  });
+
+  test('a human resolution that merely mentions a commit is still acted on', () => {
+    // The own-resolution check is a prefix match, not "contains", so a real fix referencing one
+    // of goby's own words in passing is not swept into the same bucket.
+    expect(classify(thread({ resolved: true, resolution: 'fixed the duplicate check in 1a2b3c4' })))
+      .toEqual({ outcome: 'acted_on', fix: '1a2b3c4' });
+  });
 });
 
 describe('a review record', () => {
