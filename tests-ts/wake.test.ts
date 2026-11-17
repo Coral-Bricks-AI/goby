@@ -211,6 +211,27 @@ describe('a workflow run record', () => {
     expect(record.duration_s).toBeNull();
     expect(record.conclusion).toBeNull();
   });
+
+  // goby-cleaners #169/#173/#179/#204: `updated_at` keeps moving on a run that has started but
+  // not concluded, so "elapsed so far" used to be reported as a real, finished duration — a
+  // review ten minutes into a run read as a ten-minute review.
+  test('a run still in progress has no duration, even though it has started and updated', () => {
+    const record = runRecord({
+      name: 'Goby review', created_at: '2026-10-15T10:00:00Z',
+      run_started_at: '2026-10-15T10:00:00Z', updated_at: '2026-10-15T10:10:00Z',
+      status: 'in_progress', conclusion: null,
+    });
+    expect(record.duration_s).toBeNull();
+    expect(record.conclusion).toBeNull();
+  });
+
+  test('a queued run with no start time yet still has no duration', () => {
+    const record = runRecord({
+      name: 'Goby review', created_at: '2026-10-15T10:00:00Z', updated_at: '2026-10-15T10:00:00Z',
+      status: 'queued', conclusion: null,
+    });
+    expect(record.duration_s).toBeNull();
+  });
 });
 
 /** A client with just the four things the collector asks of it. */

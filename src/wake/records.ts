@@ -196,15 +196,20 @@ export function runRecord(run: Record<string, any>): RunRecord {
   const workflow = String(run.name ?? run.workflow_id ?? '');
   const started = Date.parse(String(run.run_started_at ?? run.created_at ?? ''));
   const ended = Date.parse(String(run.updated_at ?? ''));
+  const conclusion = run.conclusion ?? null;
   return {
     kind: 'run',
     product: runProduct(workflow),
     workflow: workflow.slice(0, 80),
     event: String(run.event ?? '').slice(0, 40),
-    conclusion: run.conclusion ?? null,
+    conclusion,
     created_at: String(run.created_at ?? ''),
-    duration_s: Number.isFinite(started) && Number.isFinite(ended) && ended >= started
-      ? Math.round((ended - started) / 1000) : null,
+    // `updated_at` keeps moving on a run that is still queued or in progress — GitHub's only
+    // "end" for one of those is "as of the last poll", not a finish line. Gating on `conclusion`
+    // (null until the run is actually done) is what keeps a still-running review from reporting
+    // its elapsed-so-far as a real, finished measurement.
+    duration_s: conclusion !== null && Number.isFinite(started) && Number.isFinite(ended) &&
+      ended >= started ? Math.round((ended - started) / 1000) : null,
   };
 }
 
