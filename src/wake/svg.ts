@@ -396,8 +396,12 @@ export function renderSvg(body: WakeBody): string {
       panel.draw(geo) + (panel.extra ? panel.extra(geo) : '');
   }).join('');
 
+  // The header already says "showing the last N of M days" when `clamped`; the footer used to
+  // say "complete window" anyway, so the one line whose job is "can this be trusted" contradicted
+  // the caption right above it.
   const note = (body.notes ?? []).length
     ? `incomplete: ${body.notes.length} note(s) — see notes[] in the JSON`
+    : clamped ? `showing the last ${drawn.size} of ${body.window.days} days`
     : 'complete window';
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${height}"` +

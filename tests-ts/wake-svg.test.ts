@@ -132,9 +132,14 @@ describe('the picture', () => {
     const note = renderSvg(long).match(/(\d+) reviews? · (\d+) found nothing · (\d+) findings?/)!;
     expect(Number(note[2])).toBe(0);
     expect(renderSvg(long)).toContain('showing the last');
+    // goby-cleaners #200/#205: the header said "showing the last N of M days" but the footer, the
+    // one line whose job is "can this be trusted", still said "complete window" regardless.
+    expect(renderSvg(long)).toContain('showing the last 92 of 93 days');
+    expect(renderSvg(long)).not.toContain('complete window');
     // And inside the drawn window the same rows are reported in full.
     const short = body({ reviews: [review({ pr: 2, at: '2026-11-15T10:00:00Z', findings: acted })] });
     expect(renderSvg(short)).not.toContain('showing the last');
+    expect(renderSvg(short)).toContain('complete window');
   });
 
   test('is small enough to keep and to log', () => {
