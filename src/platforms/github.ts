@@ -221,16 +221,18 @@ export class GitHubClient {
       title: content_line(body), fid: body.match(new RegExp(`<!-- ${MARKER} id=(\\w+)`))?.[1] ?? '',
       severity: field('severity'),
     };
-    if (resolved) {
-      rec.line ??= rec.original_line;
-      let last_nodes = node.lastComment?.nodes;
-      if (!Array.isArray(last_nodes) || !last_nodes.length) {
-        // Missing pageInfo is UNKNOWN, never proof that a prefix is complete.
-        last_nodes = node.comments.pageInfo?.hasNextPage === false ? node.comments.nodes : [];
-      }
-      const last = last_nodes.at(-1);
-      rec.resolution = last && last.databaseId !== first.databaseId ? cut(content_line(text(last.body)), 200) : '';
+    // A reply is read on every thread, resolved or not: a thread the author argued back on but
+    // never resolved still has something to say, and `disputed` (classify.ts) depends on seeing
+    // it. Only resolved threads get the original-line fallback, which single-list callers below
+    // may still trim away for an open thread with nothing to add.
+    if (resolved) rec.line ??= rec.original_line;
+    let last_nodes = node.lastComment?.nodes;
+    if (!Array.isArray(last_nodes) || !last_nodes.length) {
+      // Missing pageInfo is UNKNOWN, never proof that a prefix is complete.
+      last_nodes = node.comments.pageInfo?.hasNextPage === false ? node.comments.nodes : [];
     }
+    const last = last_nodes.at(-1);
+    rec.resolution = last && last.databaseId !== first.databaseId ? cut(content_line(text(last.body)), 200) : '';
     return rec;
   }
 
@@ -256,6 +258,11 @@ export class GitHubClient {
           // An unusable own anchor is not evidence of a complete conversation.
           if (typeof record.thread_id !== 'string' || typeof record.comment_id !== 'number') return [out, false];
           if (resolved === null) record.resolved = node.isResolved;
+          // `fetch_open_own_threads` is the one single-list reader whose contract predates reply
+          // reading: an open thread with nothing to add keeps reporting no `resolution` at all,
+          // the same shape it always has. `fetch_resolved_own_threads` already promised an empty
+          // string for "resolved, no reply", so that one is untouched.
+          else if (resolved === false && !record.resolution) delete record.resolution;
           out.push(record);
         }
       }
