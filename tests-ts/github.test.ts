@@ -100,7 +100,7 @@ describe('thread state and completeness', () => {
     const compatible: ContractThread[] = open;
     expect(compatible).toBe(open);
     expect(resolved).toHaveLength(1);
-    expect(open[0]).toEqual({ thread_id: 'T1', comment_id: 1, path: 'a.ts', line: 14, start_line: 9, original_line: 14, original_start_line: 9, marker_start: 9, marker_end: 14, sha: 'deadbeef00', outdated: false, created_at: '2026-10-15T10:00:00Z', title: '[high] Leaks the handle', fid: 'ab12', severity: 'high', resolved: false });
+    expect(open[0]).toEqual({ thread_id: 'T1', comment_id: 1, path: 'a.ts', line: 14, start_line: 9, original_line: 14, original_start_line: 9, marker_start: 9, marker_end: 14, sha: 'deadbeef00', outdated: false, created_at: '2026-10-15T10:00:00Z', title: '[high] Leaks the handle', fid: 'ab12', severity: 'high', resolved: false, resolution: '' });
     expect(resolved[0]!.line).toBe(14);
     expect(resolved[0]!.resolution).toBe('');
     expect(calls).toHaveLength(1);
@@ -116,6 +116,21 @@ describe('thread state and completeness', () => {
     expect(open[0]).not.toHaveProperty('resolution');
     expect(open[0]).not.toHaveProperty('resolved');
     expect(await client.fetch_resolved_own_threads(1)).toHaveLength(1);
+  });
+
+  test('an open thread with a reply carries it, so a dispute is not read as silence', async () => {
+    // A thread the author replied to but never resolved: `classify` (records.ts) turns this
+    // `resolution` into `disputed`. Before this fix `own_thread_record` only read replies for
+    // resolved threads, so an open thread's dispute never reached the record at all.
+    const { client } = fake(() => envelope('reviewThreads', connection([thread({
+      comments: connection([comment(), comment({ databaseId: 2, author: { login: 'human' }, body: 'out of scope for this PR' })]),
+    })])));
+    const [open] = await client.fetch_thread_state(7);
+    expect(open[0]!.resolution).toBe('out of scope for this PR');
+    // The single-list open reader keeps the pre-existing contract for a thread with no reply
+    // (previous test), but one with an actual reply must surface it too.
+    const viaOpenList = await client.fetch_open_own_threads(7);
+    expect(viaOpenList[0]!.resolution).toBe('out of scope for this PR');
   });
 
   test('true last comment beats a truncated prefix; content skips markers and caps at 200 characters', async () => {

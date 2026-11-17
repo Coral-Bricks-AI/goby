@@ -17,6 +17,17 @@ import { issueRecord, reviewRecord, runProduct, runRecord } from './records.ts';
 
 export interface Window { since: string; days: number }
 
+/**
+ * How many pages of 100 a single walk reads before giving up on reaching the window boundary.
+ *
+ * This is not `--limit`: it bounds pages scanned, not records kept, because a walk can spend its
+ * whole budget on pages that contribute nothing — a pull request with no goby review still costs
+ * a page's share of the walk. 50 pages is 5,000 items, comfortably above www's busiest month
+ * (roughly 1,700 pull-request updates) with room for a repository several times busier, while
+ * still bounding the work a single run can do against the job's own time and rate-limit budget.
+ */
+const PAGE_CAP = 50;
+
 export interface Collected {
   reviews: ReturnType<typeof reviewRecord>[];
   issues: NonNullable<ReturnType<typeof issueRecord>>[];
@@ -32,7 +43,7 @@ export async function collectReviews(client: GitHubClient, window: Window, limit
                                      notes: string[]): Promise<Collected['reviews']> {
   const out: Collected['reviews'] = [];
   const since = Date.parse(window.since);
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= PAGE_CAP; page++) {
     // Ordered by `updated` because that is the only order GitHub offers that bounds the walk:
     // a pull request reviewed in the window has been updated since, so the scan can stop at the
     // first page whose oldest entry predates it.
@@ -59,6 +70,9 @@ export async function collectReviews(client: GitHubClient, window: Window, limit
     // A short page is the last page. Without this the walk costs ten requests to learn nothing,
     // and every one of them re-reads the same pull requests.
     if (reached || rows.length < 100) break;
+    // The walk used up its page budget before reaching the window or a short page: the window is
+    // not fully read, and silence here would print an empty-looking answer as a complete one.
+    if (page === PAGE_CAP) notes.push(`pull request walk truncated at ${PAGE_CAP} pages of 100`);
   }
   return out;
 }
@@ -71,7 +85,7 @@ export async function collectIssues(client: GitHubClient, window: Window, limit:
   // The general label finds every product's issues in one walk, which is why `goby` exists.
   // `state=all` and no `since` on purpose: an issue still open is the backlog, whatever year it
   // was filed in, and a window that hid the oldest ones would make the backlog look healthy.
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= PAGE_CAP; page++) {
     const rows = JSON.parse(await client.get(
       `/repos/${client.repo}/issues?state=all&labels=goby&sort=updated&direction=desc&per_page=100&page=${page}`));
     if (!Array.isArray(rows) || !rows.length) break;
@@ -90,6 +104,9 @@ export async function collectIssues(client: GitHubClient, window: Window, limit:
       out.push(record);
     }
     if (rows.length < 100) break;
+    // `state=all` and no server-side `since` means a renamed-nothing-returned walk is bounded only
+    // by this cap; a busy backlog can spend it all on pages whose issues are not goby's.
+    if (page === PAGE_CAP) notes.push(`issue walk truncated at ${PAGE_CAP} pages of 100`);
   }
   return out;
 }
@@ -118,7 +135,7 @@ export async function collectRuns(client: GitHubClient, window: Window, limit: n
     runProduct(String(workflow?.name ?? '')) !== null);
   if (!ours.length) return out;
   for (const workflow of ours) {
-    for (let page = 1; page <= 10; page++) {
+    for (let page = 1; page <= PAGE_CAP; page++) {
       const data = JSON.parse(await client.get(
         `/repos/${client.repo}/actions/workflows/${workflow.id}/runs` +
         `?created=${encodeURIComponent(`>=${window.since}`)}&per_page=100&page=${page}`));
@@ -129,6 +146,9 @@ export async function collectRuns(client: GitHubClient, window: Window, limit: n
         out.push(runRecord(run));
       }
       if (rows.length < 100) break;
+      if (page === PAGE_CAP) {
+        notes.push(`${workflow.name ?? workflow.id} runs truncated at ${PAGE_CAP} pages of 100`);
+      }
     }
   }
   return out;

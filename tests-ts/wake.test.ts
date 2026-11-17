@@ -3,7 +3,7 @@ import { collect, collectIssues, collectReviews, collectRuns } from '../src/wake
 import { classify, HINTS, issueMarker, issueRecord, reviewRecord, runProduct, runRecord } from '../src/wake/records.ts';
 import { options } from '../src/wake/main.ts';
 import { recordMarker, type RunRecord as MarkerRecord } from '../src/core/record.ts';
-import type { ThreadRecord } from '../src/platforms/github.ts';
+import { GitHubClient, type ThreadRecord } from '../src/platforms/github.ts';
 
 const thread = (changes: Partial<ThreadRecord> = {}): ThreadRecord => ({
   thread_id: 'T1', comment_id: 1, path: 'src/a.ts', line: 12, start_line: null,
@@ -71,6 +71,43 @@ describe('a review record', () => {
     expect(record.findings.map(f => f.outcome)).toEqual(['acted_on', 'disputed']);
     expect(record.findings[0]).toMatchObject({ path: 'src/a.ts', line: 12, severity: 'high' });
     expect(record.run).toMatchObject({ schema: 1, cost: { cents: 12.34 } });
+  });
+
+  test('an open thread the author argued back on reaches the real GitHub client and is disputed, end to end', async () => {
+    // The unit tests above hand `reviewRecord` a `ThreadRecord` built by hand, which cannot catch
+    // a gap between what `GitHubClient` actually returns and what `classify` expects of it — that
+    // gap is exactly what let `disputed` go unreachable (goby-cleaners #171). This one goes
+    // through the real client's GraphQL parsing instead of constructing the record directly.
+    const fetcher = (async (_input: string | URL | Request, _init: RequestInit = {}) => Response.json({
+      data: { repository: { pullRequest: { reviewThreads: {
+        pageInfo: { hasNextPage: false, endCursor: null },
+        nodes: [{
+          id: 'T1', isResolved: false, isOutdated: false,
+          comments: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                databaseId: 1, author: { login: 'github-actions' }, path: 'src/a.ts', line: 12,
+                startLine: null, originalLine: 12, originalStartLine: null,
+                createdAt: '2026-10-15T10:00:00Z',
+                body: '**[high] Leaks the handle**\n\nDetails\n' +
+                  '<!-- goby id=ab12 severity=high kind=bug sha=deadbeef00 -->',
+              },
+              {
+                databaseId: 2, author: { login: 'human' }, path: 'src/a.ts', line: 12,
+                startLine: null, originalLine: 12, originalStartLine: null,
+                createdAt: '2026-10-15T11:00:00Z', body: 'out of scope for this PR',
+              },
+            ],
+          },
+        }],
+      } } } },
+    })) as typeof fetch;
+    const client = new GitHubClient('owner/repo', 'secret', { fetch: fetcher });
+    const [open, resolved, complete] = await client.fetch_thread_state(7);
+    expect(complete).toBe(true);
+    const record = reviewRecord(7, { head: 'deadbeef00112233', body: body(), submitted_at: '2026-10-15T10:05:00Z' }, [...open, ...resolved], complete);
+    expect(record.findings).toEqual([{ path: 'src/a.ts', line: 12, severity: 'high', outdated: false, outcome: 'disputed' }]);
   });
 
   test('a review posted before the run marker existed still names its version', () => {
@@ -312,6 +349,66 @@ describe('collecting', () => {
       expect(asked.some(path => path.includes('/workflows/12/'))).toBe(false);
       expect(asked.some(path => path.includes('created='))).toBe(true);
     });
+
+  // goby-cleaners #167/#172: a walk that never reaches the window boundary and never gets a
+  // short page used to fall out of its `page <= 10` loop in silence. These pin the fixed shape:
+  // the page budget is stated in `notes` when it, rather than the window, is why the walk stopped.
+  test('a reviews walk that never reaches the window is reported, not read as an empty one', async () => {
+    const { client, asked } = stub({
+      get: async (path: string) => {
+        const page = Number(new URL(path, 'https://x').searchParams.get('page'));
+        // Every page is full and inside the window, so the walk never sees a short page or a date
+        // before `since` — the only way it stops is running out of its page budget.
+        return JSON.stringify(Array.from({ length: 100 }, (_, i) => ({
+          number: page * 100 + i, updated_at: '2026-10-01T00:00:00Z',
+        })));
+      },
+    });
+    const notes: string[] = [];
+    const reviews = await collectReviews(client, window, 10_000, notes);
+    expect(reviews).toEqual([]);
+    expect(notes).toEqual(['pull request walk truncated at 50 pages of 100']);
+    expect(asked).toHaveLength(50);
+  });
+
+  test('an issues walk that never reaches a short page is reported the same way', async () => {
+    const { client, asked } = stub({
+      get: async (path: string) => {
+        const page = Number(new URL(path, 'https://x').searchParams.get('page'));
+        // Every one of them a real cleaners filing, so the only note the walk can produce is the
+        // page-cap one — not the per-issue "no readable marker" note this would drown in otherwise.
+        return JSON.stringify(Array.from({ length: 100 }, (_, i) => ({
+          number: page * 100 + i, state: 'open', created_at: '2026-10-01T00:00:00Z',
+          labels: [{ name: 'goby-cleaners' }],
+          body: `<!-- goby-cleaners fp=${String(page * 100 + i).padStart(12, '0')} component=a severity=low -->`,
+        })));
+      },
+    });
+    const notes: string[] = [];
+    const issues = await collectIssues(client, window, 10_000, notes);
+    expect(issues).toHaveLength(5000);
+    expect(notes).toEqual(['issue walk truncated at 50 pages of 100']);
+    expect(asked).toHaveLength(50);
+  });
+
+  test('a runs walk that never reaches a short page is reported per workflow', async () => {
+    const { client } = stub({
+      get: async (path: string) => {
+        if (path.includes('/actions/workflows?')) {
+          return JSON.stringify({ workflows: [{ id: 11, name: 'Goby review' }] });
+        }
+        const page = Number(new URL(path, 'https://x').searchParams.get('page'));
+        return JSON.stringify({ workflow_runs: Array.from({ length: 100 }, (_, i) => ({
+          name: 'Goby review', created_at: '2026-10-01T00:00:00Z', conclusion: 'success',
+          run_started_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:03:00Z',
+        })) });
+      },
+    });
+    const notes: string[] = [];
+    const runs = await collectRuns(client, window, 10_000, notes);
+    expect(runs).toHaveLength(5000);
+    expect(notes).toEqual(['Goby review runs truncated at 50 pages of 100']);
+  });
 });
 
 describe('the options', () => {
