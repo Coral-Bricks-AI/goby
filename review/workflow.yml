@@ -26,7 +26,9 @@ on:
     # `labeled`/`unlabeled` are here so adding `no-review` skips an open pull request and removing
     # it starts the review: `gh pr create --label` adds the label after `opened` fires, and without
     # `unlabeled` a pull request that loses the label is never picked up again.
-    types: [opened, reopened, synchronize, ready_for_review, edited, labeled, unlabeled]
+    #
+    # No `edited`: a title/body edit changes no code, so it earns no re-review and no model call.
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
 
 permissions:
   contents: read
