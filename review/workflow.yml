@@ -18,6 +18,11 @@
 #
 # Same-repository pull requests only. Fork PRs get no secrets, so the `if:` below skips them
 # instead of failing. See docs/trust-model.md.
+#
+# A second instance on the same repository (comparing models, say — see GOBY_INSTANCE below and
+# docs/trust-model.md) needs a distinct `name:` above as well as its own `GOBY_INSTANCE`: the
+# concurrency group right below is keyed on `github.workflow`, which is this `name:`, so two copies
+# left with the same name still share one group and cancel each other.
 
 name: Goby review
 
@@ -35,7 +40,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: goby-review-${{ github.event.pull_request.number }}
+  group: goby-review-${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -70,6 +75,11 @@ jobs:
       # state with no model involved. Turn it on when branch protection requires it; off, the review
       # posts its findings and claims nothing about merging.
       GOBY_GATE: "off"
+      # Uncomment and set this to run a second Goby workflow on this repository (a model
+      # comparison, say): it salts this instance's status context and marker so it gets its own
+      # round budget and status, independent of the one without it. Give this copy a distinct
+      # `name:` above too — the concurrency group is keyed on it. See docs/trust-model.md.
+      # GOBY_INSTANCE: deepseek
     steps:
       # A container job ignores the image's ENTRYPOINT — GitHub keeps its own — so the step names
       # it. Everything else (clone, sandbox, agent, publish) happens inside. The two secrets are

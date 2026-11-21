@@ -1,4 +1,4 @@
-import { BOT_LOGINS, MARKER, SUMMARY_PREFIX } from '../identity.ts';
+import { BOT_LOGINS, MARKER, MARKER_PATTERN, SUMMARY_PREFIX } from '../identity.ts';
 
 const API = 'https://api.github.com';
 // JSON at the transport boundary is intentionally dynamic; exported records
@@ -207,9 +207,9 @@ export class GitHubClient {
     const first = node.comments.nodes[0];
     const body = first.body as string;
     if (!this.bot_logins.has(first.author.login) || !body.includes(`<!-- ${MARKER} `)) return null;
-    const field = (name: string): string => body.match(new RegExp(`<!-- ${MARKER} [^>]*\\b${name}=(\\w+)`))?.[1] ?? '';
+    const field = (name: string): string => body.match(new RegExp(`<!-- ${MARKER_PATTERN} [^>]*\\b${name}=(\\w+)`))?.[1] ?? '';
     const marker_position = (name: string): number | null => {
-      const match = body.match(new RegExp(`<!-- ${MARKER} [^>]*\\b${name}=(\\d+)`));
+      const match = body.match(new RegExp(`<!-- ${MARKER_PATTERN} [^>]*\\b${name}=(\\d+)`));
       return match ? Number(match[1]) : null;
     };
     const rec: ThreadRecord = {
@@ -218,7 +218,7 @@ export class GitHubClient {
       original_line: position(first.originalLine), original_start_line: position(first.originalStartLine),
       marker_start: marker_position('start_line'), marker_end: marker_position('end_line'),
       sha: field('sha'), outdated: Boolean(node.isOutdated), created_at: text(first.createdAt),
-      title: content_line(body), fid: body.match(new RegExp(`<!-- ${MARKER} id=(\\w+)`))?.[1] ?? '',
+      title: content_line(body), fid: body.match(new RegExp(`<!-- ${MARKER_PATTERN} id=(\\w+)`))?.[1] ?? '',
       severity: field('severity'),
     };
     // A reply is read on every thread, resolved or not: a thread the author argued back on but

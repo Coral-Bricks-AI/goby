@@ -9,7 +9,7 @@
  * records, no "health": a consumer that wants a graph groups these itself, and a new question
  * costs a new consumer rather than a new release of goby.
  */
-import { MARKER } from '../identity.ts';
+import { MARKER_PATTERN } from '../identity.ts';
 import { parseRecord } from '../core/record.ts';
 import type { ThreadRecord } from '../platforms/github.ts';
 
@@ -27,7 +27,7 @@ const NAMED_COMMIT = /\b([0-9a-f]{7,40})\b/i;
  * posted before the run record existed. `MARKER` is `goby`; the gate's marker is `goby-gate`, and
  * the required `head=` is what keeps the two apart.
  */
-const REVIEW_MARKER = new RegExp(`<!--\\s*${MARKER}\\s+head=([0-9a-f]{7,})\\s+v=([^\\s>]+)`);
+const REVIEW_MARKER = new RegExp(`<!--\\s*${MARKER_PATTERN}\\s+head=([0-9a-f]{7,})\\s+v=([^\\s>]+)`);
 
 export interface ReviewFinding {
   path: string;

@@ -344,6 +344,17 @@ test('a scheduled sweep never cancels another, and is not keyed on the commit', 
   expect(tide).toContain('cancel-in-progress: false');
 })
 
+test('a second review instance on the same repository gets its own concurrency group', () => {
+  // The concurrency group is scoped to the repository, not to the workflow file: a second copy of
+  // this workflow (for GOBY_INSTANCE, see docs/trust-model.md) left with the hardcoded PR-number
+  // key would share one group with the first, and `cancel-in-progress` would cancel whichever of
+  // the two starts later on every push. Keying on `github.workflow` (the `name:` a consumer is
+  // told to make distinct for a second instance) keeps the two groups apart.
+  for (const file of ['review/workflow.yml', '.github/workflows/goby-review.yml']) {
+    expect(read(file)).toContain('group: goby-review-${{ github.workflow }}-${{ github.event.pull_request.number }}');
+  }
+});
+
 test('every product that files issues files under its own label plus the general one', () => {
   // `label:goby` lists everything goby filed in a repository; `label:goby-tide` only the
   // scheduled ones. The shared module adds the general label, so a product opts in by passing its
