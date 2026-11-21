@@ -60,6 +60,14 @@ means other workflows in the same repository share the identity — protect work
 branch protection, or configure a dedicated app and set `GOBY_BOT_LOGINS` to its login. This is an
 authorization boundary in the gate, not just display metadata.
 
+Two Goby workflows on the same repository (comparing models, say) share more than the bot login:
+unset, they share the `goby` marker and the `Goby Review` status context too, so the second
+workflow's review spends the first's `GOBY_MAX_ROUNDS` budget and its status overwrites the same
+commit status context. Set `GOBY_INSTANCE` (e.g. `deepseek`) on the second workflow to salt its
+marker (`goby-deepseek`) and suffix its status context (`Goby Review (deepseek)`), giving it its
+own round budget and its own status, independent of the first. Leave it unset on the production
+reviewer — a merge gate reads the unsuffixed `Goby Review` context.
+
 ## What the gate does not cover
 
 GitHub commit statuses have no compare-and-swap API, so the gate is not an atomic lock: there is a

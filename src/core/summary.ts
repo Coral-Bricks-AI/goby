@@ -5,6 +5,7 @@
  * the same numbers appear in the job log and in the review a human reads.
  */
 import type { Finding } from './contract.ts';
+import { SUMMARY_PREFIX } from '../identity.ts';
 
 export interface ReviewStats {
   model: string;
@@ -37,7 +38,7 @@ export function build_summary(
 ): string {
   const count = inline.length + overflow.length;
   const lines = [
-    `**Goby Review** — sandboxed review (v${version}) via \`${stats.model}\` on ` +
+    `${SUMMARY_PREFIX} — sandboxed review (v${version}) via \`${stats.model}\` on ` +
     `\`${stats.head.slice(0, 10)}\` against \`${stats.base.slice(0, 10)}\`. The reviewer cloned the ` +
     'change and could run code against it; probe commands are quoted in the finding bodies where it did.',
     '',
