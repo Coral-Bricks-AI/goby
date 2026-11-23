@@ -81,6 +81,18 @@ the same for everyone: given a task and a scope, do it safely.
    with `secrets: inherit` (or an explicit `secrets:` block naming the same key) — `workflow_call`
    does not forward secrets on its own, and without this the run fails immediately with no key for
    the provider.
+4. In the repository's Settings → Actions → General → Workflow permissions, enable **"Allow
+   GitHub Actions to create and approve pull requests."** This is separate from, and in addition
+   to, the `pull-requests: write` permission `code/workflow.yml` already requests: GitHub blocks
+   the default `GITHUB_TOKEN` from calling the pull-request-create endpoint as a privilege-
+   escalation safeguard — a token that can both push code and open/approve a PR on it could merge
+   its own change — and that block holds even with every permission scope granted. Without this,
+   the run clones, scopes, commits and pushes the branch correctly, then fails with `GitHub
+   Actions is not permitted to create or approve pull requests` on the PR-create call. The setting
+   is per-repository; an organization can also force it off for every repository it owns, in which
+   case it shows disabled/greyed out here and a different token (a PAT or a GitHub App's
+   installation token, passed in as `GITHUB_TOKEN` instead of the default) is the only way around
+   it.
 
 ## Config a consumer supplies
 
