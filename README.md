@@ -2,7 +2,7 @@
 
 An AI code-review agent that reads the code before it comments — and, for a pull request, runs it.
 
-Goby ships three parts of one crew, each on its own clock. **Review** reads a pull request before
+Goby ships four parts of one crew, each on its own clock. **Review** reads a pull request before
 it merges: it clones the change into a container, hands it to an agent with a shell, and posts bugs
 on the exact lines. **Cleaners** (`cleaners/`) reads the default branch after every push,
 reproduces what it suspects, and files one issue per defect it can prove — see
