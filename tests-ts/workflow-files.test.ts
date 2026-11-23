@@ -86,7 +86,8 @@ test('every workflow parses under actionlint rules we rely on', () => {
     '.github/workflows/goby-review.yml', '.github/workflows/tide-scheduled.yml',
     '.github/workflows/tide-image.yml', '.github/workflows/test-tide.yml',
     'wake/workflow.yml', '.github/workflows/goby-wake.yml',
-    '.github/workflows/wake-image.yml', '.github/workflows/test-wake.yml']) {
+    '.github/workflows/wake-image.yml', '.github/workflows/test-wake.yml',
+    'code/workflow.yml', '.github/workflows/code-image.yml', '.github/workflows/test-code-image.yml']) {
     const block = read(file).split(/^permissions:$/m)[1];
     if (!block) continue;
     for (const line of block.split('\n')) {
@@ -252,7 +253,7 @@ test('the reviewer\'s own code carries briefs, so a cleaner can debug the review
   // Without an INVARIANTS.md a directory is invisible to the post-merge cleaner, which is how the
   // reviewer would be the one part of this project nothing ever scanned.
   const {existsSync} = require('node:fs') as typeof import('node:fs');
-  for (const dir of ['review', 'src', 'tide', 'wake']) {
+  for (const dir of ['review', 'src', 'tide', 'wake', 'code']) {
     const path = join(root, dir, 'INVARIANTS.md');
     expect(existsSync(path)).toBe(true);
     const text = readFileSync(path, 'utf8');
@@ -269,6 +270,26 @@ test('a pull request is reviewed once by default', () => {
   expect(read('docs/configuration.md')).toContain('reviews per pull request');
 });
 
+
+test('code/workflow.yml forwards secrets through workflow_call and can pull its own image', () => {
+  // A reusable workflow does not inherit a caller's secrets automatically: without a `secrets:`
+  // block it cannot declare which ones a caller may pass, and without `packages: read` the ghcr.io
+  // pull is denied even for a public image, same reasoning as tide-scheduled.yml and
+  // cleaners-post-merge.yml below.
+  const code = read('code/workflow.yml');
+  const callBlock = code.split(/^\s*workflow_call:$/m)[1]?.split(/^permissions:$/m)[0] ?? '';
+  expect(callBlock).toContain('secrets:');
+  expect(callBlock).toContain('CORALBRICKS_API_KEY:');
+  expect(code).toContain('packages: read');
+  expect(code).toContain('contents: write');
+  // Every caller example in the README has to forward secrets explicitly, or the run fails
+  // immediately with no provider key — `workflow_call` never does this on its own.
+  const readme = read('code/README.md');
+  const calls = readme.split('uses: ./.github/workflows/goby-code.yml').length - 1;
+  expect(calls).toBeGreaterThanOrEqual(2);
+  expect(readme.split('uses: ./.github/workflows/goby-code.yml').slice(1)
+    .every(block => block.split('```')[0]!.includes('secrets: inherit'))).toBe(true);
+});
 
 test('two products are scheduled — the tide sweeps, the wake reads — and the schedule is the consumer\'s', () => {
   // A cron expression cannot read an input, so it is the one knob that stays in the workflow a
@@ -400,6 +421,7 @@ test('an image is republished when anything its Dockerfile copies changes', () =
     ['cleaners/Dockerfile', '.github/workflows/cleaners-image.yml'],
     ['tide/Dockerfile', '.github/workflows/tide-image.yml'],
     ['wake/Dockerfile', '.github/workflows/wake-image.yml'],
+    ['code/Dockerfile', '.github/workflows/code-image.yml'],
   ];
   for (const [dockerfile, workflow] of images) {
     const paths = read(workflow);

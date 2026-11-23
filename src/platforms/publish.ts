@@ -59,6 +59,14 @@ export async function resolve_thread(client: GitHubClient, id: string) {
     '{ thread { isResolved } } }', { t: id });
 }
 
+/** Thin wrapper over `create_pull_request`, kept beside the other publish calls so `code/` has
+ * one place that talks to GitHub, same as the review side does for comments and statuses. */
+export async function open_pull_request(client: GitHubClient, options: {
+  base: string; head: string; title: string; body: string; draft?: boolean;
+}) {
+  return client.create_pull_request(options);
+}
+
 export async function post_gate_status(client: GitHubClient, sha: string, state: string, description: string) {
   if (!['pending', 'success', 'failure', 'error'].includes(state)) throw new Error(`Invalid gate state: ${state}`);
   return client.post(`/repos/${client.repo}/statuses/${sha}`, {

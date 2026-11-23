@@ -117,6 +117,10 @@ export class GitHubClient {
     return JSON.parse(await this.request(path, 'POST', 'application/vnd.github+json', payload));
   }
 
+  async patch(path: string, payload: JsonObject): Promise<JsonObject> {
+    return JSON.parse(await this.request(path, 'PATCH', 'application/vnd.github+json', payload));
+  }
+
   async graphql(query: string, variables: JsonObject = {}): Promise<JsonObject> {
     const result = await this.post('/graphql', { query, variables });
     // HTTP 200 can still be a failed (or partial) GraphQL operation.
@@ -155,6 +159,73 @@ export class GitHubClient {
 
   async fetch_diff(pr: number): Promise<string> {
     return this.get(`/repos/${this.repo}/pulls/${pr}`, 'application/vnd.github.v3.diff');
+  }
+
+  /**
+   * The paths a compare range touches, for a diff-scope check that must not trust a local `git
+   * diff --name-only`: the API is the same source `fetch_merge_base` reads, so a scope decision
+   * and the merge base it is taken against can never disagree about which commits were compared.
+   */
+  async list_changed_paths(base: string, head: string): Promise<string[]> {
+    const data = JSON.parse(await this.get(`/repos/${this.repo}/compare/${base}...${head}`));
+    const files = Array.isArray(data?.files) ? data.files : null;
+    if (files === null) throw new GitHubError(200, `/repos/${this.repo}/compare`, 'Missing files in compare response');
+    return files.map((f: JsonObject) => text(f.filename)).filter(Boolean);
+  }
+
+  /**
+   * Creates a branch at `sha`. The git-data API, not the higher-level "create a ref from a
+   * branch" convenience: `code/` always knows the exact commit a branch should start from (the
+   * clone's base), and asking for anything else would let a race on the default branch choose it
+   * instead.
+   */
+  async create_branch(name: string, sha: string): Promise<{ ref: string; sha: string }> {
+    const data = await this.post(`/repos/${this.repo}/git/refs`, { ref: `refs/heads/${name}`, sha });
+    return { ref: text(data.ref), sha: text(data.object?.sha) };
+  }
+
+  async create_blob(content: string, encoding: 'utf-8' | 'base64' = 'utf-8'): Promise<string> {
+    const data = await this.post(`/repos/${this.repo}/git/blobs`, { content, encoding });
+    return text(data.sha);
+  }
+
+  /** One tree entry: a path, the blob it now points at (or deleted via a null `sha`), and its mode. */
+  async create_tree(baseTree: string, entries: { path: string; sha: string | null; mode?: string }[]): Promise<string> {
+    const data = await this.post(`/repos/${this.repo}/git/trees`, {
+      base_tree: baseTree,
+      tree: entries.map(e => ({ path: e.path, mode: e.mode ?? '100644', type: 'blob', sha: e.sha })),
+    });
+    return text(data.sha);
+  }
+
+  async create_commit(message: string, tree: string, parents: string[]): Promise<string> {
+    const data = await this.post(`/repos/${this.repo}/git/commits`, { message, tree, parents });
+    return text(data.sha);
+  }
+
+  /**
+   * Moves a branch ref to `sha`. `force` is false by default: a fast-forward failure is a signal
+   * the branch moved under this run, and it should surface rather than be silently overwritten.
+   */
+  async update_ref(branch: string, sha: string, force = false): Promise<{ sha: string }> {
+    const data = await this.patch(`/repos/${this.repo}/git/refs/heads/${branch}`, { sha, force });
+    return { sha: text(data.object?.sha) };
+  }
+
+  async create_pull_request(options: {
+    title: string; body: string; head: string; base: string; draft?: boolean;
+  }): Promise<{ number: number; html_url: string; node_id: string }> {
+    const data = await this.post(`/repos/${this.repo}/pulls`, {
+      title: options.title, body: options.body, head: options.head, base: options.base,
+      draft: options.draft ?? false,
+    });
+    if (!Number.isSafeInteger(data.number)) throw new GitHubError(200, `/repos/${this.repo}/pulls`, 'Missing PR number in create response');
+    return { number: data.number, html_url: text(data.html_url), node_id: text(data.node_id) };
+  }
+
+  /** Flips a pull request between draft and ready, e.g. when an escalation leaves it as a draft. */
+  async convert_to_draft(node_id: string): Promise<void> {
+    await this.graphql('mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { isDraft } } }', { id: node_id });
   }
 
   /** Like Python, examines the first 100 statuses and selects by updated_at. */

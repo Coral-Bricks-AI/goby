@@ -225,3 +225,80 @@ describe('a truncated thread list is not an empty one', () => {
     expect(await client.fetch_open_own_threads(1)).toHaveLength(1);
   });
 });
+
+describe('git-data writes: branch, blob, tree, commit, ref, pull request', () => {
+  test('create_branch posts the ref and returns the resulting ref/sha', async () => {
+    const { client, calls } = fake(() => ({ ref: 'refs/heads/code/fix', object: { sha: 'abc123' } }));
+    expect(await client.create_branch('code/fix', 'base-sha')).toEqual({ ref: 'refs/heads/code/fix', sha: 'abc123' });
+    expect(calls[0]!.url).toEndWith('/repos/owner/repo/git/refs');
+    expect(calls[0]!.payload).toEqual({ ref: 'refs/heads/code/fix', sha: 'base-sha' });
+  });
+
+  test('create_blob defaults to utf-8 and returns the blob sha', async () => {
+    const { client, calls } = fake(() => ({ sha: 'blob-sha' }));
+    expect(await client.create_blob('hello')).toBe('blob-sha');
+    expect(calls[0]!.url).toEndWith('/repos/owner/repo/git/blobs');
+    expect(calls[0]!.payload).toEqual({ content: 'hello', encoding: 'utf-8' });
+  });
+
+  test('create_tree defaults mode to 100644 and carries a null sha for a delete', async () => {
+    const { client, calls } = fake(() => ({ sha: 'tree-sha' }));
+    const sha = await client.create_tree('base-tree', [
+      { path: 'a.ts', sha: 'blob-1' },
+      { path: 'b.ts', sha: null },
+    ]);
+    expect(sha).toBe('tree-sha');
+    expect(calls[0]!.payload).toEqual({
+      base_tree: 'base-tree',
+      tree: [
+        { path: 'a.ts', mode: '100644', type: 'blob', sha: 'blob-1' },
+        { path: 'b.ts', mode: '100644', type: 'blob', sha: null },
+      ],
+    });
+  });
+
+  test('create_commit posts message/tree/parents and returns the commit sha', async () => {
+    const { client, calls } = fake(() => ({ sha: 'commit-sha' }));
+    expect(await client.create_commit('fix the thing', 'tree-sha', ['parent-sha'])).toBe('commit-sha');
+    expect(calls[0]!.payload).toEqual({ message: 'fix the thing', tree: 'tree-sha', parents: ['parent-sha'] });
+  });
+
+  test('update_ref PATCHes the branch ref and defaults force to false', async () => {
+    const { client, calls } = fake(() => ({ object: { sha: 'new-sha' } }));
+    expect(await client.update_ref('code/fix', 'new-sha')).toEqual({ sha: 'new-sha' });
+    expect(calls[0]!.url).toEndWith('/repos/owner/repo/git/refs/heads/code/fix');
+    expect(calls[0]!.init.method).toBe('PATCH');
+    expect(calls[0]!.payload).toEqual({ sha: 'new-sha', force: false });
+  });
+
+  test('create_pull_request posts the PR fields, defaults draft to false, and returns identity', async () => {
+    const { client, calls } = fake(() => ({ number: 42, html_url: 'https://github.com/owner/repo/pull/42', node_id: 'PR_kwdo' }));
+    const pr = await client.create_pull_request({ title: 'Fix the thing', body: 'body', head: 'code/fix', base: 'main' });
+    expect(pr).toEqual({ number: 42, html_url: 'https://github.com/owner/repo/pull/42', node_id: 'PR_kwdo' });
+    expect(calls[0]!.payload).toEqual({ title: 'Fix the thing', body: 'body', head: 'code/fix', base: 'main', draft: false });
+  });
+
+  test('create_pull_request throws when the response has no PR number', async () => {
+    const { client } = fake(() => ({ html_url: 'x' }));
+    await expect(client.create_pull_request({ title: 't', body: 'b', head: 'h', base: 'main' }))
+      .rejects.toMatchObject({ code: 200 });
+  });
+
+  test('convert_to_draft sends the mutation with the pull request node id', async () => {
+    const { client, calls } = fake(() => ({ data: { convertPullRequestToDraft: { pullRequest: { isDraft: true } } } }));
+    await client.convert_to_draft('PR_kwdo');
+    expect(calls[0]!.payload.variables).toEqual({ id: 'PR_kwdo' });
+    expect(calls[0]!.payload.query).toContain('convertPullRequestToDraft');
+  });
+
+  test('list_changed_paths reads filenames from the compare response', async () => {
+    const { client, calls } = fake(() => ({ files: [{ filename: 'a.ts' }, { filename: 'b/c.ts' }, {}] }));
+    expect(await client.list_changed_paths('main', 'head-sha')).toEqual(['a.ts', 'b/c.ts']);
+    expect(calls[0]!.url).toEndWith('/repos/owner/repo/compare/main...head-sha');
+  });
+
+  test('list_changed_paths throws when the compare response has no files array', async () => {
+    const { client } = fake(() => ({}));
+    await expect(client.list_changed_paths('main', 'head')).rejects.toMatchObject({ code: 200 });
+  });
+});

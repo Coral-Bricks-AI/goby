@@ -1,0 +1,87 @@
+name: code image
+
+# Publishes the two images the code kind runs from, and prints the digests to pin.
+#
+# Two tags, two digests: `goby-base` is what `cleaners/`, `review/` and `code/` build on, and
+# `goby-code` is what the workflow points at. The workflow runs `:latest` and reports the digest
+# it resolved; a consumer who wants immutable bytes can pin the printed digest instead.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "base/**"
+      - "code/**"
+      # The code image copies the shared run summary and timing tool from here, so a change to
+      # either has to republish it: without this line a merged change to `common/timing.py` built
+      # nothing and `:latest` kept running the old bytes.
+      - "common/**"
+      - "src/**"
+      - "package.json"
+      - "bun.lock"
+      # Compiled into the harness, so a change here changes the published bundle.
+      - "tsconfig.json"
+      - ".github/workflows/code-image.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: code-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # amd64 only: it is what `ubuntu-latest` is, and a container job pulls what the runner can
+      # execute. An arm64 consumer can rebuild this context in one step.
+      - name: Build goby-base
+        run: docker build --platform linux/amd64 -t base:local base
+
+      - name: Build the code image
+        run: docker build --platform linux/amd64 --build-arg BASE_IMAGE=base:local -f code/Dockerfile -t code:local .
+
+      - name: Publish both, and print what to pin
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse --short=12 HEAD)"
+          publish() {
+            local local_image="$1" name="$2"
+            local image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${name}"
+            docker tag "$local_image" "$image:$SHA"
+            docker push --quiet "$image:$SHA"
+            # `:latest` is the runtime now, so only the default branch may move it. A release tag or
+            # a dispatch against an older commit pushes its own sha and leaves `latest` alone.
+            if [[ "$GITHUB_REF" == "refs/heads/${GITHUB_DEFAULT_BRANCH:-main}" ]]; then
+              docker tag "$local_image" "$image:latest"
+              docker push --quiet "$image:latest"
+            fi
+            local digest
+            digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$SHA")"
+            # The digest, not the tag: it is the only thing a consumer can pin that cannot move.
+            { echo "### $name — pin this"; echo '```'; echo "$digest"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "$name -> $digest"
+          }
+          publish base:local goby-base
+          publish code:local goby-code
+
+      # Nothing else to update: code/ runs `:latest` and reports the digest it resolved, so
+      # publishing is the whole rollout. This line is still worth printing — it is the digest a
+      # consumer would pin if they wanted immutable bytes.
+      - name: Print the digest, for anyone who wants to pin it
+        run: |
+          echo "Published digest for pinning:"
+          docker inspect --format '{{index .RepoDigests 0}}' \
+            "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/goby-code:$(git rev-parse --short=12 HEAD)"

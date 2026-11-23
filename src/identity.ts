@@ -1,4 +1,4 @@
-export const REVIEW_VERSION = '0.5.9';
+export const REVIEW_VERSION = '0.5.10';
 // Unset, two instances in the same repo collide: `own_reviews()` (github.ts) counts any review
 // bearing `MARKER` toward `GOBY_MAX_ROUNDS` regardless of which instance posted it, and a merge
 // gate reading `STATUS_CONTEXT` by string can't tell them apart. Set `GOBY_INSTANCE` on the second
