@@ -182,15 +182,31 @@ RUN
   goby_log "agent session=$session exit=$AGENT_STATUS elapsed=${AGENT_ELAPSED}s"
 }
 
-# Builds $OUT/changes.json from the sandbox's working-tree diff against its own HEAD (the base
-# commit it was cloned at, or — in a fix round — whatever the previous round left committed
-# there). Deleted files carry a null content; everything else is read back as UTF-8 text, which is
-# what the task prompt and this image's scope are both written for.
+# Builds $OUT/changes.json from the sandbox's diff against $1 (the commit the agent started from —
+# captured *before* run_agent, never "HEAD", because an agent that stages or commits its own edits
+# (e.g. `git add -A` to read a clean `git status`, or a commit of its own) moves HEAD and empties a
+# worktree-vs-HEAD diff, silently discarding the work: `commit` would then see zero changes and the
+# run would report success with nothing opened. `git diff <sha>` compares a fixed commit to the
+# current working tree, which already reflects any staged or committed state on top of it, so it
+# catches all three shapes (unstaged edit, staged edit, new commit) in one call. Deleted files carry
+# a null content and no mode; everything else is read back as UTF-8 text plus the git tree mode
+# (100644/100755/120000) read from the worktree itself via lstat, so an executable bit the agent set
+# or a symlink it created survives into the commit instead of silently becoming a regular
+# non-executable file (create_tree would otherwise default every entry to 100644).
 build_changes_manifest() {
-  python3 - "$SANDBOX" "$OUT/changes.json" <<'PYSCRIPT'
-import json, subprocess, sys, pathlib
-sandbox, out = sys.argv[1], sys.argv[2]
-status = subprocess.run(["git", "-C", sandbox, "diff", "--name-status", "--no-renames"],
+  python3 - "$SANDBOX" "$OUT/changes.json" "$1" <<'PYSCRIPT'
+import json, os, stat, subprocess, sys, pathlib
+sandbox, out, diff_base = sys.argv[1], sys.argv[2], sys.argv[3]
+
+def read_entry(path):
+    full = pathlib.Path(sandbox) / path
+    st = full.lstat()
+    if stat.S_ISLNK(st.st_mode):
+        return {"path": path, "content": os.readlink(full), "mode": "120000"}
+    mode = "100755" if st.st_mode & 0o111 else "100644"
+    return {"path": path, "content": full.read_text(errors="surrogateescape"), "mode": mode}
+
+status = subprocess.run(["git", "-C", sandbox, "diff", "--name-status", "--no-renames", diff_base],
                          capture_output=True, text=True, check=True).stdout
 changes = []
 for line in status.splitlines():
@@ -200,18 +216,19 @@ for line in status.splitlines():
     if code == "D":
         changes.append({"path": path, "content": None})
     else:
-        changes.append({"path": path, "content": (pathlib.Path(sandbox) / path).read_text(errors="surrogateescape")})
+        changes.append(read_entry(path))
 # Untracked new files git diff does not show.
 untracked = subprocess.run(["git", "-C", sandbox, "ls-files", "--others", "--exclude-standard"],
                             capture_output=True, text=True, check=True).stdout
 for path in untracked.splitlines():
     if path.strip():
-        changes.append({"path": path, "content": (pathlib.Path(sandbox) / path).read_text(errors="surrogateescape")})
+        changes.append(read_entry(path))
 pathlib.Path(out).write_text(json.dumps(changes))
 print(len(changes))
 PYSCRIPT
 }
 
+DIFF_BASE=$(git -C "$SANDBOX" rev-parse HEAD)
 run_agent "code-$GOBY_BASE_SHA" "$OUT/prompt.md" "$GOBY_AGENT_TIMEOUT_S"
 
 if [[ -s "$AGENT_OUT/events.jsonl" ]]; then
@@ -232,7 +249,7 @@ for line in open('$AGENT_OUT/done.jsonl'):
         print(rec['summary'].replace('\n', ' ')[:300])
 " 2>/dev/null || echo "Automated change")
 
-CHANGED=$(build_changes_manifest)
+CHANGED=$(build_changes_manifest "$DIFF_BASE")
 goby_log "sandbox diff: $CHANGED file(s) changed"
 
 goby_proxy_stop
@@ -303,7 +320,10 @@ while :; do
   CURRENT_HEAD=$(python3 -c "import json;print(json.load(open('$OUT/pr.json'))['head_sha'])")
   git "${AUTH[@]}" -c advice.detachedHead=false clone --quiet "https://github.com/${GOBY_REPO}.git" "$SANDBOX" \
     || goby_fail "could not re-clone for round $ROUND"
-  git -C "$SANDBOX" fetch --quiet origin "$CURRENT_HEAD"
+  # "${AUTH[@]}" is a -c flag scoped to the single git invocation it's passed to, never persisted
+  # into the clone's config, so this fetch needs it again — omitting it is fine on a public repo
+  # (the ref is already present from the clone above) but fails auth on a private one.
+  git -C "$SANDBOX" "${AUTH[@]}" fetch --quiet origin "$CURRENT_HEAD"
   git -C "$SANDBOX" -c advice.detachedHead=false checkout --quiet "$CURRENT_HEAD"
   chown -R "$GOBY_AGENT_USER:$GOBY_AGENT_USER" "$SANDBOX"
   git config --system --add safe.directory "$SANDBOX"
@@ -338,6 +358,9 @@ ROUNDPROMPT
   goby_proxy_start "$UPSTREAM" "$KEY_HEADER" "$KEY_SCHEME"
   run_agent "code-fix-$CURRENT_HEAD-r$ROUND" "$OUT/round-prompt.md" "$GOBY_AGENT_TIMEOUT_S"
   goby_proxy_stop
+  # Same reasoning as the first round: diff against the commit this round's sandbox was checked
+  # out at ($CURRENT_HEAD), not "HEAD", so a fix the agent stages or commits isn't missed.
+  DIFF_BASE="$CURRENT_HEAD"
 
   ROUND_SUMMARY="(no summary)"
   if grep -q '"kind":"done"' "$AGENT_OUT/done.jsonl" 2>/dev/null; then
@@ -350,7 +373,7 @@ for line in open('$AGENT_OUT/done.jsonl'):
 " 2>/dev/null || echo "(no summary)")
   fi
 
-  CHANGED=$(build_changes_manifest)
+  CHANGED=$(build_changes_manifest "$DIFF_BASE")
   NEW_SHA=""
   if [[ "$CHANGED" -gt 0 ]]; then
     set +e

@@ -20,10 +20,13 @@ import { out_of_scope } from './core/scope.ts';
 import { GitHubClient } from './platforms/github.ts';
 import { open_pull_request, reply_in_thread, resolve_thread } from './platforms/publish.ts';
 
-interface ChangedFile {
+/** Exported for its own test: the one place the changes.json manifest's shape is parsed. */
+export interface ChangedFile {
   path: string;
   /** Null means deleted. */
   content: string | null;
+  /** Git tree mode (100644/100755/120000); absent on a deletion, where it does not matter. */
+  mode?: string;
 }
 
 interface Job {
@@ -86,11 +89,12 @@ async function prepare(out: string): Promise<number> {
 }
 
 /** Reads the manifest the entrypoint wrote from diffing the sandbox against the reference tree. */
-async function readChanges(path: string): Promise<ChangedFile[]> {
+export async function readChanges(path: string): Promise<ChangedFile[]> {
   const raw = JSON.parse(await readFile(path, 'utf8'));
   if (!Array.isArray(raw)) throw new Error('changes manifest must be an array');
   return raw.map((entry: Record<string, unknown>) => ({
     path: String(entry.path), content: entry.content === null ? null : String(entry.content),
+    mode: entry.mode === undefined ? undefined : String(entry.mode),
   }));
 }
 
@@ -126,7 +130,7 @@ async function commit(out: string, client: GitHubClient): Promise<number> {
   const entries = [];
   for (const change of changes) {
     const sha = change.content === null ? null : await client.create_blob(change.content, 'utf-8');
-    entries.push({ path: change.path, sha });
+    entries.push({ path: change.path, sha, mode: change.mode });
   }
   const tree = await client.create_tree(baseTree, entries);
   const summary = optionalEnv('GOBY_DONE_SUMMARY') ?? 'Automated change';
@@ -180,7 +184,7 @@ async function fix(out: string, client: GitHubClient): Promise<number> {
   const entries = [];
   for (const change of changes) {
     const sha = change.content === null ? null : await client.create_blob(change.content, 'utf-8');
-    entries.push({ path: change.path, sha });
+    entries.push({ path: change.path, sha, mode: change.mode });
   }
   const tree = await client.create_tree(headTree, entries);
   const summary = optionalEnv('GOBY_DONE_SUMMARY') ?? 'Address review feedback';
@@ -254,7 +258,12 @@ async function main(): Promise<number> {
   return escalate(out, client);
 }
 
-main().then(code => { process.exitCode = code; }, (error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+// Guarded so a test can import this module for `readChanges` without also running `main()` (which
+// reads env vars like GOBY_REPO/GOBY_OUT that are only ever set by code/entrypoint.sh, and would
+// throw "usage: ..." or worse under test).
+if (import.meta.main) {
+  main().then(code => { process.exitCode = code; }, (error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

@@ -38,10 +38,22 @@ on:
         required: false
         type: string
         default: main
+    secrets:
+      CORALBRICKS_API_KEY:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
 
 permissions:
   contents: write
   pull-requests: write
+  # The job runs our published image, and the runner authenticates to ghcr.io with this token
+  # before pulling. Without `packages: read` that pull is denied even when the package is public —
+  # the runner's login sends a token that does not carry the scope. Same reasoning as
+  # review/workflow.yml and cleaners-post-merge.yml.
+  packages: read
 
 concurrency:
   group: goby-code-${{ github.workflow }}-${{ inputs.base_ref }}

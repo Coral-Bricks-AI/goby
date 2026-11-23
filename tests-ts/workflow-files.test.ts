@@ -271,6 +271,26 @@ test('a pull request is reviewed once by default', () => {
 });
 
 
+test('code/workflow.yml forwards secrets through workflow_call and can pull its own image', () => {
+  // A reusable workflow does not inherit a caller's secrets automatically: without a `secrets:`
+  // block it cannot declare which ones a caller may pass, and without `packages: read` the ghcr.io
+  // pull is denied even for a public image, same reasoning as tide-scheduled.yml and
+  // cleaners-post-merge.yml below.
+  const code = read('code/workflow.yml');
+  const callBlock = code.split(/^\s*workflow_call:$/m)[1]?.split(/^permissions:$/m)[0] ?? '';
+  expect(callBlock).toContain('secrets:');
+  expect(callBlock).toContain('CORALBRICKS_API_KEY:');
+  expect(code).toContain('packages: read');
+  expect(code).toContain('contents: write');
+  // Every caller example in the README has to forward secrets explicitly, or the run fails
+  // immediately with no provider key — `workflow_call` never does this on its own.
+  const readme = read('code/README.md');
+  const calls = readme.split('uses: ./.github/workflows/goby-code.yml').length - 1;
+  expect(calls).toBeGreaterThanOrEqual(2);
+  expect(readme.split('uses: ./.github/workflows/goby-code.yml').slice(1)
+    .every(block => block.split('```')[0]!.includes('secrets: inherit'))).toBe(true);
+});
+
 test('two products are scheduled — the tide sweeps, the wake reads — and the schedule is the consumer\'s', () => {
   // A cron expression cannot read an input, so it is the one knob that stays in the workflow a
   // consumer copies. Everything else arrives through `:latest`, which is why no product may sneak

@@ -43,6 +43,7 @@ the same for everyone: given a task and a scope, do it safely.
        with:
          task: .goby/tasks/nightly-fix.md
          allowed_paths: "patches/**, .goby/tasks/**"
+       secrets: inherit
    ```
 
    Or for a manual trigger:
@@ -60,10 +61,14 @@ the same for everyone: given a task and a scope, do it safely.
        with:
          task: ${{ inputs.task }}
          allowed_paths: ${{ inputs.allowed_paths }}
+       secrets: inherit
    ```
 
 3. Add `CORALBRICKS_API_KEY` as a repository secret (or `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`,
-   naming that provider in `GOBY_PROVIDER`/`GOBY_MODEL`).
+   naming that provider in `GOBY_PROVIDER`/`GOBY_MODEL`). The caller workflow must pass it through
+   with `secrets: inherit` (or an explicit `secrets:` block naming the same key) — `workflow_call`
+   does not forward secrets on its own, and without this the run fails immediately with no key for
+   the provider.
 
 ## Config a consumer supplies
 
