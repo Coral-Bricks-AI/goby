@@ -7,6 +7,11 @@
 # Exits 0 whether or not findings were produced. The harness reads $CLEANERS_OUT.
 set -euo pipefail
 
+# The same default `defaults.env` gives the entrypoint path, stated here too: run directly (no
+# entrypoint to source it), the script must reach pi with the image's level rather than abort
+# under `set -u` on the first read of an unset `THINKING`.
+: "${THINKING:=high}"
+
 REPO_DIR="" COMPONENT="" SHA="" BEFORE="" CHARTER="" MODEL="" OUT=""
 RULES="/dev/null" CHANGED="/dev/null"
 
