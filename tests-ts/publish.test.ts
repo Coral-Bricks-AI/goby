@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { GitHubClient } from '../src/platforms/github.ts';
-import { _comment_position, comment_body, post_review, post_status, post_gate_status, reply_in_thread, resolve_thread } from '../src/platforms/publish.ts';
+import { _comment_position, comment_body, open_pull_request, post_review, post_status, post_gate_status, reply_in_thread, resolve_thread } from '../src/platforms/publish.ts';
 import { GATE_CONTEXT, STATUS_CONTEXT, REVIEW_VERSION } from '../src/identity.ts';
 import { Finding, type FindingInput } from '../src/core/contract.ts';
 
@@ -127,5 +127,15 @@ describe('statuses and thread writes', () => {
 
   test('resolution GraphQL errors are not swallowed', async () => {
     await expect(resolve_thread(fake(() => ({ errors: [{ message: 'denied' }] })).client, 'T_node')).rejects.toMatchObject({ code: 200 });
+  });
+});
+
+describe('open_pull_request', () => {
+  test('wraps create_pull_request and returns its identity fields', async () => {
+    const { client, calls } = fake(() => ({ number: 9, html_url: 'https://github.com/owner/repo/pull/9', node_id: 'PR_abc' }));
+    const result = await open_pull_request(client, { base: 'main', head: 'code/fix', title: 'Fix it', body: 'body text', draft: true });
+    expect(result).toEqual({ number: 9, html_url: 'https://github.com/owner/repo/pull/9', node_id: 'PR_abc' });
+    expect(calls[0]!.url).toBe('https://api.github.com/repos/owner/repo/pulls');
+    expect(calls[0]!.payload).toEqual({ title: 'Fix it', body: 'body text', head: 'code/fix', base: 'main', draft: true });
   });
 });
