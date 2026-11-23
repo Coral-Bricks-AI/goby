@@ -1,0 +1,15 @@
+# One-off smoke test for issue #220: a manual trigger that runs the new `code/` kind against a
+# real task (issue #184) in this repository, to confirm it opens a scoped pull request end to end
+# before #220 is closed. Delete this file once that PR exists — it is not part of the kind itself.
+name: Dogfood code kind on #184
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    uses: ./.github/workflows/goby-code.yml
+    with:
+      task: .goby/tasks/fix-184.md
+      allowed_paths: cleaners/cleaner.sh
+    secrets: inherit
