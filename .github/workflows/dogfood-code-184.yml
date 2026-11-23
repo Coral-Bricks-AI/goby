@@ -8,6 +8,14 @@ on:
 
 jobs:
   run:
+    # A reusable-workflow caller that sets no permissions hands the called job the repository's
+    # default GITHUB_TOKEN permissions (read-only here), and a called workflow may only narrow
+    # that, never elevate it. Without this, goby-code.yml's contents:write/pull-requests:write
+    # requests are capped at read, every git-data write 403s, and the smoke test opens nothing.
+    permissions:
+      contents: write
+      pull-requests: write
+      packages: read
     uses: ./.github/workflows/goby-code.yml
     with:
       task: .goby/tasks/fix-184.md
