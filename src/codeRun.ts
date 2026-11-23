@@ -152,6 +152,45 @@ function buildPrBody(job: Job, summary: string): string {
   ].join('\n');
 }
 
+/**
+ * A fix commit on top of the pull request's current head, for the review-thread loop. Same
+ * scope-check as `commit` — defense in depth, since a fix round can propose paths the first one
+ * never touched — and the same git-data path: a new tree off the current head's tree, a commit
+ * whose sole parent is that head, and the branch ref moved to it.
+ */
+async function fix(out: string, client: GitHubClient): Promise<number> {
+  const { join } = await import('node:path');
+  const job = JSON.parse(await readFile(join(out, 'job.json'), 'utf8')) as Job;
+  const pr = JSON.parse(await readFile(join(out, 'pr.json'), 'utf8')) as { number: number; node_id: string; html_url: string; head_sha: string };
+  const changesPath = optionalEnv('GOBY_CHANGES_FILE') ?? join(out, 'changes.json');
+  const changes = await readChanges(changesPath);
+  if (changes.length === 0) {
+    console.log(JSON.stringify({ phase: 'no-fix-changes' }));
+    return 3;
+  }
+  const violations = out_of_scope(changes.map(c => c.path), job.allow_globs);
+  if (violations.length > 0) {
+    await writeFile(join(out, 'escalation.md'), `Out of scope during the fix round:\n${violations.map(v => `- \`${v}\``).join('\n')}\n`);
+    console.log(JSON.stringify({ phase: 'out-of-scope', violations }));
+    return 2;
+  }
+  const headCommit = JSON.parse(await client.get(`/repos/${job.repo}/git/commits/${pr.head_sha}`));
+  const headTree = headCommit?.tree?.sha;
+  if (typeof headTree !== 'string') throw new Error('could not read the pull request head commit tree');
+  const entries = [];
+  for (const change of changes) {
+    const sha = change.content === null ? null : await client.create_blob(change.content, 'utf-8');
+    entries.push({ path: change.path, sha });
+  }
+  const tree = await client.create_tree(headTree, entries);
+  const summary = optionalEnv('GOBY_DONE_SUMMARY') ?? 'Address review feedback';
+  const commitSha = await client.create_commit(`goby/code: ${summary}`, tree, [pr.head_sha]);
+  await client.update_ref(job.branch, commitSha);
+  await writeFile(join(out, 'pr.json'), JSON.stringify({ ...pr, head_sha: commitSha }, null, 2) + '\n');
+  console.log(JSON.stringify({ phase: 'fixed', pr: pr.number, sha: commitSha }));
+  return 0;
+}
+
 /** One round: read the open threads on the pull request this run opened, print the decision. */
 async function threads(out: string, client: GitHubClient): Promise<number> {
   const { join } = await import('node:path');
@@ -201,14 +240,15 @@ async function fail(reason: string): Promise<number> {
 
 async function main(): Promise<number> {
   const mode = process.argv[2];
-  if (!['prepare', 'commit', 'threads', 'reply', 'escalate', 'fail'].includes(mode ?? '')) {
-    throw new Error('usage: codeRun.ts prepare|commit|threads|reply|escalate|fail');
+  if (!['prepare', 'commit', 'fix', 'threads', 'reply', 'escalate', 'fail'].includes(mode ?? '')) {
+    throw new Error('usage: codeRun.ts prepare|commit|fix|threads|reply|escalate|fail');
   }
   if (mode === 'fail') return fail(env('GOBY_FAIL_REASON'));
   const out = env('GOBY_OUT');
   if (mode === 'prepare') return prepare(out);
   const client = new GitHubClient(env('GOBY_REPO'), env('GITHUB_TOKEN'));
   if (mode === 'commit') return commit(out, client);
+  if (mode === 'fix') return fix(out, client);
   if (mode === 'threads') return threads(out, client);
   if (mode === 'reply') return reply(client);
   return escalate(out, client);

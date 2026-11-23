@@ -1,0 +1,72 @@
+# Goby code — a reusable workflow a consumer's own workflow calls with `uses:`.
+#
+# Unlike review/workflow.yml, this is not copied as-is and triggered directly: it is
+# `workflow_call`, so one consumer workflow can fire it from a `workflow_run` listener (the first
+# consumer's use case — react to an upstream job and send a fix) and another can fire it from a
+# bare `workflow_dispatch` a human triggers by hand. Either way the thin wrapper lives in the
+# consumer repository; this file is the one thing every consumer installs, like review/workflow.yml.
+#
+# `contents: write` is deliberate and is the one permission difference from review/workflow.yml:
+# this kind opens a branch and a pull request, so it needs to write refs and git objects, not just
+# comment on an existing pull request. Nothing here grants it write to anything *else* — the
+# diff-scope check (src/core/scope.ts) is what keeps an edit inside the paths a consumer allowed,
+# and that check runs before anything is pushed.
+#
+# Two things to change, same as review/workflow.yml:
+#   1. Nothing about the image, unless you want immutable bytes — see review/workflow.yml's note.
+#   2. `provider:`/`model:` if you are not using the Coral gateway, and the matching secret.
+
+name: Goby code
+
+on:
+  workflow_call:
+    inputs:
+      task:
+        description: >-
+          Inline task text, or a path under .goby/tasks/ in this repository (e.g.
+          .goby/tasks/nightly-fix.md), resolved relative to the repository root.
+        required: true
+        type: string
+      allowed_paths:
+        description: >-
+          Newline- or comma-separated glob list of paths this run may edit. An empty list means
+          nothing is in scope — the run refuses every change rather than guessing.
+        required: true
+        type: string
+      base_ref:
+        description: The branch to start from and to open the pull request against.
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: goby-code-${{ github.workflow }}-${{ inputs.base_ref }}
+  cancel-in-progress: false
+
+jobs:
+  code:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: &goby_image ghcr.io/coral-bricks-ai/goby-code:latest
+    env:
+      GOBY_REPO: ${{ github.repository }}
+      GOBY_BASE_REF: ${{ inputs.base_ref }}
+      GOBY_TASK: ${{ inputs.task }}
+      GOBY_ALLOWED_PATHS: ${{ inputs.allowed_paths }}
+      GOBY_PROVIDER: coral
+      GOBY_MODEL: deepseek-v4.1-flash-fast
+      GOBY_IMAGE: *goby_image
+      # Uncomment to run two instances against the same repository independently (see
+      # review/workflow.yml's note on GOBY_INSTANCE; the same reasoning applies here).
+      # GOBY_INSTANCE: nightly
+    steps:
+      - name: Code
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORALBRICKS_API_KEY: ${{ secrets.CORALBRICKS_API_KEY }}
+        run: /opt/goby/entrypoint.sh

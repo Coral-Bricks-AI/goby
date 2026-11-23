@@ -86,7 +86,8 @@ test('every workflow parses under actionlint rules we rely on', () => {
     '.github/workflows/goby-review.yml', '.github/workflows/tide-scheduled.yml',
     '.github/workflows/tide-image.yml', '.github/workflows/test-tide.yml',
     'wake/workflow.yml', '.github/workflows/goby-wake.yml',
-    '.github/workflows/wake-image.yml', '.github/workflows/test-wake.yml']) {
+    '.github/workflows/wake-image.yml', '.github/workflows/test-wake.yml',
+    'code/workflow.yml', '.github/workflows/code-image.yml', '.github/workflows/test-code-image.yml']) {
     const block = read(file).split(/^permissions:$/m)[1];
     if (!block) continue;
     for (const line of block.split('\n')) {
@@ -252,7 +253,7 @@ test('the reviewer\'s own code carries briefs, so a cleaner can debug the review
   // Without an INVARIANTS.md a directory is invisible to the post-merge cleaner, which is how the
   // reviewer would be the one part of this project nothing ever scanned.
   const {existsSync} = require('node:fs') as typeof import('node:fs');
-  for (const dir of ['review', 'src', 'tide', 'wake']) {
+  for (const dir of ['review', 'src', 'tide', 'wake', 'code']) {
     const path = join(root, dir, 'INVARIANTS.md');
     expect(existsSync(path)).toBe(true);
     const text = readFileSync(path, 'utf8');
@@ -400,6 +401,7 @@ test('an image is republished when anything its Dockerfile copies changes', () =
     ['cleaners/Dockerfile', '.github/workflows/cleaners-image.yml'],
     ['tide/Dockerfile', '.github/workflows/tide-image.yml'],
     ['wake/Dockerfile', '.github/workflows/wake-image.yml'],
+    ['code/Dockerfile', '.github/workflows/code-image.yml'],
   ];
   for (const [dockerfile, workflow] of images) {
     const paths = read(workflow);
