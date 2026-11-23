@@ -39,6 +39,14 @@ the same for everyone: given a task and a scope, do it safely.
    jobs:
      fix:
        if: github.event.workflow_run.conclusion == 'failure'
+       # A caller that sets no permissions hands the called job the repository's default
+       # GITHUB_TOKEN permissions (read-only on a repo created after GitHub's 2023 default
+       # change); a called workflow may only narrow that, never elevate it, so without this
+       # goby-code.yml's write requests 403 and nothing gets opened.
+       permissions:
+         contents: write
+         pull-requests: write
+         packages: read
        uses: ./.github/workflows/goby-code.yml
        with:
          task: .goby/tasks/nightly-fix.md
@@ -57,6 +65,10 @@ the same for everyone: given a task and a scope, do it safely.
          allowed_paths: { required: true, type: string }
    jobs:
      run:
+       permissions:
+         contents: write
+         pull-requests: write
+         packages: read
        uses: ./.github/workflows/goby-code.yml
        with:
          task: ${{ inputs.task }}
