@@ -2,13 +2,16 @@
 
 An AI code-review agent that reads the code before it comments — and, for a pull request, runs it.
 
-Goby ships three parts of one crew, each on its own clock. **Review** reads a pull request before
+Goby ships four parts of one crew, each on its own clock. **Review** reads a pull request before
 it merges: it clones the change into a container, hands it to an agent with a shell, and posts bugs
 on the exact lines. **Cleaners** (`cleaners/`) reads the default branch after every push,
 reproduces what it suspects, and files one issue per defect it can prove — see
 [`cleaners/README.md`](cleaners/README.md). **Tide** (`tide/`) sweeps the default branch on a
 schedule, measures the code that has become hard to work in, and files one issue per smell with a
-plan to remove it — see [`tide/README.md`](tide/README.md).
+plan to remove it — see [`tide/README.md`](tide/README.md). **Code** (`code/`) is the one kind that
+writes rather than reads: given a task and an allowed-path list, it opens a branch, a commit and a
+pull request scoped to those paths, then runs a capped review-thread loop — see
+[`code/README.md`](code/README.md).
 
 The two that file issues put two labels on each: their own (`goby-cleaners`, `goby-tide`) and the
 general `goby`, so `label:goby` lists everything goby filed in a repository. The cleaners add the
@@ -41,6 +44,7 @@ Licensed under [Apache-2.0](LICENSE).
 | `review/` | reviewer image: `FROM goby-base`, the prompt, the emit tool, the entrypoint |
 | `cleaners/` | cleaner image: `FROM goby-base`, the post-merge scan, its own INVARIANTS.md contract |
 | `tide/` | the scheduled sweep: `FROM goby-base`, the detector, the prompt, the entrypoint |
+| `code/` | the coding-agent image: `FROM goby-base`, the diff-scope check, the branch/commit/PR helper |
 | `wake/` | the reader: `FROM node`, reads what the other three left in GitHub, prints JSON |
 | `common/` | what both issue-filing products share: `issues.py`, `model_check.py`, `usage.py`, the provider model files |
 | `src/core/contract.ts` | findings shape, parser, retraction, dedupe, re-derivation matching |
@@ -67,10 +71,25 @@ Each product is one file to copy plus the model key as a secret:
   own copy of. Details: [`tide/README.md`](tide/README.md);
 - [`wake/workflow.yml`](wake/workflow.yml) for the reader, which needs no key and no secret: it
   reads the history the other three already wrote and prints it. Details:
-  [`wake/README.md`](wake/README.md).
+  [`wake/README.md`](wake/README.md);
+- [`code/workflow.yml`](code/workflow.yml) for the coding agent — copied in the same way, but
+  called rather than triggered directly (see below). Details: [`code/README.md`](code/README.md).
 
 The images run `:latest`, so thresholds, budgets and prompts reach every consumer without an edit;
 pin a digest when you need immutable bytes.
+
+**`code/` is the one kind where a consumer's own YAML is expected to differ, not stay byte-identical.**
+Review, cleaners, tide and wake are each one workflow file copied in unchanged — every behavior
+change reaches a consumer through `:latest`, and the workflow file itself never needs an edit
+(tide's cron line is the sole exception, called out above). `code/workflow.yml` is the same kind of
+unchanged copy, but it is `workflow_call`, not a trigger a consumer runs directly: every consumer
+writes their own thin caller workflow on top of it, supplying *when* to run (a `workflow_run`
+reaction, a `workflow_dispatch` a human fills in, a cron) and *what* to run (the task text or
+`.goby/tasks/*.md` path, the allowed-path globs) — because those are specific to the task at hand,
+not image-owned defaults. A behavior change inside `code/` itself (the agent's prompt, the scope
+check, the commit/PR mechanics) still reaches every consumer through `:latest` the same as the
+other four; only the per-task config is the consumer's own, by design. See
+[`code/README.md`](code/README.md#trigger-a-reusable-workflow-not-a-bespoke-listener).
 
 Never use `pull_request_target` for the reviewer: it runs from the base branch with secrets
 present, and then executes the pull request.
