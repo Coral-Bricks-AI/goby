@@ -12,9 +12,20 @@ export type TaskSource =
   | { inline: true; text: string }
   | { inline: false; path: string };
 
+/**
+ * A `.goby/tasks/` path with any `..` segment is rejected outright, never resolved: it is
+ * `join()`'d straight into a `readFile` against the consumer repo's checkout, so a crafted value
+ * like `.goby/tasks/../../../../etc/passwd` must never pass the prefix check and reach the
+ * filesystem. Mirrors `scope.ts`'s `isTraversal` for the same reason — fail closed, don't
+ * normalise the segments away.
+ */
+function isTraversal(path: string): boolean {
+  return path.split('/').some(segment => segment === '..');
+}
+
 export function resolve_task_source(task: string): TaskSource {
   const trimmed = task.trim();
-  if (trimmed.startsWith('.goby/tasks/')) return { inline: false, path: trimmed };
+  if (trimmed.startsWith('.goby/tasks/') && !isTraversal(trimmed)) return { inline: false, path: trimmed };
   return { inline: true, text: task };
 }
 

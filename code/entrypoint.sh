@@ -272,7 +272,19 @@ while :; do
     node /opt/goby/codeRun.js threads
   THREADS_STATUS=$?
   set -e
-  OPEN_COUNT=$(python3 -c "import json;print(len(json.load(open('$OUT/threads.json'))))" 2>/dev/null || echo 0)
+  # Any status other than 0 (threads read, zero or more open) or 2 (round cap reached, threads
+  # still open — codeRun.js wrote threads.json before returning it) is a hard failure: the API
+  # call errored and threads.json was never written. Treating that as "no open threads; done" would
+  # silently drop the thread-fix loop and its round cap instead of escalating — the exact failure
+  # mode the cap exists to prevent. Escalate instead of guessing from a missing file.
+  if [[ "$THREADS_STATUS" -ne 0 && "$THREADS_STATUS" -ne 2 ]]; then
+    goby_log "could not read review threads (exit $THREADS_STATUS); escalating"
+    GOBY_REPO="$GOBY_REPO" GITHUB_TOKEN="$GITHUB_TOKEN" GOBY_OUT="$OUT" \
+    GOBY_ESCALATION_REASON="Could not read this pull request's review threads (codeRun.js threads exited $THREADS_STATUS); stopping rather than guessing whether any are open." \
+      node /opt/goby/codeRun.js escalate
+    break
+  fi
+  OPEN_COUNT=$(python3 -c "import json;print(len(json.load(open('$OUT/threads.json'))))")
   if [[ "$OPEN_COUNT" -eq 0 ]]; then
     goby_log "no open threads; done"
     break

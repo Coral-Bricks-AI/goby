@@ -17,6 +17,16 @@ describe('resolve_task_source', () => {
   test('a path that merely contains .goby/tasks/ but does not start with it is inline', () => {
     expect(resolve_task_source('see .goby/tasks/x.md for details')).toEqual({ inline: true, text: 'see .goby/tasks/x.md for details' });
   });
+
+  test('a .. segment after the prefix is rejected and falls back to inline, never resolved as a file', () => {
+    const task = '.goby/tasks/../../../../etc/passwd';
+    expect(resolve_task_source(task)).toEqual({ inline: true, text: task });
+  });
+
+  test('a .. segment deeper in the path is also rejected', () => {
+    const task = '.goby/tasks/sub/../../x.md';
+    expect(resolve_task_source(task)).toEqual({ inline: true, text: task });
+  });
 });
 
 describe('parse_allowed_paths', () => {
